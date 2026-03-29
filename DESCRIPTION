@@ -1,0 +1,31 @@
+Package: ineqTrees
+Title: Tree-Based Decomposition of Health Inequality
+Version: 0.0.0.9000
+Authors@R: 
+    person("Moses", "Mburu", , "mmburu20@gmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0001-7281-583X"))
+Description: Provides tools for analysing socioeconomic inequality in
+    health outcomes with tree-based models. The package supports
+    inequality-aware recursive partitioning, weighted ranking and
+    concentration-index utilities, subgroup interpretation, and SHAP-based
+    decomposition of fitted outcomes into determinant contributions.
+License: MIT + file LICENSE
+URL: https://github.com/m-mburu/ineqTrees
+BugReports: https://github.com/m-mburu/ineqTrees/issues
+Depends: 
+    R (>= 3.5)
+Imports: 
+    magrittr,
+    partykit,
+    stats
+Suggests: 
+    knitr,
+    rmarkdown,
+    testthat
+VignetteBuilder: 
+    knitr
+Config/fusen/version: 0.7.2
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3

@@ -1,0 +1,15 @@
+flat_partytrees.Rmd:
+  path: dev/flat_partytrees.Rmd
+  state: active
+  R: R/rank_wt.R
+  tests: tests/testthat/test-rank_wt.R
+  vignettes: vignettes/inequality-aware-party-trees.Rmd
+  inflate:
+    flat_file: dev/flat_partytrees.Rmd
+    vignette_name: Inequality-aware party trees
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: ask
+    clean: ask
+    codecov: false

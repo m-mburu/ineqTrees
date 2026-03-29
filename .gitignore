@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.DS_Store
+.httr-oauth
+.quarto
+.codex
+inst/doc
+/doc/
+/Meta/
+Rplots.pdf

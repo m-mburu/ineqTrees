@@ -1,0 +1,11 @@
+^dev$
+^LICENSE\.md$
+^.*\.Rproj$
+^\.Rproj\.user$
+^ineqTrees\.Rproj$
+^\.codex$
+^doc$
+^Meta$
+^README\.Rmd$
+^data-raw$
+^\.github$
