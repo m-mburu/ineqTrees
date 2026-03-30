@@ -631,7 +631,9 @@ ctree_ci <- function(formula,
     ctree_args <- c(ctree_args, extra_args)
   }
 
-  do.call(partykit::ctree, ctree_args)
+  fit <- do.call(partykit::ctree, ctree_args)
+  class(fit) <- unique(c("ci_tree", class(fit)))
+  fit
 }
 
 #' Compute weighted fractional ranks

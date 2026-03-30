@@ -1002,7 +1002,7 @@ test_that("ci_splitfun errors when it cannot recover a two-column response", {
 #' @param na.action A function for handling missing values.
 #' @param ... Additional arguments passed to [partykit::ctree()].
 #'
-#' @return A fitted `party` object returned by [partykit::ctree()].
+#' @return A fitted `ci_tree` object inheriting from `party`.
 #'
 #' @export
 ctree_ci <- function(formula,
@@ -1050,7 +1050,9 @@ ctree_ci <- function(formula,
     ctree_args <- c(ctree_args, extra_args)
   }
 
-  do.call(partykit::ctree, ctree_args)
+  fit <- do.call(partykit::ctree, ctree_args)
+  class(fit) <- unique(c("ci_tree", class(fit)))
+  fit
 }
 ```
 
@@ -1129,6 +1131,7 @@ test_that("ctree_ci fits a party object without explicit weights", {
   )
 
   expect_s3_class(fit, "party")
+  expect_s3_class(fit, "ci_tree")
 })
 
 test_that("ctree_ci accepts integer weights", {
@@ -1148,6 +1151,7 @@ test_that("ctree_ci accepts integer weights", {
   )
 
   expect_s3_class(fit, "party")
+  expect_s3_class(fit, "ci_tree")
 })
 ```
 

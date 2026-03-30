@@ -13,3 +13,18 @@ flat_partytrees.Rmd:
     overwrite: ask
     clean: ask
     codecov: false
+plot_tree_helpers.Rmd:
+  path: dev/plot_tree_helpers.Rmd
+  state: active
+  R: R/tree_default_name.R
+  tests: tests/testthat/test-tree_default_name.R
+  vignettes: vignettes/plots-for-party-trees.Rmd
+  inflate:
+    flat_file: dev/plot_tree_helpers.Rmd
+    vignette_name: Plots for party trees
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: ask
+    clean: ask
+    codecov: false
