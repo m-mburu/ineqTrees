@@ -47,21 +47,30 @@ fit_tree <- ctree_ci(
 
 plot(
   fit_tree,
+  gp = grid::gpar(fontsize = 6.5),
   data = toy_kenya,
   terminal_stats = list(
     death_rate = function(df) mean(df$deadu5_num),
+    mean_wealth = function(df) mean(df$wealth),
     concentration_index = function(df) {
       ci_factory("CI")(cbind(df$wealth, df$deadu5_num), rep(1, nrow(df)))
     }
   ),
   stat_labels = c(
     death_rate = "Death rate",
+    mean_wealth = "Mean wealth",
     concentration_index = "CI"
   ),
   stat_formatters = list(
     death_rate = function(x) sprintf("%.3f", x),
+    mean_wealth = function(x) sprintf("%.2f", x),
     concentration_index = function(x) sprintf("%.3f", x)
-  )
+  ),
+  tp_args = list(
+    width_lines = 10.5,
+    height_lines = 4.2
+  ),
+  tnex = 0.85
 )
 ```
 
@@ -106,21 +115,30 @@ summary(preds)
 #> 0.03909 0.05607 0.07399 0.07371 0.08968 0.13204
 plot(
   surrogate_fit,
+  gp = grid::gpar(fontsize = 6.5),
   data = surrogate_data,
   terminal_stats = list(
     predicted_death_rate = function(df) mean(df$forest_risk),
+    mean_wealth = function(df) mean(df$wealth),
     concentration_index = function(df) {
       ci_factory("CI")(cbind(df$wealth, df$forest_risk), rep(1, nrow(df)))
     }
   ),
   stat_labels = c(
-    predicted_death_rate = "Predicted death rate",
+    predicted_death_rate = "death rate",
+    mean_wealth = "Mean wealth",
     concentration_index = "CI"
   ),
   stat_formatters = list(
     predicted_death_rate = function(x) sprintf("%.3f", x),
+    mean_wealth = function(x) sprintf("%.2f", x),
     concentration_index = function(x) sprintf("%.3f", x)
-  )
+  ),
+  tp_args = list(
+    width_lines = 10.5,
+    height_lines = 4.2
+  ),
+  tnex = 0.85
 )
 ```
 
