@@ -15,10 +15,14 @@ BugReports: https://github.com/m-mburu/ineqTrees/issues
 Depends: 
     R (>= 3.5)
 Imports: 
+    graphics,
+    grid,
     magrittr,
     partykit,
-    stats
+    stats,
+    utils
 Suggests: 
+    grDevices,
     knitr,
     rmarkdown,
     testthat

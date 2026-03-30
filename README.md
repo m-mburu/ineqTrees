@@ -45,11 +45,27 @@ fit_tree <- ctree_ci(
   control = partykit::ctree_control(mincriterion = 0.95, maxdepth = 4)
 )
 
-inherits(fit_tree, "party")
-#> [1] TRUE
-partykit::nodeids(partykit::node_party(fit_tree), terminal = TRUE)
-#> [1]  3  4  7  9 10 12 14 15
+plot(
+  fit_tree,
+  data = toy_kenya,
+  terminal_stats = list(
+    death_rate = function(df) mean(df$deadu5_num),
+    concentration_index = function(df) {
+      ci_factory("CI")(cbind(df$wealth, df$deadu5_num), rep(1, nrow(df)))
+    }
+  ),
+  stat_labels = c(
+    death_rate = "Death rate",
+    concentration_index = "CI"
+  ),
+  stat_formatters = list(
+    death_rate = function(x) sprintf("%.3f", x),
+    concentration_index = function(x) sprintf("%.3f", x)
+  )
+)
 ```
+
+<img src="man/figures/README-example-1.png" width="100%" />
 
 ## Fit forests
 
@@ -82,12 +98,30 @@ surrogate_fit <- ctree_ci(
   data = surrogate_data,
   rank_name = "wealth",
   outcome_name = "forest_risk",
-  control = partykit::ctree_control(mincriterion = 0.95, maxdepth = 2)
+  control = partykit::ctree_control(mincriterion = 0.95, maxdepth = 4)
 )
 
 summary(preds)
 #>    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
 #> 0.03909 0.05607 0.07399 0.07371 0.08968 0.13204
-partykit::nodeids(partykit::node_party(surrogate_fit), terminal = TRUE)
-#> [1] 3 4 6 7
+plot(
+  surrogate_fit,
+  data = surrogate_data,
+  terminal_stats = list(
+    predicted_death_rate = function(df) mean(df$forest_risk),
+    concentration_index = function(df) {
+      ci_factory("CI")(cbind(df$wealth, df$forest_risk), rep(1, nrow(df)))
+    }
+  ),
+  stat_labels = c(
+    predicted_death_rate = "Predicted death rate",
+    concentration_index = "CI"
+  ),
+  stat_formatters = list(
+    predicted_death_rate = function(x) sprintf("%.3f", x),
+    concentration_index = function(x) sprintf("%.3f", x)
+  )
+)
 ```
+
+<img src="man/figures/README-surrogate-1.png" width="100%" />
