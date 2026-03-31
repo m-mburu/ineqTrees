@@ -25,7 +25,8 @@ tree_terminal_panel_stats(
 \item{node_col}{Name of the column in \code{stats_dt} storing terminal node ids.}
 
 \item{stat_labels}{An optional named character vector of display labels for
-summary columns.}
+summary columns. Entries may also be plotmath expressions supplied in a
+named list.}
 
 \item{stat_formatters}{An optional named list of formatting functions for
 summary values.}

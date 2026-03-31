@@ -9,3 +9,6 @@ inst/doc
 /doc/
 /Meta/
 Rplots.pdf
+
+/.quarto/
+**/*.quarto_ipynb

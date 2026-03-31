@@ -309,10 +309,8 @@ tree_compact_split_label <- function(
   if (!grepl(",", label, fixed = TRUE)) {
     return(wrap_two_line_label(display_name, label, max_chars))
   }
+  parts <- trimws(strsplit(label, ",", fixed = TRUE)[[1L]])
 
-  parts <- trimws(strsplit(label, ",",
-    fixed = TRUE
-  )[[1L]])
   if (length(parts) <= max_items && nchar(label) <= max_chars) {
     return(wrap_two_line_label(display_name, label, max_chars))
   }
@@ -580,7 +578,8 @@ class(tree_inner_panel_labeled) <- "grapcon_generator"
 #'   [tree_build_terminal_stats()].
 #' @param node_col Name of the column in `stats_dt` storing terminal node ids.
 #' @param stat_labels An optional named character vector of display labels for
-#'   summary columns.
+#'   summary columns. Entries may also be plotmath expressions supplied in a
+#'   named list.
 #' @param stat_formatters An optional named list of formatting functions for
 #'   summary values.
 #' @param gp An optional `grid::gpar()` object applied to the node viewport.
@@ -628,6 +627,14 @@ tree_terminal_panel_stats <- function(
     fill = "lightgray",
     width_lines = 10.5,
     height_lines = 3.2) {
+  as_plot_label <- function(x) {
+    if (is.expression(x)) {
+      x[[1L]]
+    } else {
+      x
+    }
+  }
+
   label_for <- function(col_name, value) {
     display_name <- if (!is.null(stat_labels) &&
                         col_name %in% names(stat_labels)) {
@@ -644,7 +651,11 @@ tree_terminal_panel_stats <- function(
       as.character(value)
     }
 
-    paste0(display_name, " = ", value_chr)
+    if (is.language(display_name) || is.expression(display_name)) {
+      bquote(.(as_plot_label(display_name)) == .(value_chr))
+    } else {
+      paste0(display_name, " = ", value_chr)
+    }
   }
 
   function(node) {
@@ -655,10 +666,9 @@ tree_terminal_panel_stats <- function(
       "terminal node"
     } else {
       stat_cols <- setdiff(names(node_stats), node_col)
-      vapply(
+      lapply(
         stat_cols,
-        function(col_name) label_for(col_name, node_stats[[col_name]][[1L]]),
-        character(1L)
+        function(col_name) label_for(col_name, node_stats[[col_name]][[1L]])
       )
     }
 
@@ -679,7 +689,7 @@ tree_terminal_panel_stats <- function(
     grid::grid.rect(gp = grid::gpar(fill = fill))
     for (i in seq_along(label)) {
       grid::grid.text(
-        label[i],
+        label[[i]],
         x = grid::unit(0.08, "npc"),
         y = grid::unit(length(label) - i + 0.5, "lines"),
         just = c("left", "center")

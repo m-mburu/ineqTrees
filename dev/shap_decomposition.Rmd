@@ -1,0 +1,777 @@
+---
+title: "flat_partytrees.Rmd empty"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r development, include=FALSE}
+library(testthat)
+```
+
+<!--
+ You need to run the 'description' chunk in the '0-dev_history.Rmd' file before continuing your code there.
+-->
+
+
+
+```{r development-load}
+# Load already included functions if relevant
+pkgload::load_all(export_all = FALSE)
+```
+
+
+
+## SHAP helpers
+
+```{r development-shap_helpers}
+# Helper functions used by the SHAP decomposition workflow
+```
+
+```{r function-assert_data_table_available}
+#' Assert that the data.table package is available
+#' @return Invisibly returns `NULL` if the check passes. Otherwise, throws an
+#'   error.
+#' @details This function is used internally to ensure that the `data.table`
+#'   package is available before attempting to use it. If `data.table` is not
+#'   installed, an informative error message is thrown instructing the user to
+#'   install the package.
+#' @export
+.assert_data_table_available <- function() {
+  if (!requireNamespace("data.table", quietly = TRUE)) {
+    stop(
+      paste(
+        "Package `data.table` is required.",
+        "Install it with install.packages(\"data.table\")."
+      ),
+      call. = FALSE
+    )
+  }
+}
+```
+
+```{r function-assert_scalar_flag}
+#' Assert that an input is a single logical value
+#' @param x The input to check.
+#' @param arg The name of the argument being checked, used in error messages.
+#' @return Invisibly returns `NULL` if the check passes. Otherwise, throws an
+#'   error.
+#' @details This function is used internally to validate that certain inputs
+#'   are single logical values (flags). It checks that `x` is of type
+#'   logical, has length 1, and is not NA. If any of these conditions fail,
+#'   an informative error message is thrown indicating the argument name and
+#'   the nature of the issue.
+#' @export
+.assert_scalar_flag <- function(x, arg) {
+  if (!is.logical(x) || length(x) != 1L || is.na(x)) {
+    stop(sprintf("`%s` must be TRUE or FALSE.", arg), call. = FALSE)
+  }
+}
+```
+
+```{r function-assert_scalar_numeric}
+#' Assert that an input is a single finite numeric value
+#' @param x The input to check.
+#' @param arg The name of the argument being checked, used in error messages.
+#' @return Invisibly returns `NULL` if the check passes. Otherwise, throws an
+#'   error.
+#' @details This function is used internally to validate that certain inputs
+#'   are single numeric values that are not NA or infinite. It checks that
+#'   `x` is numeric, has length 1, and is not NA or infinite. If any of these
+#'   conditions fail, an informative error message is thrown indicating the
+#'   argument name and the nature of the issue.
+#' @export
+.assert_scalar_numeric <- function(x, arg) {
+  if (!is.numeric(x) || length(x) != 1L || is.na(x) || !is.finite(x)) {
+    stop(
+      sprintf("`%s` must be a single finite numeric value.", arg),
+      call. = FALSE
+    )
+  }
+}
+```
+
+```{r function-validate_shap_table}
+#' Validate a SHAP table
+#' Ensure that the input SHAP table is a data.table with at least one row and
+#' one numeric column. Optionally check for missing values and trigger an error
+#' any are found.
+#' @param shap_dt A data.table representing SHAP values to validate.
+#' @param allow_missing Logical scalar. If `TRUE`, allow missing values in
+#'   SHAP columns. If `FALSE`, trigger an error if any SHAP column contains
+#'   missing values.
+#' @return The input `shap_dt` if it passes validation checks.
+#' @details This function is used internally to ensure that SHAP tables are in
+#'   a consistent format with appropriate types before decomposition. It checks
+#'   that the input is a data.table (or coercible to one), contains at least
+#'   one row and one column, that all columns are numeric, and optionally that
+#'   there are no missing values.
+#' @export
+.validate_shap_table <- function(shap_dt, allow_missing = FALSE) {
+  if (!data.table::is.data.table(shap_dt)) {
+    shap_dt <- tryCatch(
+      data.table::as.data.table(shap_dt),
+      error = function(e) NULL
+    )
+    if (is.null(shap_dt) || !data.table::is.data.table(shap_dt)) {
+      stop("`shap_dt` must be a data.table or coercible to one.", call. = FALSE)
+    }
+  }
+
+  if (nrow(shap_dt) == 0L) {
+    stop("`shap_dt` must contain at least one row.", call. = FALSE)
+  }
+  if (ncol(shap_dt) == 0L) {
+    stop(
+      "`shap_dt` must contain at least one SHAP feature column.",
+      call. = FALSE
+    )
+  }
+
+  is_numeric_col <- vapply(shap_dt, is.numeric, logical(1L))
+  if (!all(is_numeric_col)) {
+    bad_cols <- names(shap_dt)[!is_numeric_col]
+    stop(
+      sprintf(
+        "All SHAP columns must be numeric. Non-numeric columns: %s",
+        paste(bad_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  has_missing <- vapply(shap_dt, anyNA, logical(1L))
+  if (!allow_missing && any(has_missing)) {
+    bad_cols <- names(shap_dt)[has_missing]
+    stop(
+      sprintf(
+        "SHAP columns must not contain missing values. Columns with NA: %s",
+        paste(bad_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  shap_dt
+}
+```
+
+```{r function-prepare_named_shap_dt}
+#' Prepare a SHAP table with named numeric columns
+#' Ensure that the input SHAP table is a data.table with named numeric columns.
+#' If the input is coercible to a data.table but has no column names,
+#' assign default names
+#' like "feature_1", "feature_2", etc. Validate that all columns are numeric and
+#' optionally check for missing values.
+#' @param shap A SHAP table to prepare.
+#' @param allow_missing Logical scalar. If `TRUE`, allow missing values in
+#'   SHAP columns. If `FALSE`, trigger an error if any SHAP column contains
+#'   missing values.
+#' @return A data.table with named numeric columns representing SHAP features.
+#' @details This function is used internally to standardize SHAP tables
+#'   before decomposition. It ensures that the SHAP data is in a consistent
+#'   format with appropriate column names and types.
+#' @export
+.prepare_named_shap_dt <- function(shap, allow_missing = FALSE) {
+  shap_dt <- tryCatch(
+    data.table::copy(data.table::as.data.table(shap)),
+    error = function(e) NULL
+  )
+
+  if (is.null(shap_dt)) {
+    stop("`shap` must be coercible to a rectangular table.", call. = FALSE)
+  }
+
+  if (is.null(names(shap_dt))) {
+    data.table::setnames(shap_dt, paste0("feature_", seq_len(ncol(shap_dt))))
+  } else {
+    data.table::setnames(
+      shap_dt,
+      make.unique(ifelse(names(shap_dt) == "", "feature", names(shap_dt)))
+    )
+  }
+
+  .validate_shap_table(shap_dt, allow_missing = allow_missing)
+}
+```
+
+```{r function-dalex_shap_to_wide}
+#' Reshape a DALEX-like long SHAP table to wide format
+#'
+#' Convert a long-format SHAP table with observation IDs, feature names, and
+#' SHAP values to a wide format with one row per observation and one column per
+#' feature. Baseline rows can be optionally dropped based on common baseline
+#' labels.
+#'
+#' @param shap A long-format SHAP table containing observation IDs, feature
+#'   names, and SHAP values.
+#' @param id_col Optional column name identifying observations. If `NULL`,
+#'   common ID column names will be searched for.
+#' @param variable_col Optional column name containing feature names. If
+#'   `NULL`, common variable column names will be searched for.
+#' @param value_col Optional column name containing SHAP values. If
+#'   `NULL`, common value column names will be searched for.
+#' @param drop_baseline Logical scalar. If `TRUE`, rows with feature names
+#'   matching common baseline labels will be dropped before reshaping.
+#' @param baseline_labels Character vector of feature names to treat as
+#'   baseline rows when `drop_baseline = TRUE`. Matching is case-sensitive.
+#' @return A wide-format `data.table` with one row per observation and one
+#'   numeric column per SHAP feature.
+#' @details The function attempts to identify the ID, variable, and value
+#'   columns based on common naming conventions. If `drop_baseline = TRUE`,
+#'   rows with feature names in `baseline_labels` are removed before
+#'   reshaping. The resulting wide table contains only numeric SHAP feature
+#'   columns. Aliases for the identified columns are as follows:
+#' - ID column candidates: `"_id_"`, `"id"`, `"row_id"`,
+#'   `"observation_id"`, `"observation"`, `"case_id"`
+#' - Variable column candidates: `"_vname_"`, `"variable"`,
+#'   `"variable_name"`, `"feature"`
+#' - Value column candidates: `"_attribution_"`, `"contribution"`,
+#'   `"phi"`, `"shap"`, `"value"`
+#' @export
+.dalex_shap_to_wide <- function(
+    shap,
+    id_col = NULL,
+    variable_col = NULL,
+    value_col = NULL,
+    drop_baseline = TRUE,
+    baseline_labels = c("_baseline_", "baseline", "intercept")) {
+  shap_dt <- data.table::copy(data.table::as.data.table(shap))
+
+  if (nrow(shap_dt) == 0L) {
+    stop("`shap` must contain at least one row.", call. = FALSE)
+  }
+
+  nms <- names(shap_dt)
+
+  if (is.null(id_col)) {
+    id_candidates <- c(
+      "_id_", "id", "row_id", "observation_id", "observation", "case_id"
+    )
+    id_col <- intersect(id_candidates, nms)[1]
+  }
+  if (is.null(variable_col)) {
+    variable_candidates <- c("_vname_", "variable", "variable_name", "feature")
+    variable_col <- intersect(variable_candidates, nms)[1]
+  }
+  if (is.null(value_col)) {
+    value_candidates <- c(
+      "_attribution_", "contribution", "phi", "shap", "value"
+    )
+    value_col <- intersect(value_candidates, nms)[1]
+  }
+
+  if (is.na(variable_col) || is.null(variable_col)) {
+    stop(
+      paste(
+        "Could not identify the DALEX feature-name column.",
+        "Supply `variable_col`."
+      ),
+      call. = FALSE
+    )
+  }
+  if (is.na(value_col) || is.null(value_col)) {
+    stop(
+      "Could not identify the DALEX SHAP-value column. Supply `value_col`.",
+      call. = FALSE
+    )
+  }
+
+  if (is.na(id_col) || is.null(id_col)) {
+    shap_dt[[".observation_id__"]] <- 1L
+    id_col <- ".observation_id__"
+  }
+
+  shap_dt[[variable_col]] <- as.character(shap_dt[[variable_col]])
+  shap_dt[[value_col]] <- as.numeric(shap_dt[[value_col]])
+
+  if (isTRUE(drop_baseline)) {
+    shap_dt <- shap_dt[!(shap_dt[[variable_col]] %in% baseline_labels), ]
+  }
+
+  if (nrow(shap_dt) == 0L) {
+    stop(
+      "No feature-level SHAP rows remain after dropping baseline rows.",
+      call. = FALSE
+    )
+  }
+
+  quote_name <- function(x) {
+    paste0("`", gsub("`", "\\\\`", x), "`")
+  }
+
+  wide_dt <- data.table::dcast(
+    shap_dt,
+    stats::as.formula(paste(quote_name(id_col), "~", quote_name(variable_col))),
+    value.var = value_col
+  )
+
+  data.table::setorderv(wide_dt, id_col)
+  wide_dt[[id_col]] <- NULL
+  wide_dt
+}
+```
+
+
+# shap_conc_decomp
+
+```{r development-shap_conc_decomp}
+# You can prepare the code of the shap_conc_decomp() function here
+```
+
+```{r function-shap_conc_decomp}
+#' Decompose a concentration index using SHAP values
+#'
+#' Compute SHAP-based feature contributions to the concentration index of a
+#' predicted outcome. The SHAP table can be supplied either in wide format
+#' (one row per observation, one column per feature) or in DALEX-like long
+#' format and reshaped internally.
+#'
+#' @param shap A rectangular SHAP table. By default this should be a wide table
+#'   with one numeric feature column per SHAP contributor. If `from_dalex =
+#'   TRUE`, `shap` should instead be a long DALEX-like table containing
+#'   observation IDs, feature names, and SHAP values.
+#' @param rank A numeric vector giving the socioeconomic ranking variable for
+#'   each observation.
+#' @param prediction Optional numeric vector of model predictions. If omitted,
+#'   predictions are reconstructed as `baseline + rowSums(shap)`.
+#' @param baseline Optional scalar baseline prediction. Required when
+#'   `prediction` is not supplied.
+#' @param from_dalex Logical scalar. If `TRUE`, reshape a DALEX-like long SHAP
+#'   table to wide format before decomposition.
+#' @param dalex_id_col Optional column name identifying observations in the
+#'   DALEX-like input.
+#' @param dalex_variable_col Optional column name containing feature names in
+#'   the DALEX-like input.
+#' @param dalex_value_col Optional column name containing SHAP values in the
+#'   DALEX-like input.
+#' @param na_rm Logical scalar. If `TRUE`, drop rows with missing values in
+#'   required inputs before computing the decomposition.
+#' @param sort Logical scalar. If `TRUE`, order output features by decreasing
+#'   absolute SHAP contribution.
+#' @param tolerance Numeric tolerance used to detect numerically zero mean
+#'   predictions or concentration indices.
+#'
+#' @return A list of class `"shap_ci_decomposition"` with two components:
+#'   `diagnostics`, a one-row `data.table` of decomposition diagnostics, and
+#'   `contributions`, a `data.table` containing one row per SHAP feature with
+#'   columns `feature`, `D_k_SHAP`, `pct_contribution`, and
+#'   `abs_contribution`.
+#'
+#' @details For each feature `k`, `D_k_SHAP` is computed as
+#'   `2 / (n * mu_hat)` times the sum of `phi_ik * (R_i - 0.5)` across
+#'   observations, where `phi_ik` is the SHAP value for feature `k`, `R_i` is
+#'   the fractional rank of the socioeconomic ordering variable, and `mu_hat`
+#'   is the mean predicted outcome.
+#'
+#' @export
+shap_conc_decomp <- function(
+    shap,
+    rank,
+    prediction = NULL,
+    baseline = NULL,
+    from_dalex = FALSE,
+    dalex_id_col = NULL,
+    dalex_variable_col = NULL,
+    dalex_value_col = NULL,
+    na_rm = FALSE,
+    sort = TRUE,
+    tolerance = sqrt(.Machine$double.eps)) {
+  .assert_data_table_available()
+  .assert_scalar_flag(from_dalex, "from_dalex")
+  .assert_scalar_flag(na_rm, "na_rm")
+  .assert_scalar_flag(sort, "sort")
+  .assert_scalar_numeric(tolerance, "tolerance")
+
+  if (isTRUE(from_dalex)) {
+    shap <- .dalex_shap_to_wide(
+      shap = shap,
+      id_col = dalex_id_col,
+      variable_col = dalex_variable_col,
+      value_col = dalex_value_col
+    )
+  }
+
+  shap_dt <- .prepare_named_shap_dt(shap, allow_missing = na_rm)
+  n <- nrow(shap_dt)
+
+  if (length(rank) != n) {
+    stop("`rank` must have length equal to nrow(`shap`).", call. = FALSE)
+  }
+  if (!is.null(prediction) && length(prediction) != n) {
+    stop("`prediction` must have length equal to nrow(`shap`).", call. = FALSE)
+  }
+  if (is.null(prediction)) {
+    if (is.null(baseline)) {
+      stop(
+        "Supply either `prediction` or `baseline` so predictions can",
+        " be identified.",
+        call. = FALSE
+      )
+    }
+    .assert_scalar_numeric(baseline, "baseline")
+  } else if (!is.numeric(prediction)) {
+    stop("`prediction` must be numeric.", call. = FALSE)
+  } else if (anyNA(prediction) && !na_rm) {
+    stop(
+      "`prediction` contains missing values. Set `na_rm = TRUE` to drop ",
+      "incomplete rows.",
+      call. = FALSE
+    )
+  }
+
+  if (anyNA(rank) && !na_rm) {
+    stop(
+      "`rank` contains missing values. Set `na_rm = TRUE` to drop ",
+      "incomplete rows.",
+      call. = FALSE
+    )
+  }
+
+  working_dt <- data.table::copy(shap_dt)
+  working_dt[["rank__"]] <- rank
+
+  if (!is.null(prediction)) {
+    working_dt[["prediction__"]] <- as.numeric(prediction)
+  }
+
+  if (na_rm) {
+    required_cols <- c(
+      names(shap_dt),
+      "rank__",
+      if (!is.null(prediction)) "prediction__"
+    )
+    keep <- stats::complete.cases(working_dt[, required_cols, with = FALSE])
+    working_dt <- working_dt[keep, ]
+  }
+
+  if (nrow(working_dt) == 0L) {
+    stop("No complete cases remain after applying `na_rm`.", call. = FALSE)
+  }
+
+  if (is.null(prediction)) {
+    working_dt[["prediction__"]] <- rowSums(
+      working_dt[, names(shap_dt), with = FALSE]
+    ) + baseline
+    prediction_source <- "baseline + rowSums(shap)"
+  } else {
+    prediction_source <- "prediction"
+  }
+
+  n_complete <- nrow(working_dt)
+  rank_vector <- working_dt[["rank__"]]
+  rank_fraction <- fractional_rank(
+    rank_vector, ties_method = "average", na_rm = FALSE
+  )
+  centered_rank <- rank_fraction - 0.5
+  prediction_vector <- working_dt[["prediction__"]]
+  mu_hat <- mean(prediction_vector)
+
+  if (abs(mu_hat) <= tolerance) {
+    stop(
+      paste(
+        "The mean prediction is numerically zero, so the",
+        "concentration index is undefined."
+      ),
+      call. = FALSE
+    )
+  }
+
+  scale_factor <- 2 / (n_complete * mu_hat)
+
+  contribution_wide <- data.table::as.data.table(
+    as.list(vapply(
+      names(shap_dt),
+      function(col) scale_factor * sum(working_dt[[col]] * centered_rank),
+      numeric(1L)
+    ))
+  )
+
+  contributions <- data.table::melt(
+    contribution_wide,
+    measure.vars = names(contribution_wide),
+    variable.name = "feature",
+    value.name = "D_k_SHAP",
+    variable.factor = FALSE
+  )
+
+  total_ci <- scale_factor * sum(prediction_vector * centered_rank)
+  shap_total <- sum(contributions[["D_k_SHAP"]])
+
+  contributions[["pct_contribution"]] <- if (abs(total_ci) <= tolerance) {
+    rep(NA_real_, nrow(contributions))
+  } else {
+    100 * contributions[["D_k_SHAP"]] / total_ci
+  }
+  contributions[["abs_contribution"]] <- abs(contributions[["D_k_SHAP"]])
+
+  if (sort) {
+    data.table::setorderv(
+      contributions,
+      cols = c("abs_contribution", "feature"),
+      order = c(-1L, 1L)
+    )
+  }
+
+  diagnostics <- data.table::data.table(
+    n = n_complete,
+    mean_prediction = mu_hat,
+    concentration_index = total_ci,
+    shap_sum = shap_total,
+    additivity_gap = total_ci - shap_total,
+    centered_rank_sum = sum(centered_rank),
+    prediction_source = prediction_source
+  )
+
+  structure(
+    list(
+      diagnostics = diagnostics,
+      contributions = contributions[]
+    ),
+    class = "shap_ci_decomposition"
+  )
+}
+```
+
+```{r example-shap_conc_decomp}
+shap <- data.frame(
+  education = c(1, 0, -1),
+  water = c(0, 1, 1)
+)
+rank <- c(1, 2, 3)
+
+res <- shap_conc_decomp(
+  shap = shap,
+  rank = rank,
+  baseline = 2
+)
+res$diagnostics
+res$contributions
+
+dalex_like <- data.frame(
+  "_id_" = rep(1:3, each = 3),
+  "_vname_" = rep(c("_baseline_", "education", "water"), times = 3),
+  "_attribution_" = c(2, 1, 0, 2, 0, 1, 2, -1, 1),
+  check.names = FALSE
+)
+
+shap_conc_decomp(
+  shap = dalex_like,
+  rank = rank,
+  baseline = 2,
+  from_dalex = TRUE
+)$contributions
+```
+
+
+# fractional_rank
+
+```{r development-fractional_rank}
+# You can prepare the code of the fractional_rank() function here
+```
+
+```{r function-fractional_rank}
+#' Compute fractional ranks
+#'
+#' Convert a numeric ranking variable to fractional ranks in `(0, 1)` using
+#' average ranks for ties. This is the standard rank definition used in
+#' concentration-index calculations.
+#'
+#' @param x An atomic vector to rank.
+#' @param ties_method Tie-handling method passed to `data.table::frankv()`.
+#'   Only `"average"` is supported.
+#' @param na_rm Logical scalar. If `TRUE`, missing values are dropped before
+#'   ranking. If `FALSE`, missing values trigger an error.
+#'
+#' @return A numeric vector of fractional ranks with length equal to the number
+#'   of retained observations.
+#'
+#' @export
+fractional_rank <- function(
+    x,
+    ties_method = "average",
+    na_rm = FALSE) {
+  .assert_data_table_available()
+  .assert_scalar_flag(na_rm, "na_rm")
+
+  if (!identical(ties_method, "average")) {
+    stop(
+      paste(
+        "`ties_method` must be \"average\" to preserve the standard",
+        "fractional-rank definition."
+      ),
+      call. = FALSE
+    )
+  }
+  if (!is.atomic(x)) {
+    stop("`x` must be an atomic vector.", call. = FALSE)
+  }
+
+  if (na_rm) {
+    x <- x[!is.na(x)]
+  } else if (anyNA(x)) {
+    stop(
+      paste(
+        "`x` contains missing values.",
+        "Set `na_rm = TRUE` to drop them."
+      ),
+      call. = FALSE
+    )
+  }
+
+  n <- length(x)
+  if (n == 0L) {
+    stop("`x` must contain at least one non-missing value.", call. = FALSE)
+  }
+
+  (data.table::frankv(x, ties.method = ties_method) - 0.5) / n
+}
+```
+
+```{r example-fractional_rank}
+fractional_rank(c(10, 20, 20, 40))
+fractional_rank(c(1, NA, 3), na_rm = TRUE)
+```
+
+```{r tests-fractional_rank}
+test_that("fractional_rank computes average fractional ranks", {
+  expect_equal(
+    fractional_rank(c(10, 20, 20, 40)),
+    c(0.125, 0.5, 0.5, 0.875)
+  )
+})
+
+test_that("fractional_rank handles missing values and validates inputs", {
+  expect_equal(
+    fractional_rank(c(1, NA, 3), na_rm = TRUE),
+    c(0.25, 0.75)
+  )
+
+  expect_error(fractional_rank(c(1, NA, 3)), "missing values")
+  expect_error(fractional_rank(c(1, 2), ties_method = "first"), "ties_method")
+  expect_error(fractional_rank(list(1, 2)), "atomic vector")
+})
+```
+
+```{r tests-shap_conc_decomp}
+test_that("shap_conc_decomp decomposes a wide SHAP table", {
+  shap <- data.frame(
+    education = c(1, 0, -1),
+    water = c(0, 1, 1)
+  )
+
+  out <- shap_conc_decomp(
+    shap = shap,
+    rank = c(1, 2, 3),
+    baseline = 2
+  )
+
+  expect_s3_class(out, "shap_ci_decomposition")
+  expect_equal(out$diagnostics$n, 3)
+  expect_equal(out$diagnostics$mean_prediction, 8 / 3)
+  expect_equal(out$diagnostics$concentration_index, -1 / 12)
+  expect_equal(out$diagnostics$shap_sum, -1 / 12)
+  expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
+  expect_equal(out$diagnostics$centered_rank_sum, 0, tolerance = 1e-12)
+  expect_equal(out$diagnostics$prediction_source, "baseline + rowSums(shap)")
+
+  expect_equal(out$contributions$feature, c("education", "water"))
+  expect_equal(out$contributions$D_k_SHAP, c(-1 / 6, 1 / 12))
+  expect_equal(out$contributions$pct_contribution, c(200, -100))
+  expect_equal(out$contributions$abs_contribution, c(1 / 6, 1 / 12))
+})
+
+test_that("shap_conc_decomp reshapes DALEX-like SHAP tables", {
+  wide_shap <- data.frame(
+    education = c(1, 0, -1),
+    water = c(0, 1, 1)
+  )
+  dalex_like <- data.frame(
+    "_id_" = rep(1:3, each = 3),
+    "_vname_" = rep(c("_baseline_", "education", "water"), times = 3),
+    "_attribution_" = c(2, 1, 0, 2, 0, 1, 2, -1, 1),
+    check.names = FALSE
+  )
+
+  from_wide <- shap_conc_decomp(
+    shap = wide_shap,
+    rank = c(1, 2, 3),
+    baseline = 2
+  )
+  from_dalex <- shap_conc_decomp(
+    shap = dalex_like,
+    rank = c(1, 2, 3),
+    baseline = 2,
+    from_dalex = TRUE
+  )
+
+  expect_equal(from_dalex$diagnostics, from_wide$diagnostics)
+  expect_equal(
+    from_dalex$contributions[, c("feature", "D_k_SHAP")],
+    from_wide$contributions[, c("feature", "D_k_SHAP")]
+  )
+})
+
+test_that("shap_conc_decomp drops incomplete rows with na_rm", {
+  shap <- data.frame(
+    x1 = c(1, NA, 0, 2),
+    x2 = c(0, 1, 1, 1)
+  )
+  prediction <- c(2, 3, NA, 4)
+
+  out <- shap_conc_decomp(
+    shap = shap,
+    rank = c(1, 2, 3, 4),
+    prediction = prediction,
+    na_rm = TRUE,
+    sort = FALSE
+  )
+
+  expect_equal(out$diagnostics$n, 2)
+  expect_equal(out$diagnostics$prediction_source, "prediction")
+  expect_equal(out$diagnostics$concentration_index, 1 / 6)
+  expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
+  expect_equal(out$contributions$feature, c("x1", "x2"))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 12, 1 / 12))
+})
+
+test_that("shap_conc_decomp validates key inputs", {
+  shap <- data.frame(x1 = c(1, -1), x2 = c(0, 0))
+
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = 1:3, baseline = 0),
+    "length equal"
+  )
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = c(1, 2)),
+    "Supply either `prediction` or `baseline`"
+  )
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = c(1, 2), baseline = 0),
+    "mean prediction is numerically zero"
+  )
+  expect_error(
+    shap_conc_decomp(
+      shap = data.frame(x1 = c(1, NA)),
+      rank = c(1, 2),
+      baseline = 1
+    ),
+    "Columns with NA"
+  )
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = c(1, NA), baseline = 1),
+    "missing values"
+  )
+})
+```
+
+
+```{r development-inflate, eval=FALSE}
+# Run but keep eval=FALSE to avoid infinite loop
+# Execute in the console directly
+fusen::inflate(
+  flat_file = "dev/shap_decomposition.Rmd",
+  vignette_name = "shap_decomposition"
+)
+```
+
