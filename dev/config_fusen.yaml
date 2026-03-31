@@ -28,3 +28,21 @@ plot_tree_helpers.Rmd:
     overwrite: ask
     clean: ask
     codecov: false
+shap_decomposition.Rmd:
+  path: dev/shap_decomposition.Rmd
+  state: active
+  R:
+  - R/assert_data_table_available.R
+  - R/fractional_rank.R
+  - R/shap_conc_decomp.R
+  tests: tests/testthat/test-fractional_rank.R
+  vignettes: vignettes/shap_decomposition.Rmd
+  inflate:
+    flat_file: dev/shap_decomposition.Rmd
+    vignette_name: shap_decomposition
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: ask
+    clean: ask
+    codecov: false

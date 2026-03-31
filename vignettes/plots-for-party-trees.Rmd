@@ -164,6 +164,61 @@ is.function(tree_terminal_panel_stats(fit, stats_df))
 
 
 
+```{r}
+#' Compute terminal node means for a fitted tree, with optional observation
+#'  weights
+#' predict_ctree_ci_terminal_mean()` computes mean outcome values 
+#' for each terminal
+#' node of a fitted tree by assigning training observations to nodes and then
+#' calculating weighted means within each node. The function can be used to
+#' generate predictions for new data based on terminal node means, with a
+#' global mean fallback for unseen nodes.
+#' @param fit A fitted tree object inheriting from `party`.
+#' @param train_data A data frame used to assign observations to terminal
+#'   nodes and compute node means.
+#' @param new_data A data frame for which to generate predictions. Defaults to
+#'   `train_data`.
+#' @param outcome_name A character scalar naming the outcome variable in
+#'   `train_data`.
+#' @param weights An optional numeric vector of observation weights used
+#'   when computing node means. Defaults to equal weights.
+#' @importFrom data.table as.data.table copy `:=`
+predict_ctree_ci_terminal_mean <- function(fit,
+                                           train_data,
+                                           new_data = train_data,
+                                           outcome_name,
+                                           weights = NULL) {
+  train_dt <- data.table::as.data.table(train_data)
+  new_dt <- data.table::as.data.table(new_data)
+
+  if (is.null(weights)) {
+    weights <- rep(1, nrow(train_dt))
+  }
+
+  train_dt <- data.table::copy(train_dt)
+  train_dt[, `:=`(
+    .node_id__ = predict(fit, newdata = train_data, type = "node")
+  )]
+  train_dt[, `:=`(.weight__ = weights)]
+  train_dt[, `:=`(.outcome__ = as.numeric(get(outcome_name)))]
+
+  node_mean_dt <- train_dt[
+    ,
+    .(.node_mean__ = stats::weighted.mean(.outcome__, .weight__, na.rm = TRUE)),
+    by = .node_id__
+  ]
+
+  global_mean <- stats::weighted.mean(
+    train_dt$.outcome__, weights, na.rm = TRUE)
+  new_nodes <- predict(fit, newdata = new_dt, type = "node")
+  pred <- node_mean_dt[match(new_nodes, .node_id__), .node_mean__]
+  pred[is.na(pred)] <- global_mean
+  as.numeric(pred)
+}
+```
+
+
+
 
 
 ```{r example-plot_ci_tree}
