@@ -1,16 +1,84 @@
-flat_partytrees.Rmd:
-  path: dev/flat_partytrees.Rmd
+ci_ranking.Rmd:
+  path: dev/ci_ranking.Rmd
   state: active
   R: R/rank_wt.R
   tests: tests/testthat/test-rank_wt.R
-  vignettes: vignettes/inequality-aware-party-trees.Rmd
+  vignettes: vignettes/ci-ranking-helpers.Rmd
   inflate:
-    flat_file: dev/flat_partytrees.Rmd
-    vignette_name: Inequality-aware party trees
+    flat_file: dev/ci_ranking.Rmd
+    vignette_name: CI ranking helpers
     open_vignette: true
     check: true
     document: true
     overwrite: ask
+    clean: ask
+    codecov: false
+ci_split_search.Rmd:
+  path: dev/ci_split_search.Rmd
+  state: active
+  R: R/best_numeric_split.R
+  tests: tests/testthat/test-best_numeric_split.R
+  vignettes: vignettes/ci-split-search.Rmd
+  inflate:
+    flat_file: dev/ci_split_search.Rmd
+    vignette_name: CI split search
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: ask
+    clean: ask
+    codecov: false
+ci_tree_builder.Rmd:
+  path: dev/ci_tree_builder.Rmd
+  state: active
+  R: R/ci_tree_control.R
+  tests: tests/testthat/test-ci_tree_control.R
+  vignettes: vignettes/ci-tree-builder.Rmd
+  inflate:
+    flat_file: dev/ci_tree_builder.Rmd
+    vignette_name: CI tree builder
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: 'yes'
+    clean: ask
+    codecov: false
+ci_tree_models.Rmd:
+  path: dev/ci_tree_models.Rmd
+  state: active
+  R: R/ci_splitfun.R
+  tests: tests/testthat/test-ci_splitfun.R
+  vignettes: vignettes/ci-tree-models.Rmd
+  inflate:
+    flat_file: dev/ci_tree_models.Rmd
+    vignette_name: CI tree models
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: 'yes'
+    clean: ask
+    codecov: false
+keep:
+  path: keep
+  state: active
+  R:
+  - R/doc_kenya.R
+  - R/utils-pipe.R
+  tests: []
+  vignettes: vignettes/inequality-aware-party-trees.Rmd
+model_selection.Rmd:
+  path: dev/model_selection.Rmd
+  state: active
+  R: R/ci_tree_control_grid.R
+  tests: tests/testthat/test-ci_tree_control_grid.R
+  vignettes: vignettes/model-selection.Rmd
+  inflate:
+    flat_file: dev/model_selection.Rmd
+    vignette_name: Model selection
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: 'yes'
     clean: ask
     codecov: false
 plot_tree_helpers.Rmd:

@@ -61,7 +61,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 inherits(tree_edge_panel_compact, "grapcon_generator")

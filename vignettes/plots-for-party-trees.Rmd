@@ -66,7 +66,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 inherits(tree_edge_panel_compact, "grapcon_generator")
@@ -93,7 +93,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 inherits(tree_inner_panel_labeled, "grapcon_generator")
@@ -117,7 +117,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 tree_build_terminal_stats(
@@ -146,7 +146,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 stats_df <- tree_build_terminal_stats(
@@ -234,7 +234,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 plot(fit)

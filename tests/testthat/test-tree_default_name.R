@@ -32,7 +32,7 @@ test_that("tree_edge_panel_compact is a graph-content generator", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   expect_s3_class(tree_edge_panel_compact, "grapcon_generator")
@@ -52,7 +52,7 @@ test_that("tree_inner_panel_labeled is a graph-content generator", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   expect_s3_class(tree_inner_panel_labeled, "grapcon_generator")
@@ -72,7 +72,7 @@ test_that("tree_build_terminal_stats computes one row per terminal node", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   stats_df <- tree_build_terminal_stats(
@@ -113,7 +113,7 @@ test_that(
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   expect_error(
@@ -139,7 +139,7 @@ test_that("tree_terminal_panel_stats is a graph-content generator", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   stats_df <- tree_build_terminal_stats(
@@ -168,7 +168,7 @@ test_that("plot dispatches for ci_tree without error", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   pdf_file <- tempfile(fileext = ".pdf")

@@ -9,3 +9,5 @@
 ^README\.Rmd$
 ^data-raw$
 ^\.github$
+^\.positai$
+^\.claude$

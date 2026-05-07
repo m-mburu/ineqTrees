@@ -9,7 +9,7 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.path = "man/figures/README-",
   out.width = "100%",
-  dpi = 1000
+  dpi = 300
 )
 ```
 
@@ -26,7 +26,7 @@ knitr::opts_chunk$set(
 `ineqTrees` provides tools for studying socioeconomic inequality in health
 outcomes with tree-based models. The package includes weighted rank and
 concentration-index utilities, inequality-aware split scoring, and wrappers
-around `partykit` for fitting conditional inference trees and forests.
+for fitting greedy concentration-index trees and forests.
 
 ## Installation
 
@@ -38,67 +38,140 @@ remotes::install_github("m-mburu/ineqTrees")
 
 ## Fitting a tree
 
-The example below fits an inequality-aware conditional inference tree on a
+The example below fits an inequality-aware greedy tree on a
 sample from the built-in `kenya` dataset. The response combines the ranking
 variable (`wealth`) and the health outcome (`deadu5_num`), while the split
 criterion is based on concentration-index reduction.
 
-```{r example, fig.width=15, fig.height=9}
-library(ineqTrees)
+
+```{r readme-helpers, include=FALSE}
+readme_predictors <- c("rural", "ed", "reg", "unskilled")
+
+readme_tree_plot <- function(fit, data, outcome_name, outcome_label = "% death") {
+  metric_name <- "outcome_rate"
+  outcome_stat <- function(df) mean(df[[outcome_name]], na.rm = TRUE)
+
+  plot(
+    fit,
+    gp = grid::gpar(fontsize = 6.5),
+    data = data,
+    var_labels = c(
+      rural = "Residence",
+      reg = "Province",
+      ed = "Mother education",
+      unskilled = "Mother occupation"
+    ),
+    terminal_stats = c(
+      list(n = nrow),
+      stats::setNames(list(outcome_stat), metric_name),
+      list(
+        mean_wealth = function(df) mean(df$wealth, na.rm = TRUE),
+        ci = function(df) {
+          ci_factory("CI")(
+            cbind(df$wealth, df[[outcome_name]]),
+            rep(1, nrow(df))
+          )
+        }
+      )
+    ),
+    stat_labels = c(
+      list(n = "n"),
+      stats::setNames(list(outcome_label), metric_name),
+      list(
+        mean_wealth = expression(mu ~ wealth),
+        ci = "CI"
+      )
+    ),
+    stat_formatters = c(
+      list(
+        n = function(x) format(x, big.mark = ",", scientific = FALSE)
+      ),
+      stats::setNames(
+        list(function(x) sprintf("%.2f%%", 100 * x)),
+        metric_name
+      ),
+      list(
+        mean_wealth = function(x) sprintf("%.2f", x),
+        ci = function(x) sprintf("%.3f", x)
+      )
+    ),
+    terminal_fill = "#d9d9d9",
+    tp_args = list(
+      width_lines = 11,
+      height_lines = 5.2
+    ),
+    tnex = 0.85
+  )
+}
+
+readme_forest_predict <- function(object, newdata) {
+  as.numeric(
+    stats::predict(
+      object,
+      newdata = as.data.frame(newdata),
+      OOB = FALSE
+    )
+  )
+}
+
+readme_tuning_table <- function(x, columns, labels) {
+  out <- as.data.frame(x)
+  missing_columns <- setdiff(columns, names(out))
+  for (column in missing_columns) {
+    out[[column]] <- NA
+  }
+  out <- out[, columns, drop = FALSE]
+  names(out) <- labels
+  out
+}
+
+```
+
+### load data and set seed for reproducibility
+
+```{r readme-data}
+if (requireNamespace("pkgload", quietly = TRUE) && file.exists("DESCRIPTION")) {
+  suppressMessages(pkgload::load_all(export_all = FALSE))
+} else {
+  library(ineqTrees)
+}
+library(data.table)
 load("data/kenya.rda")
 
 set.seed(1)
+```
 
+### Fit  tree
+
+- This is a concentration-index tree, so the response is a two-column matrix of the ranking variable and the outcome. The `rank_name` and `outcome_name` arguments specify which columns of the data to use for those roles. The split criterion is based on concentration-index reduction, so the `control` argument specifies greedy controls rather than conditional-inference test controls.
+
+```{r fit-tree}
 fit_tree <- ctree_ci(
   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   data = kenya,
   rank_name = "wealth",
   outcome_name = "deadu5_num",
-  control = partykit::ctree_control(mincriterion = 0.95, maxdepth = 4)
-)
-
-plot(
-  fit_tree,
-  gp = grid::gpar(fontsize = 6.5),
-  data = kenya,
-  var_labels = c(
-    rural = "Residence",
-    reg = "Province",
-    ed = "Mother education",
-    unskilled = "Mother occupation"
-  ),
-  terminal_stats = list(
-    n = nrow,
-    death_rate = function(df) mean(df$deadu5_num),
-    mean_wealth = function(df) mean(df$wealth),
-    ci = function(df) {
-      ci_factory("CI")(cbind(df$wealth, df$deadu5_num), rep(1, nrow(df)))
-    }
-  ),
-  stat_labels = list(
-    n = "n",
-    death_rate = "% death",
-    mean_wealth = expression(mu ~ wealth),
-    ci = "CI"
-  ),
-  stat_formatters = list(
-    n = function(x) format(x, big.mark = ",", scientific = FALSE),
-    death_rate = function(x) sprintf("%.2f%%", 100 * x),
-    mean_wealth = function(x) sprintf("%.2f", x),
-    ci = function(x) sprintf("%.3f", x)
-  ),
-  terminal_fill = "#d9d9d9",
-  tp_args = list(
-    width_lines = 11,
-    height_lines = 5.2
-  ),
-  tnex = 0.85
+  control = ci_tree_control(maxdepth = 4L)
 )
 ```
 
-## Fit forests
+```{r tree-summary}
+fit_tree
+ci_tree_terminal_summary(fit_tree)
+```
 
-```{r randomForest}
+```{r readme-tree-plot, fig.width=15, fig.height=9}
+readme_tree_plot(fit_tree, kenya, "deadu5_num")
+```
+
+
+## Fitting a forest
+
+The forest interface uses the same response specification, but averages
+predictions across many greedy concentration-index trees. The tuned workflow
+later in the README uses the same model family with cross-validation.
+
+```{r fit-forest}
 fit_forest <- cf_ci(
   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   data = kenya,
@@ -106,98 +179,66 @@ fit_forest <- cf_ci(
   outcome_name = "deadu5_num",
   ntree = 10L,
   mtry = 1L,
-  control = partykit::ctree_control(mincriterion = 0.95, maxdepth = 4)
+  control = ci_tree_control(maxdepth = 5L)
 )
+fit_forest
 ```
 
+```{r}
+ci_forest_summary(fit_forest)
+```
 
-### Fit surrogate trees
+### Fit surrogarete tree to forest predictions
 
-```{r surrogate, fig.width=15, fig.height=9}
-preds <- stats::predict(
-  fit_forest,
-  newdata = kenya,
-  OOB = FALSE,
-  FUN = function(y, w) stats::weighted.mean(y[, "deadu5_num"], w)
-)
+- The surrogate is a greedy concentration-index tree that approximates the predictions of the fitted forest. This is useful for interpreting the forest and for tuning it with cross-validation, since the surrogate can be refit on held-out data and scored with CI gain.
 
-surrogate_data <- transform(kenya, forest_risk = preds)
+```{r surrogate-tree}
+setDT(kenya)
+kenya[, forest_risk := readme_forest_predict(
+   fit_forest, .SD
+), .SDcols = readme_predictors]
 
-surrogate_fit <- ctree_ci(
-  cbind(wealth, forest_risk) ~ rural + ed + reg + unskilled,
-  data = surrogate_data,
+surrogate_tree <- ctree_ci(
+  formula = cbind(wealth, forest_risk) ~ rural + ed + reg + unskilled,
+  data = kenya,
   rank_name = "wealth",
   outcome_name = "forest_risk",
-  control = partykit::ctree_control(mincriterion = 0.95, maxdepth = 4)
+  control = ci_tree_control(maxdepth = 4L)
 )
+surrogate_tree
+```
 
-summary(preds)
-plot(
-  surrogate_fit,
-  gp = grid::gpar(fontsize = 6.5),
-  data = surrogate_data,
-  var_labels = c(
-    rural = "Residence",
-    reg = "Province",
-    ed = "Mother education",
-    unskilled = "Mother occupation"
-  ),
-  terminal_stats = list(
-    n = nrow,
-    predicted_death_rate = function(df) mean(df$forest_risk),
-    mean_wealth = function(df) mean(df$wealth),
-    ci = function(df) {
-      ci_factory("CI")(cbind(df$wealth, df$forest_risk), rep(1, nrow(df)))
-    }
-  ),
-  stat_labels = list(
-    n = "n",
-    predicted_death_rate = "% death",
-    mean_wealth = expression(mu ~ wealth),
-    ci = "CI"
-  ),
-  stat_formatters = list(
-    n = function(x) format(x, big.mark = ",", scientific = FALSE),
-    predicted_death_rate = function(x) sprintf("%.2f%%", 100 * x),
-    mean_wealth = function(x) sprintf("%.2f", x),
-    ci = function(x) sprintf("%.3f", x)
-  ),
-  terminal_fill = "#d9d9d9",
-  tp_args = list(
-    width_lines = 11,
-    height_lines = 5.2
-  ),
-  tnex = 0.85
+## plot
+
+```{r surrogate-tree-plot, fig.width=15, fig.height=9 }
+readme_tree_plot(
+  surrogate_tree,
+  kenya,
+  outcome_name = "forest_risk",
+  outcome_label = "Predicted risk"
 )
 ```
+
+
 
 ## SHAP-based decomposition
 
 - Approximate SHAP values for the fitted forest with `fastshap::explain()`, using a prediction wrapper that returns the predicted outcome for each observation. 
 - Decompose the concentration index of those predicted risks with `shap_conc_decomp()`.
 
-```{r shap-decomposition, fig.width=8, fig.height=5}
-predict_cf_ci_wrapper <- function(object, newdata) {
-  stats::predict(
-    object,
-    newdata = newdata,
-    OOB = FALSE,
-    FUN = function(y, w) stats::weighted.mean(y[, "deadu5_num"], w)
-  )
-}
-
+```{r shap-compute}
 set.seed(20260328)
 shap_eval_n <- min(400L, nrow(kenya))
 shap_rows <- sort(sample.int(nrow(kenya), shap_eval_n))
-forest_X <- kenya[c("rural", "ed", "reg", "unskilled")]
+forest_X <- kenya[, ..readme_predictors]
 shap_X_eval <- forest_X[shap_rows, , drop = FALSE]
-forest_pred_eval <- predict_cf_ci_wrapper(fit_forest, shap_X_eval)
+forest_pred_eval <- readme_forest_predict(fit_forest, shap_X_eval)
 wealth_eval <- kenya$wealth[shap_rows]
 
 forest_shap <- fastshap::explain(
   object = fit_forest,
   X = forest_X,
-  pred_wrapper = predict_cf_ci_wrapper,
+  pred_wrapper = readme_forest_predict,
   newdata = shap_X_eval,
   nsim = 64,
   adjust = TRUE
@@ -209,28 +250,212 @@ decomp <- shap_conc_decomp(
   prediction = forest_pred_eval
 )
 
-decomp$diagnostics
-decomp$contributions
+shap_diagnostics <- as.data.frame(decomp$diagnostics)
+shap_contrib_table <- as.data.frame(decomp$contributions)
+shap_contrib_table <- shap_contrib_table[
+  order(-shap_contrib_table$abs_contribution),
+  ,
+  drop = FALSE
+]
+```
 
-ggplot2::ggplot(
-  as.data.frame(decomp$contributions),
-  ggplot2::aes(
+```{r shap-diagnostics}
+knitr::kable(
+  shap_diagnostics,
+  digits = 3,
+  caption = "SHAP decomposition diagnostics"
+)
+```
+
+```{r shap-contributions-table}
+knitr::kable(
+  shap_contrib_table,
+  digits = 3,
+  caption = "SHAP-based concentration-index contributions"
+)
+```
+
+```{r shap-decomposition-plot, fig.width=8, fig.height=5}
+library(ggplot2)
+ggplot(
+  shap_contrib_table,
+  aes(
     x = stats::reorder(feature, pct_contribution),
     y = pct_contribution,
     fill = pct_contribution > 0
   )
 ) +
-  ggplot2::geom_col(width = 0.7) +
-  ggplot2::coord_flip() +
-  ggplot2::scale_fill_manual(
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
     values = c("#2166ac", "#b2182b"),
     guide = "none"
   ) +
-  ggplot2::labs(
+  labs(
     x = NULL,
     y = "Percentage contribution",
     title = "SHAP-based concentration-index decomposition"
   ) +
-  ggplot2::theme_minimal(base_size = 12) +
-  ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+
+```{r tuning-data}
+set.seed(20260507)
+tuning_n <- min(800L, nrow(kenya))
+tuning_rows <- sort(sample.int(nrow(kenya), tuning_n))
+tuning_data <- kenya[tuning_rows, , drop = FALSE]
+```
+
+## Tune tree hyperparameters
+
+The current model-selection workflow uses `ci_tree_control_grid()` to define
+candidate greedy controls and `tune_ctree_ci()` to score them with
+cross-validation. The concentration-index variant is tuned alongside the tree
+controls by passing several values to `type`.
+
+```{r tree-tuning-grid}
+tree_tune_grid <- ci_tree_control_grid(
+  minsplit = c(150L, 250L),
+  minbucket = c(60L, 100L),
+  maxdepth = 2L:5L,
+  minprob = c(0.01, 0.1, 0.2, 0.3)
+)
+```
+
+```{r tree-tuning-fit}
+tree_tuning <- tune_ctree_ci(
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  data = tuning_data,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  type = c("CI", "CIg", "CIc"),
+  control_grid = tree_tune_grid,
+  v = 10L,
+  strata = "deadu5_num",
+  seed = 20260507,
+  metric = "validation_gain",
+  refit = TRUE
+)
+```
+
+```{r tree-tuning-table}
+tree_tuning_table <- readme_tuning_table(
+  tree_tuning$summary,
+  columns = c(
+    "type",
+    "minsplit",
+    "minbucket",
+    "maxdepth",
+    "mean_score",
+    "sd_score",
+    "mean_terminal_nodes"
+  ),
+  labels = c(
+    "type",
+    "minsplit",
+    "minbucket",
+    "maxdepth",
+    "mean_validation_gain",
+    "sd_validation_gain",
+    "mean_terminal_nodes"
+  )
+)
+
+knitr::kable(
+  tree_tuning_table,
+  digits = 3,
+  caption = "Cross-validated greedy tree tuning results"
+)
+```
+
+```{r tree-tuning-plot, fig.width=15, fig.height=9}
+readme_tree_plot(
+  fit = tree_tuning$best_fit,
+  data = tuning_data,
+  outcome_name = "deadu5_num"
+)
+```
+
+## Tune forest hyperparameters
+
+For forests, `tune_cf_ci()` uses the same greedy controls and adds `ntree` when
+that column is present in the tuning grid. Each candidate forest is summarized
+by a surrogate greedy CI tree, and the grid is ranked by held-out CI validation
+gain from that surrogate.
+
+```{r forest-tuning-grid}
+forest_tune_grid <- ci_tree_control_grid(
+  minsplit = c(100L, 200L),
+  minbucket = c(50L, 100L, 200L),
+  maxdepth = c(3L:6L),
+  mtry = c(1L, 2L),
+  ntree = c(10L, 50L, 100L)
+)
+```
+
+```{r forest-tuning-fit}
+forest_tuning <- tune_cf_ci(
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  data = tuning_data,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  type = c("CI", "CIg", "CIc"),
+  control_grid = forest_tune_grid,
+  v = 10L,
+  strata = "deadu5_num",
+  seed = 20260508,
+  prediction_name = "forest_risk",
+  refit = TRUE
+)
+
+```
+
+```{r forest-tuning-table}
+forest_tuning_table <- readme_tuning_table(
+  forest_tuning$summary,
+  columns = c(
+    "type",
+    "ntree",
+    "mtry",
+    "maxdepth",
+    "mean_score",
+    "sd_score",
+    "mean_terminal_nodes"
+  ),
+  labels = c(
+    "type",
+    "ntree",
+    "mtry",
+    "maxdepth",
+    "mean_validation_gain",
+    "sd_validation_gain",
+    "mean_terminal_nodes"
+  )
+)
+
+knitr::kable(
+  forest_tuning_table,
+  digits = 3,
+  caption = "Cross-validated greedy forest tuning results ranked by validation gain"
+)
+```
+
+```{r forest-surrogate-data}
+best_tuned_forest <- forest_tuning$best_fit
+forest_surrogate_data <- forest_tuning$best_surrogate_data
+```
+
+```{r forest-surrogate-fit}
+forest_surrogate_fit <- forest_tuning$best_surrogate
+```
+
+```{r forest-surrogate-plot, fig.width=15, fig.height=9}
+readme_tree_plot(
+  fit = forest_surrogate_fit,
+  data = forest_surrogate_data,
+  outcome_name = "forest_risk",
+  outcome_label = "Predicted risk"
+)
 ```
