@@ -271,7 +271,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 inherits(tree_edge_panel_compact, "grapcon_generator")
@@ -292,7 +292,7 @@ test_that("tree_edge_panel_compact is a graph-content generator", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   expect_s3_class(tree_edge_panel_compact, "grapcon_generator")
@@ -343,9 +343,10 @@ tree_inner_panel_labeled <- function(
 
     plab <- ""
     if (show_p) {
-      pvalue <- tryCatch(partykit::info_node(node)$p.value,
-        error = function(e) NA_real_
-      )
+      pvalue <- tryCatch({
+        value <- partykit::info_node(node)$p.value
+        if (length(value) != 1L) NA_real_ else as.numeric(value)
+      }, error = function(e) NA_real_)
       plab <- if (is.na(pvalue)) {
         ""
       } else if (pvalue < 0.001) {
@@ -429,7 +430,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 inherits(tree_inner_panel_labeled, "grapcon_generator")
@@ -450,7 +451,7 @@ test_that("tree_inner_panel_labeled is a graph-content generator", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   expect_s3_class(tree_inner_panel_labeled, "grapcon_generator")
@@ -541,7 +542,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 tree_build_terminal_stats(
@@ -568,7 +569,7 @@ test_that("tree_build_terminal_stats computes one row per terminal node", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   stats_df <- tree_build_terminal_stats(
@@ -609,7 +610,7 @@ test_that(
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   expect_error(
@@ -749,7 +750,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 stats_df <- tree_build_terminal_stats(
@@ -779,7 +780,7 @@ test_that("tree_terminal_panel_stats is a graph-content generator", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   stats_df <- tree_build_terminal_stats(
@@ -977,7 +978,7 @@ fit <- ctree_ci(
   data = toy_data,
   rank_name = "rank",
   outcome_name = "outcome",
-  control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 )
 
 plot(fit)
@@ -1005,7 +1006,7 @@ test_that("plot dispatches for ci_tree without error", {
     data = toy_data,
     rank_name = "rank",
     outcome_name = "outcome",
-    control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
   )
 
   pdf_file <- tempfile(fileext = ".pdf")

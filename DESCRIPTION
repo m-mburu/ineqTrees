@@ -18,13 +18,13 @@ Imports:
     data.table,
     graphics,
     grid,
+    knitr,
     magrittr,
     partykit,
     stats,
     utils
 Suggests: 
     grDevices,
-    knitr,
     rmarkdown,
     testthat
 VignetteBuilder: 

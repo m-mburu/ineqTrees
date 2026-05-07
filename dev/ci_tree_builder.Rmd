@@ -1,0 +1,358 @@
+---
+title: "CI tree builder"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r development, include=FALSE}
+library(testthat)
+```
+
+<!--
+ Source of truth for one fusen feature area. Run the inflate chunk at the bottom after editing.
+-->
+
+```{r development-load}
+# Load already included functions if relevant
+pkgload::load_all(export_all = TRUE)
+```
+
+# Greedy tree controls and recursive builder
+
+```{r, function-ci_tree_control}
+#' Create controls for greedy concentration-index trees
+#'
+#' @param minsplit Minimum weighted node size required before attempting a
+#'   split.
+#' @param minbucket Minimum weighted child-node size.
+#' @param minprob Minimum child-node weight proportion.
+#' @param maxdepth Maximum tree depth, with the root at depth 0.
+#' @param min_gain Minimum concentration-index gain required to split a node.
+#' @param mtry Optional number of variables sampled as candidates at each node.
+#'
+#' @return A list of greedy CI tree controls.
+#'
+#' @export
+ci_tree_control <- function(minsplit = 200L,
+                            minbucket = 100L,
+                            minprob = 0.01,
+                            maxdepth = 4L,
+                            min_gain = 0,
+                            mtry = NULL) {
+  list(
+    minsplit = minsplit,
+    minbucket = minbucket,
+    minprob = minprob,
+    maxdepth = maxdepth,
+    min_gain = min_gain,
+    mtry = mtry
+  )
+}
+
+#' Normalize controls for greedy concentration-index trees
+#'
+#' @description
+#' Merges user-supplied controls with `ci_tree_control()` defaults and validates
+#' the scalar tuning values used by the greedy CI split search and recursive
+#' tree builder.
+#'
+#' This helper accepts the overlapping control names used by
+#' `partykit::ctree_control()`, which keeps older examples and user code easy to
+#' migrate while still dropping test-based conditional-inference controls such
+#' as `mincriterion`.
+#'
+#' @param control `NULL`, a list from `ci_tree_control()`, or a compatible
+#'   `partykit::ctree_control()` object.
+#'
+#' @return A normalized list with integer `minsplit`, `minbucket`, and `mtry`
+#'   values where appropriate.
+#'
+#' @export
+.ci_tree_normalize_control <- function(control = NULL) {
+  defaults <- ci_tree_control()
+
+  if (!is.null(control)) {
+    for (nm in intersect(names(defaults), names(control))) {
+      defaults[[nm]] <- control[[nm]]
+    }
+  }
+
+  ctrl <- defaults
+  scalar_names <- c("minsplit", "minbucket", "minprob", "maxdepth", "min_gain")
+
+  for (nm in scalar_names) {
+    if (length(ctrl[[nm]]) != 1L || is.na(ctrl[[nm]])) {
+      stop(sprintf("`control$%s` must be a single non-missing value.", nm),
+        call. = FALSE
+      )
+    }
+    ctrl[[nm]] <- as.numeric(ctrl[[nm]])
+  }
+
+  if (ctrl$minsplit < 0 || ctrl$minbucket < 0) {
+    stop("`minsplit` and `minbucket` must be non-negative.", call. = FALSE)
+  }
+  if (ctrl$minprob < 0 || ctrl$minprob > 0.5) {
+    stop("`minprob` must be between 0 and 0.5.", call. = FALSE)
+  }
+  if (ctrl$maxdepth < 0) {
+    stop("`maxdepth` must be non-negative.", call. = FALSE)
+  }
+
+  ctrl$minsplit <- as.integer(ceiling(ctrl$minsplit))
+  ctrl$minbucket <- as.integer(ceiling(ctrl$minbucket))
+
+  if (is.null(ctrl$mtry) || !is.finite(ctrl$mtry)) {
+    ctrl$mtry <- NULL
+  } else {
+    if (length(ctrl$mtry) != 1L || is.na(ctrl$mtry) || ctrl$mtry <= 0) {
+      stop("`control$mtry` must be `NULL` or a positive number.",
+        call. = FALSE
+      )
+    }
+    ctrl$mtry <- as.integer(ceiling(ctrl$mtry))
+  }
+
+  ctrl
+}
+```
+
+```{r, tests-ci_tree_control}
+test_that("ci_tree_control stores greedy tree controls", {
+  ctrl <- ci_tree_control(
+    minsplit = 10,
+    minbucket = 3,
+    minprob = 0.1,
+    maxdepth = 2,
+    min_gain = 0.01,
+    mtry = 1
+  )
+
+  expect_equal(ctrl$minsplit, 10)
+  expect_equal(ctrl$minbucket, 3)
+  expect_equal(ctrl$minprob, 0.1)
+  expect_equal(ctrl$maxdepth, 2)
+  expect_equal(ctrl$min_gain, 0.01)
+  expect_equal(ctrl$mtry, 1)
+})
+
+test_that(".ci_tree_normalize_control accepts shared ctree controls", {
+  ctrl <- ineqTrees::.ci_tree_normalize_control(
+    partykit::ctree_control(
+      minsplit = 5,
+      minbucket = 2,
+      minprob = 0,
+      maxdepth = 1,
+      mtry = 1
+    )
+  )
+
+  expect_equal(ctrl$minsplit, 5L)
+  expect_equal(ctrl$minbucket, 2L)
+  expect_equal(ctrl$minprob, 0)
+  expect_equal(ctrl$maxdepth, 1)
+  expect_equal(ctrl$mtry, 1L)
+})
+```
+
+```{r, function-ci_tree_builder_helpers}
+#' Recover the two-column response for a greedy CI tree
+#'
+#' @description
+#' Extracts the rank/outcome response used by `ctree_ci()` from a model frame.
+#' The preferred interface is a two-column response such as
+#' `cbind(rank, outcome) ~ x1 + x2`, but this helper can also recover named
+#' columns from the model frame when they are available.
+#'
+#' @param mf A model frame produced from the `ctree_ci()` formula and data.
+#' @param rank_name Name of the rank column to recover when the response is not
+#'   already a two-column matrix.
+#' @param outcome_name Name of the outcome column to recover when the response
+#'   is not already a two-column matrix.
+#'
+#' @return A numeric matrix with columns `rank` and `outcome`.
+#'
+#' @export
+.ci_tree_response <- function(mf, rank_name, outcome_name) {
+  response <- stats::model.response(mf)
+  y_full <- NULL
+
+  if (is.matrix(response) || is.data.frame(response)) {
+    response_mat <- tryCatch(as.matrix(response), error = function(e) NULL)
+    if (!is.null(response_mat) &&
+        is.matrix(response_mat) &&
+        ncol(response_mat) >= 2L) {
+      y_full <- response_mat[, 1:2, drop = FALSE]
+    }
+  }
+
+  if (is.null(y_full)) {
+    rank_vec <- mf[[rank_name]]
+    outcome_vec <- mf[[outcome_name]]
+
+    if (!is.null(rank_vec) && !is.null(outcome_vec)) {
+      y_full <- cbind(rank = rank_vec, outcome = outcome_vec)
+    }
+  }
+
+  if (is.null(y_full) || !is.matrix(y_full) || ncol(y_full) != 2L) {
+    stop(
+      "Unable to recover the two-column response expected by `ctree_ci()`. ",
+      "Use a response like `cbind(rank, outcome) ~ ...`.",
+      call. = FALSE
+    )
+  }
+
+  storage.mode(y_full) <- "double"
+  colnames(y_full) <- c("rank", "outcome")
+  y_full
+}
+
+#' Build descriptive information for one greedy CI tree node
+#'
+#' @description
+#' Computes the node-level metadata stored in each `partykit::partynode()`,
+#' including the weighted node size, tree depth, concentration index, and
+#' weighted outcome mean.
+#'
+#' @param y Two-column numeric matrix with `rank` and `outcome`.
+#' @param wt Non-negative case weights for the rows in `y`.
+#' @param depth Integer depth of the node, with the root at depth 0.
+#' @param ci_fun Concentration-index function created by `ci_factory()`.
+#'
+#' @return A list of node metadata stored in the `info` slot of a party node.
+#'
+#' @export
+.ci_node_info <- function(y, wt, depth, ci_fun) {
+  positive <- !is.na(wt) & wt > 0
+  weight_sum <- sum(wt[positive], na.rm = TRUE)
+
+  outcome_mean <- if (weight_sum > 0) {
+    stats::weighted.mean(y[positive, 2], wt[positive], na.rm = TRUE)
+  } else {
+    NA_real_
+  }
+
+  list(
+    n = length(wt),
+    weight = weight_sum,
+    depth = depth,
+    ci = ci_fun(y, wt),
+    outcome_mean = outcome_mean
+  )
+}
+
+#' Recursively build a greedy concentration-index party tree
+#'
+#' @description
+#' Grows the tree by repeatedly calling `best_global_ci_split()` at each node,
+#' so every split is chosen by directly maximizing concentration-index gain over
+#' candidate variables and candidate split points. The returned node is a
+#' `partykit` node and can be wrapped by `partykit::party()`.
+#'
+#' @param data Data frame of predictor variables.
+#' @param y Two-column numeric matrix with `rank` and `outcome`.
+#' @param wt Non-negative case weights.
+#' @param vars Integer positions of predictor variables considered for
+#'   splitting.
+#' @param ctrl Normalized control list from `.ci_tree_normalize_control()`.
+#' @param ci_fun Concentration-index function created by `ci_factory()`.
+#'
+#' @return A list with `node`, the root `partykit::partynode()`, and `fitted`,
+#'   an integer vector mapping training rows to terminal node ids.
+#'
+#' @export
+.build_ci_tree <- function(data, y, wt, vars, ctrl, ci_fun) {
+  next_id <- local({
+    id <- 0L
+    function() {
+      id <<- id + 1L
+      id
+    }
+  })
+
+  build_node <- function(obs, depth) {
+    id <- next_id()
+    y_node <- y[obs, , drop = FALSE]
+    wt_node <- wt[obs]
+    data_node <- data[obs, , drop = FALSE]
+
+    info <- .ci_node_info(
+      y = y_node,
+      wt = wt_node,
+      depth = depth,
+      ci_fun = ci_fun
+    )
+
+    terminal <- depth >= ctrl$maxdepth ||
+      sum(wt_node, na.rm = TRUE) < ctrl$minsplit
+
+    split <- NULL
+    if (!terminal) {
+      split <- best_global_ci_split(
+        x = data_node,
+        y = y_node,
+        wt = wt_node,
+        ctrl = ctrl,
+        ci_fun = ci_fun,
+        vars = vars
+      )
+    }
+
+    if (is.null(split)) {
+      fitted <- rep.int(id, length(obs))
+      names(fitted) <- obs
+      return(list(
+        node = partykit::partynode(id = id, info = info),
+        fitted = fitted
+      ))
+    }
+
+    left <- split$left
+    if (length(left) != length(obs) || !any(left) || all(left)) {
+      fitted <- rep.int(id, length(obs))
+      names(fitted) <- obs
+      return(list(
+        node = partykit::partynode(id = id, info = info),
+        fitted = fitted
+      ))
+    }
+
+    left_child <- build_node(obs[left], depth + 1L)
+    right_child <- build_node(obs[!left], depth + 1L)
+
+    info$gain <- split$gain
+    info$varid <- split$varid
+    info$varname <- names(data)[split$varid]
+    info$split_type <- split$type
+
+    node <- partykit::partynode(
+      id = id,
+      split = split$partysplit,
+      kids = list(left_child$node, right_child$node),
+      info = info
+    )
+
+    list(
+      node = node,
+      fitted = c(left_child$fitted, right_child$fitted)
+    )
+  }
+
+  tree <- build_node(seq_len(nrow(data)), 0L)
+  fitted <- integer(nrow(data))
+  fitted[as.integer(names(tree$fitted))] <- as.integer(tree$fitted)
+
+  list(node = tree$node, fitted = fitted)
+}
+```
+
+```{r development-inflate, eval=FALSE}
+# Run but keep eval=FALSE to avoid infinite loop
+# Execute in the console directly
+fusen::inflate(
+  flat_file = "dev/ci_tree_builder.Rmd",
+  vignette_name = "CI tree builder"
+)
+```

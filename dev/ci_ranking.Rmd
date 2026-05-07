@@ -1,0 +1,365 @@
+---
+title: "CI ranking helpers"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r development, include=FALSE}
+library(testthat)
+```
+
+<!--
+ Source of truth for one fusen feature area. Run the inflate chunk at the bottom after editing.
+-->
+
+```{r development-load}
+# Load already included functions if relevant
+pkgload::load_all(export_all = TRUE)
+```
+
+# Weighted ranks and concentration-index scoring
+
+```{r development-rank_wt}
+# You can prepare the code of the rank_wt() function here
+```
+  
+```{r function-rank_wt}
+#' Compute weighted fractional ranks
+#'
+#' Compute midpoint fractional ranks after sorting `x` in ascending order and
+#' normalizing positive weights to sum to one.
+#'
+#' Observations with missing `x`, missing `wt`, or non-positive `wt` are
+#' removed before ranking. The resulting ranks are useful as a low-level
+#' building block for concentration-index calculations and related inequality
+#' measures.
+#'
+#' @param x A numeric vector to rank.
+#' @param wt A numeric vector of case weights with the same length as `x`.
+#'
+#' @return A numeric vector of weighted fractional ranks in `(0, 1)`, one for
+#'   each retained observation. The output is ordered like the retained inputs
+#'   after removing cases with missing `x`, missing `wt`, or `wt <= 0`.
+#'
+#' @export
+rank_wt <- function(x, wt) {
+  stopifnot(length(x) == length(wt))
+  ok <- !is.na(x) & !is.na(wt) & wt > 0
+  x <- x[ok]
+  wt <- wt[ok]
+
+  if (!length(x)) {
+    return(numeric(0))
+  }
+
+  o <- order(x)
+  x <- x[o]
+  wt <- wt[o] / sum(wt)
+
+  r <- numeric(length(x))
+  if (length(x) == 1L) {
+    r[1L] <- 0.5
+  } else {
+    r <- c(0, cumsum(wt[-length(wt)])) + wt / 2
+  }
+
+  out <- numeric(sum(ok))
+  out[o] <- r
+  out
+}
+```
+  
+```{r example-rank_wt}
+rank_wt(c(10, 20, 30), c(1, 1, 2))
+rank_wt(c(1, 2, NA, 3), c(1, 0, 1, 2))
+```
+  
+```{r tests-rank_wt}
+test_that("rank_wt computes weighted midpoint ranks", {
+  expect_equal(
+    rank_wt(c(10, 20, 30), c(1, 1, 2)),
+    c(0.125, 0.375, 0.75)
+  )
+})
+
+test_that("rank_wt returns ranks in the order of retained inputs", {
+  expect_equal(
+    rank_wt(c(20, 10, 30), c(1, 1, 2)),
+    c(0.375, 0.125, 0.75)
+  )
+})
+
+test_that("rank_wt drops missing and non-positive weights before ranking", {
+  expect_equal(
+    rank_wt(c(2, NA, 1, 3), c(1, 1, 0, 2)),
+    c(1 / 6, 2 / 3)
+  )
+})
+
+test_that("rank_wt handles edge cases", {
+  expect_equal(rank_wt(5, 2), 0.5)
+  expect_equal(rank_wt(c(1, 2), c(0, NA)), numeric(0))
+  expect_error(rank_wt(1:2, 1))
+})
+```
+
+```{r, function-ci_factory}
+#' Create concentration-index scoring functions
+#'
+#' Build a function that computes a weighted concentration-index criterion from
+#' a two-column response matrix. The first column is treated as the
+#' socioeconomic ranking variable and the second as the health outcome.
+#'
+#' This factory is intended for inequality-aware split scoring, where different
+#' concentration-index variants can be swapped in while keeping a common
+#' `function(y, wt)` interface.
+#'
+#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the standard,
+#'   generalized, or corrected concentration index.
+#'
+#' @return A function with signature `function(y, wt)` where `y` is a two-column
+#'   numeric matrix and `wt` is a vector of positive case weights. The returned
+#'   function drops incomplete rows and non-positive weights, then returns a
+#'   single non-negative concentration-index value. It returns `0` when fewer
+#'   than two valid observations remain or when the required denominator is
+#'   degenerate.
+#'
+#' @details The returned function first converts `y[, 1]` to weighted
+#'   fractional ranks using [rank_wt()]. It then computes the weighted
+#'   covariance between rank and outcome and maps it to the requested index:
+#'   `"CI"` divides by the weighted mean of the outcome, `"CIg"` returns the
+#'   generalized form, and `"CIc"` applies an Erreygers-style range correction.
+#'   Absolute values are returned.
+#' @export 
+
+ci_factory <- function(type = c("CI", "CIg", "CIc")) {
+  type <- match.arg(type)
+
+  function(y, wt) {
+    stopifnot(is.matrix(y), ncol(y) == 2L, length(wt) == nrow(y))
+
+    ok <- stats::complete.cases(y) & !is.na(wt) & wt > 0
+    y <- y[ok, , drop = FALSE]
+    wt <- wt[ok]
+
+    if (nrow(y) <= 1L) {
+      return(0)
+    }
+
+    # column 1 = SES rank variable, column 2 = health outcome
+    y[, 1] <- rank_wt(y[, 1], wt)
+
+    cov12 <- stats::cov.wt(
+      x = as.matrix(data.frame(y1 = y[, 1], y2 = y[, 2])),
+      wt = wt
+    )$cov[1, 2]
+
+    if (type == "CI") {
+      mu <- stats::weighted.mean(y[, 2], wt)
+      if (isTRUE(all.equal(mu, 0))) {
+        return(0)
+      }
+      return(abs(2 * cov12 / mu))
+    }
+
+    if (type == "CIg") {
+      return(abs(2 * cov12))
+    }
+
+    # CIc = Erreygers-style corrected version
+    rng <- max(y[, 2], na.rm = TRUE) - min(y[, 2], na.rm = TRUE)
+    if (isTRUE(all.equal(rng, 0))) {
+      return(0)
+    }
+    4 * abs(2 * cov12) / rng
+  }
+}
+```
+
+```{r, example-ci_factory)}
+ci <- ci_factory("CI")
+y <- cbind(c(10, 20, 30), c(1, 0, 1))
+ci(y, c(1, 1, 2))
+cig <- ci_factory("CIg")
+cig(y, c(1, 1, 2))
+cic <- ci_factory("CIc")
+cic(y, c(1, 1, 2))
+```
+
+```{r, tests-ci_factory}
+test_that("ci_factory returns scoring functions and validates type", {
+  expect_true(is.function(ci_factory("CI")))
+  expect_true(is.function(ci_factory("CIg")))
+  expect_true(is.function(ci_factory("CIc")))
+  expect_error(ci_factory("bad"))
+})
+
+test_that("ci_factory computes expected CI variants on a simple example", {
+  y <- cbind(c(10, 20, 30), c(1, 0, 1))
+  wt <- c(1, 1, 2)
+
+  ci <- ci_factory("CI")
+  cig <- ci_factory("CIg")
+  cic <- ci_factory("CIc")
+
+  expect_equal(ci(y, wt), 2 / 15)
+  expect_equal(cig(y, wt), 0.1)
+  expect_equal(cic(y, wt), 0.4)
+})
+
+test_that("ci_factory drops incomplete and non-positive-weight rows", {
+  y1 <- cbind(c(10, 20, 30, NA), c(1, 0, 1, 1))
+  wt1 <- c(1, 1, 2, 1)
+
+  y2 <- cbind(c(10, 20, 30), c(1, 0, 1))
+  wt2 <- c(1, 1, 2)
+
+  ci <- ci_factory("CI")
+  expect_equal(ci(y1, wt1), ci(y2, wt2))
+
+  y3 <- cbind(c(10, 20, 30, 40), c(1, 0, 1, 1))
+  wt3 <- c(1, 1, 2, 0)
+  expect_equal(ci(y3, wt3), ci(y2, wt2))
+})
+
+test_that("ci_factory returns zero for insufficient valid data", {
+  ci <- ci_factory("CI")
+  y <- cbind(c(10, NA), c(1, 0))
+  wt <- c(1, 1)
+
+  expect_equal(ci(y, wt), 0)
+})
+
+test_that("ci_factory handles degenerate denominators", {
+  ci <- ci_factory("CI")
+  cic <- ci_factory("CIc")
+
+  y_mu0 <- cbind(c(10, 20, 30), c(0, 0, 0))
+  expect_equal(ci(y_mu0, c(1, 1, 1)), 0)
+
+  y_rng0 <- cbind(c(10, 20, 30), c(5, 5, 5))
+  expect_equal(cic(y_rng0, c(1, 1, 1)), 0)
+})
+
+test_that("ci_factory is invariant to rescaling weights", {
+  y <- cbind(c(10, 20, 30), c(1, 0, 1))
+  ci <- ci_factory("CI")
+
+  expect_equal(ci(y, c(1, 1, 2)), ci(y, c(10, 10, 20)))
+})
+```
+
+
+```{r, function-weighted_ci_gain}
+#' Compute weighted concentration-index gain for a binary split
+#' It computes the gain in concentration index from splitting 
+#'  a node into left and right parts, weighted by the case weights. 
+#'  The gain is calculated as the difference between the parent node's
+#'  concentration index and the weighted average of the left and right 
+#'  child nodes' concentration indices.
+#' @param y A matrix with two columns: SES rank variable and health outcome.
+#' @param wt A numeric vector of weights.
+#' @param left A logical vector indicating the left split.
+#' @param ci_fun A function to compute the concentration index.
+#' @return The weighted concentration-index gain.
+#' @export
+weighted_ci_gain <- function(y, wt, left, ci_fun) {
+  stopifnot(length(left) == nrow(y), length(wt) == nrow(y))
+
+  wl <- sum(wt[left], na.rm = TRUE)
+  wr <- sum(wt[!left], na.rm = TRUE)
+  wtot <- wl + wr
+
+  if (wl <= 0 || wr <= 0 || wtot <= 0) return(-Inf)
+
+  ci_parent <- ci_fun(y, wt)
+  ci_left   <- ci_fun(y[left,  , drop = FALSE], wt[left])
+  ci_right  <- ci_fun(y[!left, , drop = FALSE], wt[!left])
+
+  ci_parent - ((wl / wtot) * ci_left + (wr / wtot) * ci_right)
+}
+```
+
+```{r, example-weighted_ci_gain}
+y <- cbind(
+  ses = c(10, 20, 30, 40, 50, 60),
+  health = c(1, 0, 1, 0, 1, 1)
+)
+wt <- rep(1, 6)
+
+# A candidate split evaluated outside any tree-fitting routine
+left <- c(TRUE, TRUE, TRUE, FALSE, FALSE, FALSE)
+
+weighted_ci_gain(y, wt, left, ci_factory("CI"))
+```
+
+```{r, tests-weighted_ci_gain}
+test_that("weighted_ci_gain computes parent minus weighted child impurity", {
+  y <- cbind(ses = 1:4, health = c(10, 20, 30, 40))
+  wt <- c(1, 2, 3, 4)
+  left <- c(TRUE, TRUE, FALSE, FALSE)
+  mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)
+
+  expect_equal(
+    weighted_ci_gain(y, wt, left, mock_ci_fun),
+    110
+  )
+})
+
+test_that("weighted_ci_gain returns -Inf for invalid splits", {
+  y <- cbind(ses = 1:4, health = c(10, 20, 30, 40))
+  wt <- c(1, 2, 3, 4)
+  mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)
+
+  expect_equal(
+    weighted_ci_gain(y, wt, c(TRUE, TRUE, TRUE, TRUE), mock_ci_fun),
+    -Inf
+  )
+  expect_equal(
+    weighted_ci_gain(
+      y, c(0, 2, 3, 4),
+      c(TRUE, FALSE, FALSE, FALSE), mock_ci_fun
+    ),
+    -Inf
+  )
+})
+
+test_that("weighted_ci_gain validates input lengths", {
+  y <- cbind(ses = 1:4, health = c(10, 20, 30, 40))
+  wt <- c(1, 2, 3, 4)
+  mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)
+
+  expect_error(weighted_ci_gain(
+    y, wt,
+    c(TRUE, FALSE), mock_ci_fun
+  ))
+  expect_error(weighted_ci_gain(
+    y, 1:3,
+    c(TRUE, FALSE, TRUE, FALSE), mock_ci_fun
+  ))
+})
+
+test_that("weighted_ci_gain is invariant to global weight rescaling with CI", {
+  y <- cbind(
+    ses = c(10, 20, 30, 40, 50, 60),
+    health = c(1, 0, 1, 0, 1, 1)
+  )
+  left <- c(TRUE, TRUE, TRUE, FALSE, FALSE, FALSE)
+  ci <- ci_factory("CI")
+
+  expect_equal(
+    weighted_ci_gain(y, rep(1, 6), left, ci),
+    weighted_ci_gain(y, rep(10, 6), left, ci)
+  )
+})
+```
+
+```{r development-inflate, eval=FALSE}
+# Run but keep eval=FALSE to avoid infinite loop
+# Execute in the console directly
+fusen::inflate(
+  flat_file = "dev/ci_ranking.Rmd",
+  vignette_name = "CI ranking helpers"
+)
+```

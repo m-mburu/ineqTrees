@@ -78,7 +78,7 @@ tree_pretty_var_name <- function(var_name, var_labels = NULL) {
 #'   data = toy_data,
 #'   rank_name = "rank",
 #'   outcome_name = "outcome",
-#'   control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 #' )
 #'
 #' plot(fit)
@@ -196,7 +196,7 @@ plot.ci_tree <- function(x,
 #'   data = toy_data,
 #'   rank_name = "rank",
 #'   outcome_name = "outcome",
-#'   control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 #' )
 #'
 #' tree_build_terminal_stats(
@@ -371,7 +371,7 @@ tree_compact_split_label <- function(
 #'   data = toy_data,
 #'   rank_name = "rank",
 #'   outcome_name = "outcome",
-#'   control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 #' )
 #'
 #' inherits(tree_edge_panel_compact, "grapcon_generator")
@@ -471,7 +471,7 @@ class(tree_edge_panel_compact) <- "grapcon_generator"
 #'   data = toy_data,
 #'   rank_name = "rank",
 #'   outcome_name = "outcome",
-#'   control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 #' )
 #'
 #' inherits(tree_inner_panel_labeled, "grapcon_generator")
@@ -495,9 +495,10 @@ tree_inner_panel_labeled <- function(
 
     plab <- ""
     if (show_p) {
-      pvalue <- tryCatch(partykit::info_node(node)$p.value,
-        error = function(e) NA_real_
-      )
+      pvalue <- tryCatch({
+        value <- partykit::info_node(node)$p.value
+        if (length(value) != 1L) NA_real_ else as.numeric(value)
+      }, error = function(e) NA_real_)
       plab <- if (is.na(pvalue)) {
         ""
       } else if (pvalue < 0.001) {
@@ -603,7 +604,7 @@ class(tree_inner_panel_labeled) <- "grapcon_generator"
 #'   data = toy_data,
 #'   rank_name = "rank",
 #'   outcome_name = "outcome",
-#'   control = partykit::ctree_control(mincriterion = 0, maxdepth = 1)
+#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 #' )
 #'
 #' stats_df <- tree_build_terminal_stats(

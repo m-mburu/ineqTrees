@@ -1,0 +1,17 @@
+---
+title: "CI tree flat-file index"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+# CI tree sources
+
+The former monolithic `dev/ci_tree.Rmd` has been split into focused fusen flat files:
+
+- `dev/ci_ranking.Rmd`: `rank_wt()`, `ci_factory()`, `weighted_ci_gain()`
+- `dev/ci_split_search.Rmd`: split-search helpers and global greedy CI split selection
+- `dev/ci_tree_builder.Rmd`: tree controls and recursive partykit builder internals
+- `dev/ci_tree_models.Rmd`: `ctree_ci()`, `ci_splitfun()`, `cf_ci()`, `as_caseweights()`
+
+Inflate those files directly, or use `fusen::inflate_all()` once they are registered.
