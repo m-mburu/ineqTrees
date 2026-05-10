@@ -3,7 +3,7 @@
 #' Create a tuning grid for greedy concentration-index trees and forests
 #'
 #' @description
-#' Builds a grid of candidate controls for [ctree_ci()] and [cf_ci()]. The grid
+#' Builds a grid of candidate controls for [ci_tree()] and [ci_forest()]. The grid
 #' is designed for the fully greedy tree builder, so it tunes tree-size and
 #' split-search controls rather than conditional-inference test controls such
 #' as `alpha` or `mincriterion`.
@@ -280,7 +280,7 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
     OOB = FALSE
   )
 
-  surrogate <- ctree_ci(
+  surrogate <- ci_tree(
     formula = .ci_surrogate_formula(formula, rank_name, prediction_name),
     data = surrogate_data,
     rank_name = rank_name,
@@ -299,7 +299,7 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 #' @description
 #' Assigns training observations to terminal nodes, computes a weighted mean
 #' outcome in each node, and returns those node means for `new_data`. This is a
-#' simple prediction rule for scoring [ctree_ci()] models when the tree itself
+#' simple prediction rule for scoring [ci_tree()] models when the tree itself
 #' is primarily grown to reduce within-node inequality rather than prediction
 #' error.
 #'
@@ -319,21 +319,21 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 #'   outcome = c(1, 0, 1, 0, 1, 1),
 #'   income = c(2, 4, 6, 8, 10, 12)
 #' )
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   cbind(rank, outcome) ~ income,
 #'   data = toy_data,
 #'   rank_name = "rank",
 #'   outcome_name = "outcome",
 #'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
 #' )
-#' predict_ctree_ci_terminal_mean(fit, toy_data, outcome_name = "outcome")
+#' predict_ci_tree_terminal_mean(fit, toy_data, outcome_name = "outcome")
 #'
 #' @export
-predict_ctree_ci_terminal_mean <- function(fit,
-                                           train_data,
-                                           new_data = train_data,
-                                           outcome_name,
-                                           weights = NULL) {
+predict_ci_tree_terminal_mean <- function(fit,
+                                          train_data,
+                                          new_data = train_data,
+                                          outcome_name,
+                                          weights = NULL) {
   if (!inherits(fit, "party")) {
     stop("`fit` must inherit from class `party`.", call. = FALSE)
   }
@@ -365,6 +365,16 @@ predict_ctree_ci_terminal_mean <- function(fit,
   as.numeric(pred)
 }
 
+#' Compatibility alias for `predict_ci_tree_terminal_mean()`
+#'
+#' @param ... Arguments passed to [predict_ci_tree_terminal_mean()].
+#' @return A numeric vector of predicted terminal-node means.
+#' @rdname predict_ci_tree_terminal_mean
+#' @export
+predict_ctree_ci_terminal_mean <- function(...) {
+  predict_ci_tree_terminal_mean(...)
+}
+
 #' Compute held-out concentration-index validation gain
 #'
 #' @description
@@ -391,7 +401,7 @@ predict_ctree_ci_terminal_mean <- function(fit,
 #'   outcome = c(1, 0, 1, 0, 1, 1),
 #'   income = c(2, 4, 6, 8, 10, 12)
 #' )
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   cbind(rank, outcome) ~ income,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -589,7 +599,7 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #' Tune greedy concentration-index tree controls by cross-validation
 #'
 #' @description
-#' Fits [ctree_ci()] across a grid of greedy tree controls and concentration
+#' Fits [ci_tree()] across a grid of greedy tree controls and concentration
 #' index criteria. If `type` contains multiple values, each of `"CI"`, `"CIg"`,
 #' and/or `"CIc"` is treated as a candidate objective and selected by the
 #' validation metric.
@@ -621,7 +631,7 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #' @param refit Should the best setting be refitted on the full data?
 #' @param verbose Should fold progress be printed?
 #' @param na.action A function for handling missing values.
-#' @param ... Additional arguments passed to [ctree_ci()].
+#' @param ... Additional arguments passed to [ci_tree()].
 #'
 #' @return A list with fold-level results, grid summary, best parameters, best
 #'   concentration-index type, best control, and optionally the refitted tree.
@@ -638,7 +648,7 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #'   minprob = 0,
 #'   maxdepth = 1:2
 #' )
-#' tuned <- tune_ctree_ci(
+#' tuned <- tune_ci_tree(
 #'   cbind(rank, outcome) ~ income,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -651,24 +661,24 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #' tuned$best_type
 #'
 #' @export
-tune_ctree_ci <- function(formula,
-                          data,
-                          rank_name,
-                          outcome_name,
-                          weights = NULL,
-                          type = c("CI", "CIg", "CIc"),
-                          control_grid = NULL,
-                          v = 5L,
-                          strata = NULL,
-                          fold_id = NULL,
-                          seed = NULL,
-                          metric = c(
-                            "validation_gain", "brier", "log_loss", "roc_auc"
-                          ),
-                          refit = TRUE,
-                          verbose = FALSE,
-                          na.action = stats::na.omit,
-                          ...) {
+tune_ci_tree <- function(formula,
+                         data,
+                         rank_name,
+                         outcome_name,
+                         weights = NULL,
+                         type = c("CI", "CIg", "CIc"),
+                         control_grid = NULL,
+                         v = 5L,
+                         strata = NULL,
+                         fold_id = NULL,
+                         seed = NULL,
+                         metric = c(
+                           "validation_gain", "brier", "log_loss", "roc_auc"
+                         ),
+                         refit = TRUE,
+                         verbose = FALSE,
+                         na.action = stats::na.omit,
+                         ...) {
   type <- .ci_match_type(type)
   metric <- match.arg(metric)
 
@@ -734,7 +744,7 @@ tune_ctree_ci <- function(formula,
         if (!is.null(seed_base)) {
           set.seed(seed_base + (g - 1L) * length(fold_levels) + fold_position)
         }
-        fit <- ctree_ci(
+        fit <- ci_tree(
           formula = formula,
           data = data[train_idx, , drop = FALSE],
           rank_name = rank_name,
@@ -764,7 +774,7 @@ tune_ctree_ci <- function(formula,
             type = this_type
           )
         } else {
-          pred <- predict_ctree_ci_terminal_mean(
+          pred <- predict_ci_tree_terminal_mean(
             fit = fit_result$fit,
             train_data = data[train_idx, , drop = FALSE],
             new_data = data[test_idx, , drop = FALSE],
@@ -861,7 +871,7 @@ tune_ctree_ci <- function(formula,
       if (!is.null(seed_base)) {
         set.seed(seed_base + nrow(tuning_grid) * length(fold_levels) + 1L)
       }
-      best_fit <- ctree_ci(
+      best_fit <- ci_tree(
         formula = formula,
         data = data,
         rank_name = rank_name,
@@ -889,333 +899,5 @@ tune_ctree_ci <- function(formula,
     control_grid = data.table::as.data.table(tuning_grid)
   )
   class(out) <- c("ci_tree_tuning", class(out))
-  out
-}
-
-#' Tune greedy concentration-index forest controls by cross-validation
-#'
-#' @description
-#' Fits [cf_ci()] across candidate forest controls and concentration-index
-#' criteria. Each validation forest is summarized by a surrogate greedy
-#' [ctree_ci()] fitted to the forest predictions on the training fold, then
-#' scored by held-out concentration-index validation gain against the observed
-#' outcome. This keeps forest tuning aligned with the inequality objective while
-#' returning both the selected forest and a readable surrogate tree.
-#'
-#' @inheritParams tune_ctree_ci
-#' @param ntree Number of trees used when `control_grid` does not contain an
-#'   `ntree` column.
-#' @param surrogate_control Optional [ci_tree_control()] for the surrogate tree.
-#'   By default, the selected forest controls are reused with `mtry = NULL` so
-#'   the surrogate searches all split variables.
-#' @param prediction_name Name of the forest-prediction column added to the
-#'   surrogate data.
-#' @param perturb Resampling controls passed to [cf_ci()].
-#'
-#' @return A list with fold-level results, grid summary, best parameters, best
-#'   concentration-index type, selected forest, selected surrogate tree, and
-#'   surrogate data.
-#'
-#' @examples
-#' toy_data <- data.frame(
-#'   rank = c(10, 20, 30, 40, 50, 60, 70, 80),
-#'   outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
-#'   income = c(2, 4, 6, 8, 10, 12, 14, 16)
-#' )
-#' grid <- ci_tree_control_grid(
-#'   minsplit = 1,
-#'   minbucket = 1,
-#'   minprob = 0,
-#'   maxdepth = 1,
-#'   mtry = 1,
-#'   ntree = 3
-#' )
-#' tuned <- tune_cf_ci(
-#'   cbind(rank, outcome) ~ income,
-#'   data = toy_data,
-#'   rank_name = "rank",
-#'   outcome_name = "outcome",
-#'   control_grid = grid,
-#'   type = c("CI", "CIg"),
-#'   v = 2,
-#'   seed = 1
-#' )
-#' tuned$best_type
-#'
-#' @export
-tune_cf_ci <- function(formula,
-                       data,
-                       rank_name,
-                       outcome_name,
-                       weights = NULL,
-                       type = c("CI", "CIg", "CIc"),
-                       control_grid = NULL,
-                       ntree = 500L,
-                       v = 5L,
-                       strata = NULL,
-                       fold_id = NULL,
-                       seed = NULL,
-                       surrogate_control = NULL,
-                       prediction_name = "forest_risk",
-                       refit = TRUE,
-                       verbose = FALSE,
-                       perturb = list(replace = FALSE, fraction = 0.632),
-                       na.action = stats::na.omit,
-                       ...) {
-  type <- .ci_match_type(type)
-  ntree <- as.integer(ntree)
-  if (length(ntree) != 1L || is.na(ntree) || ntree <= 0L) {
-    stop("`ntree` must be a positive integer.", call. = FALSE)
-  }
-
-  seed_base <- NULL
-  if (!is.null(seed)) {
-    had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
-    if (had_seed) {
-      old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
-    }
-    on.exit({
-      if (had_seed) {
-        assign(".Random.seed", old_seed, envir = .GlobalEnv)
-      } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
-        rm(".Random.seed", envir = .GlobalEnv)
-      }
-    }, add = TRUE)
-    seed_base <- as.integer(seed)[1L]
-  }
-
-  data <- as.data.frame(data)
-  n <- nrow(data)
-  if (n <= 1L) {
-    stop("`data` must contain at least two rows.", call. = FALSE)
-  }
-
-  weights <- .ci_default_weights(weights, n)
-  .ci_outcome_numeric(data[[outcome_name]], outcome_name)
-
-  if (is.null(control_grid)) {
-    control_grid <- ci_tree_control_grid(ntree = ntree)
-  }
-  tuning_grid <- .ci_expand_selection_grid(control_grid, type)
-
-  if (is.null(fold_id)) {
-    strata_vec <- .ci_extract_strata(strata, data)
-    fold_id <- ci_cv_folds(n, v = v, strata = strata_vec, seed = seed)
-  } else {
-    if (length(fold_id) != n) {
-      stop("`fold_id` must have one value per row in `data`.", call. = FALSE)
-    }
-    fold_id <- as.integer(fold_id)
-  }
-
-  fold_levels <- sort(unique(fold_id))
-  if (length(fold_levels) < 2L) {
-    stop("`fold_id` must contain at least two folds.", call. = FALSE)
-  }
-
-  fold_results <- vector("list", nrow(tuning_grid) * length(fold_levels))
-  out_id <- 1L
-
-  for (g in seq_len(nrow(tuning_grid))) {
-    grid_row <- tuning_grid[g, , drop = FALSE]
-    control <- .ci_control_from_grid_row(grid_row)
-    surr_control <- .ci_surrogate_control(control, surrogate_control)
-    this_ntree <- .ci_forest_ntree_from_row(grid_row, ntree)
-    this_type <- as.character(grid_row$type[1L])
-
-    for (fold in fold_levels) {
-      train_idx <- which(fold_id != fold)
-      test_idx <- which(fold_id == fold)
-      fold_position <- match(fold, fold_levels)
-
-      fit_result <- tryCatch({
-        if (!is.null(seed_base)) {
-          set.seed(seed_base + (g - 1L) * length(fold_levels) + fold_position)
-        }
-        forest <- cf_ci(
-          formula = formula,
-          data = data[train_idx, , drop = FALSE],
-          rank_name = rank_name,
-          outcome_name = outcome_name,
-          weights = weights[train_idx],
-          type = this_type,
-          control = control,
-          ntree = this_ntree,
-          perturb = perturb,
-          na.action = na.action,
-          ...
-        )
-        surrogate <- .ci_fit_forest_surrogate(
-          forest = forest,
-          data = data[train_idx, , drop = FALSE],
-          formula = formula,
-          rank_name = rank_name,
-          prediction_name = prediction_name,
-          weights = weights[train_idx],
-          type = this_type,
-          control = surr_control,
-          na.action = na.action
-        )
-        list(ok = TRUE, forest = forest, surrogate = surrogate, error = NA_character_)
-      }, error = function(e) {
-        list(ok = FALSE, forest = NULL, surrogate = NULL, error = conditionMessage(e))
-      })
-
-      score <- NA_real_
-      n_terminal <- NA_integer_
-
-      if (isTRUE(fit_result$ok)) {
-        valid_data <- data[test_idx, , drop = FALSE]
-        valid_data[[prediction_name]] <- stats::predict(
-          fit_result$forest,
-          newdata = valid_data,
-          OOB = FALSE
-        )
-        score <- ci_tree_validation_gain(
-          fit = fit_result$surrogate$fit,
-          new_data = valid_data,
-          rank_name = rank_name,
-          outcome_name = outcome_name,
-          weights = weights[test_idx],
-          type = this_type
-        )
-        n_terminal <- length(partykit::nodeids(
-          fit_result$surrogate$fit,
-          terminal = TRUE
-        ))
-      }
-
-      row <- data.table::data.table(
-        grid_id = g,
-        fold_id = fold,
-        metric = "validation_gain",
-        score = score,
-        n_terminal = n_terminal,
-        fit_error = fit_result$error
-      )
-      for (nm in names(tuning_grid)) {
-        row[[nm]] <- grid_row[[nm]][1L]
-      }
-      if (!("ntree" %in% names(row))) {
-        row$ntree <- this_ntree
-      }
-      fold_results[[out_id]] <- row
-
-      if (isTRUE(verbose)) {
-        message(sprintf(
-          "[grid %d/%d, fold %s, type %s] validation_gain = %s",
-          g,
-          nrow(tuning_grid),
-          fold,
-          this_type,
-          if (is.na(score)) "NA" else format(round(score, 5), nsmall = 5)
-        ))
-      }
-
-      out_id <- out_id + 1L
-    }
-  }
-
-  fold_results <- data.table::rbindlist(fold_results, fill = TRUE)
-  summary_list <- lapply(seq_len(nrow(tuning_grid)), function(g) {
-    idx <- fold_results$grid_id == g
-    score <- fold_results$score[idx]
-    n_terminal <- fold_results$n_terminal[idx]
-
-    row <- data.table::data.table(
-      grid_id = g,
-      mean_score = if (all(is.na(score))) NA_real_ else mean(score, na.rm = TRUE),
-      sd_score = if (sum(!is.na(score)) <= 1L) {
-        NA_real_
-      } else {
-        stats::sd(score, na.rm = TRUE)
-      },
-      mean_terminal_nodes = if (all(is.na(n_terminal))) {
-        NA_real_
-      } else {
-        mean(n_terminal, na.rm = TRUE)
-      },
-      folds_completed = sum(!is.na(score)),
-      folds_failed = sum(!is.na(fold_results$fit_error[idx]))
-    )
-
-    for (nm in names(tuning_grid)) {
-      row[[nm]] <- tuning_grid[[nm]][g]
-    }
-    if (!("ntree" %in% names(row))) {
-      row$ntree <- .ci_forest_ntree_from_row(tuning_grid[g, , drop = FALSE], ntree)
-    }
-    row
-  })
-  summary <- data.table::rbindlist(summary_list, fill = TRUE)
-  summary <- summary[
-    order(-summary$mean_score, -summary$folds_completed, na.last = TRUE),
-    ,
-    drop = FALSE
-  ]
-
-  best_params <- summary[1L, , drop = FALSE]
-  best_control <- NULL
-  best_fit <- NULL
-  best_surrogate <- NULL
-  best_surrogate_data <- NULL
-  best_type <- NA_character_
-
-  if (nrow(best_params) > 0L && isTRUE(is.finite(best_params$mean_score))) {
-    best_control <- .ci_control_from_grid_row(best_params)
-    best_type <- as.character(best_params$type[1L])
-    best_ntree <- .ci_forest_ntree_from_row(best_params, ntree)
-    best_surrogate_control <- .ci_surrogate_control(best_control, surrogate_control)
-
-    if (isTRUE(refit)) {
-      if (!is.null(seed_base)) {
-        set.seed(seed_base + nrow(tuning_grid) * length(fold_levels) + 1L)
-      }
-      best_fit <- cf_ci(
-        formula = formula,
-        data = data,
-        rank_name = rank_name,
-        outcome_name = outcome_name,
-        weights = weights,
-        type = best_type,
-        control = best_control,
-        ntree = best_ntree,
-        perturb = perturb,
-        na.action = na.action,
-        ...
-      )
-      surrogate <- .ci_fit_forest_surrogate(
-        forest = best_fit,
-        data = data,
-        formula = formula,
-        rank_name = rank_name,
-        prediction_name = prediction_name,
-        weights = weights,
-        type = best_type,
-        control = best_surrogate_control,
-        na.action = na.action
-      )
-      best_surrogate <- surrogate$fit
-      best_surrogate_data <- surrogate$data
-    }
-  }
-
-  out <- list(
-    fold_results = fold_results,
-    summary = summary,
-    best_params = best_params,
-    best_type = best_type,
-    best_control = best_control,
-    best_fit = best_fit,
-    best_surrogate = best_surrogate,
-    best_surrogate_data = best_surrogate_data,
-    metric = "validation_gain",
-    metric_direction = "maximize",
-    model = "forest",
-    fold_id = fold_id,
-    control_grid = data.table::as.data.table(tuning_grid),
-    prediction_name = prediction_name
-  )
-  class(out) <- c("ci_forest_tuning", "ci_tree_tuning", class(out))
   out
 }

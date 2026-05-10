@@ -1,0 +1,33 @@
+$by.self
+                  self.time self.pct total.time total.pct
+"profile_expr"         0.01       50       0.02       100
+"constantFoldSym"      0.01       50       0.01        50
+
+$by.total
+                       total.time total.pct self.time self.pct
+"profile_expr"               0.02       100      0.01       50
+"constantFoldSym"            0.01        50      0.01       50
+".ci_fast_score"             0.01        50      0.00        0
+"ci_fun"                     0.01        50      0.00        0
+"cmp"                        0.01        50      0.00        0
+"cmpCall"                    0.01        50      0.00        0
+"cmpComplexAssign"           0.01        50      0.00        0
+"cmpfun"                     0.01        50      0.00        0
+"compiler:::tryCmpfun"       0.01        50      0.00        0
+"constantFold"               0.01        50      0.00        0
+"doTryCatch"                 0.01        50      0.00        0
+"eval"                       0.01        50      0.00        0
+"genCode"                    0.01        50      0.00        0
+"h"                          0.01        50      0.00        0
+"tryCatch"                   0.01        50      0.00        0
+"tryCatchList"               0.01        50      0.00        0
+"tryCatchOne"                0.01        50      0.00        0
+"tryInline"                  0.01        50      0.00        0
+"weighted_ci_gain"           0.01        50      0.00        0
+
+$sample.interval
+[1] 0.01
+
+$sampling.time
+[1] 0.02
+

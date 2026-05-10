@@ -1,0 +1,49 @@
+$by.self
+                                self.time self.pct total.time total.pct
+".ci_fast_score"                     0.24    36.36       0.53     80.30
+"order"                              0.11    16.67       0.16     24.24
+"...elt"                             0.06     9.09       0.07     10.61
+"sum"                                0.04     6.06       0.04      6.06
+"stopifnot"                          0.03     4.55       0.10     15.15
+"cumsum"                             0.03     4.55       0.03      4.55
+"stats::complete.cases"              0.03     4.55       0.03      4.55
+".weighted_ci_gain_from_parent"      0.02     3.03       0.65     98.48
+"c"                                  0.02     3.03       0.02      3.03
+"vapply"                             0.02     3.03       0.02      3.03
+"match.arg"                          0.01     1.52       0.02      3.03
+"any"                                0.01     1.52       0.01      1.52
+"ncol"                               0.01     1.52       0.01      1.52
+"numeric"                            0.01     1.52       0.01      1.52
+"Rprof"                              0.01     1.52       0.01      1.52
+"sys.function"                       0.01     1.52       0.01      1.52
+
+$by.total
+                                total.time total.pct self.time self.pct
+"profile_expr"                        0.66    100.00      0.00     0.00
+".weighted_ci_gain_from_parent"       0.65     98.48      0.02     3.03
+"best_numeric_split"                  0.65     98.48      0.00     0.00
+"eval"                                0.65     98.48      0.00     0.00
+"ci_fun"                              0.62     93.94      0.00     0.00
+".ci_fast_score"                      0.53     80.30      0.24    36.36
+"order"                               0.16     24.24      0.11    16.67
+"stopifnot"                           0.10     15.15      0.03     4.55
+"...elt"                              0.07     10.61      0.06     9.09
+"sum"                                 0.04      6.06      0.04     6.06
+"cumsum"                              0.03      4.55      0.03     4.55
+"stats::complete.cases"               0.03      4.55      0.03     4.55
+"c"                                   0.02      3.03      0.02     3.03
+"vapply"                              0.02      3.03      0.02     3.03
+"match.arg"                           0.02      3.03      0.01     1.52
+"any"                                 0.01      1.52      0.01     1.52
+"ncol"                                0.01      1.52      0.01     1.52
+"numeric"                             0.01      1.52      0.01     1.52
+"Rprof"                               0.01      1.52      0.01     1.52
+"sys.function"                        0.01      1.52      0.01     1.52
+"formals"                             0.01      1.52      0.00     0.00
+
+$sample.interval
+[1] 0.01
+
+$sampling.time
+[1] 0.66
+

@@ -56,7 +56,7 @@ toy_data <- data.frame(
   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 )
 
-fit <- ctree_ci(
+fit <- ci_tree(
   formula = cbind(rank, outcome) ~ income + group,
   data = toy_data,
   rank_name = "rank",

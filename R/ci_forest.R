@@ -93,11 +93,19 @@
 
 #' Fit a greedy concentration-index forest
 #'
-#' Grow an ensemble of greedy concentration-index trees. Each tree is fitted
-#' with [ctree_ci()] on a perturbed sample of the training data, so the split at
-#' each node is chosen by directly maximizing concentration-index gain over
-#' candidate variables and split points. The optional `mtry` control randomly
-#' samples candidate variables at each node inside the greedy split search.
+#' Grow an ensemble of greedy concentration-index trees. Each tree uses the same
+#' greedy tree builder as [ci_tree()] on a perturbed sample of the training
+#' data, so the split at each node is chosen by directly maximizing
+#' concentration-index gain over candidate variables and split points. The
+#' optional `mtry` control randomly samples candidate variables at each node
+#' inside the greedy split search.
+#'
+#' @details `ci_forest()` is an ensemble of greedy CI trees, not a
+#' conditional-inference forest. Randomness enters through row perturbation and,
+#' optionally, through `mtry`, which restricts the number of predictors searched
+#' at each node. Within each tree, the split rule is the same direct
+#' maximization of concentration-index gain used by [ci_tree()]. Predictions are
+#' aggregated across trees by averaging terminal-node summaries.
 #'
 #' @param formula A model formula, typically with a two-column response such as
 #'   `cbind(rank, outcome) ~ x1 + x2`.
@@ -124,26 +132,36 @@
 #'
 #' nrow(stats::fitted(fit))
 #'
+#' @references
+#' Breiman L (2001). "Random Forests." *Machine Learning*, 45, 5-32.
+#'
+#' Breiman L, Friedman JH, Olshen RA, Stone CJ (1984). *Classification and
+#' Regression Trees*. Wadsworth.
+#'
+#' Hothorn T, Zeileis A (2015). "partykit: A Modular Toolkit for Recursive
+#' Partytioning in R." *Journal of Machine Learning Research*, 16, 3905-3909.
+#' https://jmlr.org/papers/v16/hothorn15a.html.
+#'
 #' @export
 
-cf_ci <- function(formula,
-                  data,
-                  rank_name,
-                  outcome_name,
-                  weights = NULL,
-                  type = c("CI", "CIg", "CIc"),
-                  control = ci_tree_control(),
-                  ntree = 500L,
-                  mtry = NULL,
-                  perturb = list(replace = FALSE, fraction = 0.632),
-                  na.action = stats::na.omit,
-                  ...) {
+ci_forest <- function(formula,
+                      data,
+                      rank_name,
+                      outcome_name,
+                      weights = NULL,
+                      type = c("CI", "CIg", "CIc"),
+                      control = ci_tree_control(),
+                      ntree = 500L,
+                      mtry = NULL,
+                      perturb = list(replace = FALSE, fraction = 0.632),
+                      na.action = stats::na.omit,
+                      ...) {
   type <- match.arg(type)
   call <- match.call()
   extra_args <- list(...)
 
   if (length(extra_args) > 0L) {
-    warning("Additional arguments in `...` are ignored by greedy `cf_ci()`.",
+    warning("Additional arguments in `...` are ignored by greedy `ci_forest()`.",
       call. = FALSE
     )
   }
@@ -197,27 +215,48 @@ cf_ci <- function(formula,
   }
 
   ctrl <- .ci_forest_control(control, mtry)
+  terms_object <- stats::terms(mf)
+  y_full <- .ci_tree_response(mf, rank_name, outcome_name)
+  response_id <- attr(terms_object, "response")
+  predictor_ids <- setdiff(seq_along(mf), response_id)
+
+  if (!length(predictor_ids)) {
+    stop("`formula` must contain at least one splitting variable.",
+      call. = FALSE
+    )
+  }
+
+  for (j in predictor_ids) {
+    if (is.character(mf[[j]])) {
+      mf[[j]] <- factor(mf[[j]])
+    }
+  }
+
   trees <- vector("list", ntree)
   inbag <- matrix(0L, nrow = n, ncol = ntree)
 
   for (b in seq_len(ntree)) {
     sample_rows <- .ci_forest_sample(n, perturb)
     inbag[, b] <- tabulate(sample_rows, nbins = n)
+    sample_weights <- weights[sample_rows]
+    sample_data <- forest_data[sample_rows, , drop = FALSE]
 
     trees[[b]] <- list(
-      fit = ctree_ci(
-        formula = formula,
-        data = forest_data[sample_rows, , drop = FALSE],
+      fit = .fit_ci_tree_from_frame(
+        mf = mf[sample_rows, , drop = FALSE],
+        y_full = y_full[sample_rows, , drop = FALSE],
+        weights = sample_weights,
+        terms_object = terms_object,
+        predictor_ids = predictor_ids,
+        ctrl = ctrl,
+        type = type,
         rank_name = rank_name,
         outcome_name = outcome_name,
-        weights = weights[sample_rows],
-        type = type,
-        control = ctrl,
-        na.action = stats::na.pass
+        call = call
       ),
       rows = sample_rows,
-      data = forest_data[sample_rows, , drop = FALSE],
-      weights = weights[sample_rows]
+      data = sample_data,
+      weights = sample_weights
     )
   }
 
@@ -248,9 +287,22 @@ cf_ci <- function(formula,
   fit
 }
 
+#' Compatibility alias for `ci_forest()`
+#'
+#' `cf_ci()` is kept for existing code. New code should use [ci_forest()],
+#' because the current forest is an ensemble of greedy concentration-index
+#' trees rather than a conditional-inference forest.
+#'
+#' @return A fitted `ci_forest` object.
+#' @rdname ci_forest
+#' @export
+cf_ci <- function(...) {
+  ci_forest(...)
+}
+
 #' Predict from a greedy concentration-index forest
 #'
-#' @param object A fitted `ci_forest` object from [cf_ci()].
+#' @param object A fitted `ci_forest` object from [ci_forest()].
 #' @param newdata Optional data for prediction. If omitted, the training data
 #'   stored in `object` are used.
 #' @param type Prediction type. `"response"` returns averaged terminal-node
@@ -338,7 +390,7 @@ predict.ci_forest <- function(object,
 
 #' Extract fitted values from a greedy concentration-index forest
 #'
-#' @param object A fitted `ci_forest` object from [cf_ci()].
+#' @param object A fitted `ci_forest` object from [ci_forest()].
 #' @param ... Currently ignored.
 #'
 #' @return A data frame with fitted values, response values, and weights.
@@ -416,7 +468,7 @@ fitted.ci_forest <- function(object, ...) {
 #'
 #' @description
 #' Extracts a compact table of terminal-node diagnostics from a fitted
-#' [ctree_ci()] model. The table reports node sample size, weighted size,
+#' [ci_tree()] model. The table reports node sample size, weighted size,
 #' depth, node concentration index, and the node-level mean outcome.
 #'
 #' @param object A fitted `ci_tree` object.
@@ -429,7 +481,7 @@ fitted.ci_forest <- function(object, ...) {
 #'   outcome = c(1, 0, 1, 0, 1, 1),
 #'   income = c(2, 4, 6, 8, 10, 12)
 #' )
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   cbind(rank, outcome) ~ income,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -445,7 +497,7 @@ fitted.ci_forest <- function(object, ...) {
 #'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 #' )
 #'
-#' fit <- cf_ci(
+#' fit <- ci_forest(
 #'   formula = cbind(rank, outcome) ~ income + group,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -490,7 +542,7 @@ ci_tree_terminal_summary <- function(object) {
 #' Summarize a greedy concentration-index forest
 #'
 #' @description
-#' Computes a one-row diagnostic summary for a fitted [cf_ci()] forest,
+#' Computes a one-row diagnostic summary for a fitted [ci_forest()] forest,
 #' including ensemble size, tree complexity, observed outcome, fitted
 #' prediction, and concentration index of both the observed and fitted outcome.
 #'
@@ -504,7 +556,7 @@ ci_tree_terminal_summary <- function(object) {
 #'   outcome = c(1, 0, 1, 0, 1, 1),
 #'   income = c(2, 4, 6, 8, 10, 12)
 #' )
-#' fit <- cf_ci(
+#' fit <- ci_forest(
 #'   cbind(rank, outcome) ~ income,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -711,324 +763,4 @@ knit_print.ci_forest <- function(x, ...) {
   )
 
   knitr::asis_output(paste(text, collapse = "\n"))
-}
-
-#' Convert non-negative weights to integer case weights
-#'
-#' Rescale a non-negative weight vector so that its total is approximately
-#' `scale`, then round to integers for use with fitting routines that require
-#' integer case weights.
-#'
-#' @param w A numeric vector of non-negative weights.
-#' @param scale Target total for the rescaled integer case weights.
-#'
-#' @return An integer vector of case weights on the same scale as `w`.
-#'
-#' @examples
-#' as_caseweights(c(1, 2, 3), scale = 60L)
-#' as_caseweights(c(0.2, 0.3, 0.5))
-#'
-#' as_caseweights(c(1, 2, 3), scale = 60L)
-#' as_caseweights(c(0.2, 0.3, 0.5))
-#' @export
-
-as_caseweights <- function(w, scale = 10000L) {
-  stopifnot(all(w >= 0, na.rm = TRUE))
-  if (!any(w > 0, na.rm = TRUE)) stop("all weights are zero")
-  out <- round(w / sum(w, na.rm = TRUE) * scale)
-  as.integer(out)
-}
-
-#' Create a concentration-index split function
-#'
-#' Build a split-selection function for inequality-aware tree fitting. The
-#' returned function evaluates candidate predictors by the reduction in
-#' within-node concentration index produced by each admissible split.
-#'
-#' The split function can recover the two-column response either from a matrix-
-#' like response in the first model-frame column, or from separate columns named
-#' by `rank_name` and `outcome_name`.
-#'
-#' @param rank_name Name of the socioeconomic rank variable in the model frame
-#'   when the response is not supplied as a two-column matrix.
-#' @param outcome_name Name of the outcome variable in the model frame when the
-#'   response is not supplied as a two-column matrix.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the concentration
-#'   index variant used for split scoring.
-#'
-#' @return A function with signature
-#'   `function(model, trafo, data, subset, weights, whichvar, ctrl)` suitable
-#'   for tree-splitting workflows. It returns the first admissible `partysplit`
-#'   found among `whichvar`, or `NULL` if no candidate variable yields a valid
-#'   split.
-#'
-#' @export 
-#' @examples
-#' splitfun <- ci_splitfun(
-#'   rank_name = "rank",
-#'   outcome_name = "outcome",
-#'   type = "CI"
-#' )
-#'
-#' toy_data <- data.frame(
-#'   rank = c(10, 20, 30, 40, 50),
-#'   outcome = c(1, 0, 1, 0, 1),
-#'   income = c(2, 4, 6, 8, 10)
-#' )
-#'
-#' ctrl <- list(minsplit = 1, minbucket = 1, minprob = 0)
-#'
-#' split <- splitfun(
-#'   model = NULL,
-#'   trafo = NULL,
-#'   data = toy_data,
-#'   subset = seq_len(nrow(toy_data)),
-#'   weights = rep(1, nrow(toy_data)),
-#'   whichvar = 3,
-#'   ctrl = ctrl
-#' )
-#' split$breaks
-
-ci_splitfun <- function(rank_name, outcome_name, type = c("CI", "CIg", "CIc")) {
-  type <- match.arg(type)
-  ci_fun <- ci_factory(type)
-
-  function(model, trafo, data, subset, weights, whichvar, ctrl) {
-    mf <- stats::model.frame(data)
-
-    if (is.null(weights) || length(weights) == 0L) {
-      weights <- rep.int(1L, nrow(mf))
-    }
-
-    # For formulas like cbind(rank, outcome) ~ x1 + x2, the response may arrive
-    # as a matrix-like object in the first model-frame column.
-    response <- mf[[1L]]
-    y_full <- NULL
-
-    if (is.matrix(response) || is.data.frame(response)) {
-      response_mat <- tryCatch(as.matrix(response), error = function(e) NULL)
-      if (!is.null(response_mat) && is.matrix(response_mat) &&
-          ncol(response_mat) >= 2L) {
-        y_full <- response_mat[, 1:2, drop = FALSE]
-      }
-    }
-
-    if (is.null(y_full)) {
-      rank_vec <- mf[[rank_name]]
-      outcome_vec <- mf[[outcome_name]]
-
-      if (!is.null(rank_vec) && !is.null(outcome_vec)) {
-        y_full <- cbind(rank = rank_vec, outcome = outcome_vec)
-      }
-    }
-
-    if (is.null(y_full) || !is.matrix(y_full) || ncol(y_full) != 2L) {
-      stop(
-        "Unable to recover the two-column response expected by `ctree_ci()`. ",
-        "Use a response like `cbind(rank, outcome) ~ ...`."
-      )
-    }
-
-    colnames(y_full) <- c("rank", "outcome")
-
-    # extree/.split may pass several candidate vars in ranked order
-    for (j in whichvar) {
-      x_full <- mf[[j]]
-
-      keep <- subset[
-        !is.na(x_full[subset]) &
-        !is.na(y_full[subset, 1]) &
-        !is.na(y_full[subset, 2]) &
-        weights[subset] > 0
-      ]
-
-      if (!length(keep)) next
-
-      w_node <- sum(weights[keep], na.rm = TRUE)
-      if (w_node < ctrl$minsplit) next
-
-      x_subset <- x_full[keep]
-
-      sp <- NULL
-
-      if (is.numeric(x_subset)) {
-        sp <- best_numeric_split(
-          x     = x_subset,
-          y     = y_full[keep, , drop = FALSE],
-          wt    = weights[keep],
-          varid = j,
-          ctrl  = ctrl,
-          ci_fun = ci_fun
-        )
-      } else if (is.factor(x_subset) || is.ordered(x_subset)) {
-        # use full x_full to preserve full level mapping in partysplit()
-        sp <- best_factor_split(
-          x_full = if (is.factor(x_full)) x_full else factor(x_full),
-          keep   = keep,
-          y_full = y_full,
-          wt_full = weights,
-          varid  = j,
-          ctrl   = ctrl,
-          ci_fun = ci_fun
-        )
-      }
-
-      if (!is.null(sp)) return(sp)
-    }
-
-    NULL
-  }
-}
-
-#' Fit a greedy concentration-index tree
-#'
-#' Grow a binary tree by directly maximizing concentration-index gain across
-#' all candidate variables and split points at each node, while storing the
-#' result as a standard [partykit::party()] object.
-#'
-#' This helper is intended for inequality-aware tree fitting where the response
-#' contains a socioeconomic ranking variable and a health outcome. Unlike
-#' [partykit::ctree()], it does not use conditional-inference tests for
-#' first-stage variable selection.
-#'
-#' @param formula A model formula, typically with a two-column response such as
-#'   `cbind(rank, outcome) ~ x1 + x2`.
-#' @param data A data frame containing the variables in `formula`.
-#' @param rank_name Name of the socioeconomic rank variable.
-#' @param outcome_name Name of the outcome variable.
-#' @param weights Optional non-negative numeric case weights.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the concentration
-#'   index variant used for split scoring.
-#' @param control A control object created by [ci_tree_control()]. Objects from
-#'   [partykit::ctree_control()] are also accepted for shared controls such as
-#'   `minsplit`, `minbucket`, `minprob`, `maxdepth`, and `mtry`.
-#' @param na.action A function for handling missing values.
-#' @param ... Currently ignored; retained for backwards compatibility.
-#'
-#' @return A fitted `ci_tree` object inheriting from `constparty` and `party`.
-#'
-#' @export
-#' @examples
-#' toy_data <- data.frame(
-#'   rank = c(10, 20, 30, 40, 50, 60),
-#'   outcome = c(1, 0, 1, 0, 1, 1),
-#'   income = c(2, 4, 6, 8, 10, 12),
-#'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
-#' )
-#'
-#' fit <- ctree_ci(
-#'   formula = cbind(rank, outcome) ~ income + group,
-#'   data = toy_data,
-#'   rank_name = "rank",
-#'   outcome_name = "outcome",
-#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
-#' )
-#'
-#' inherits(fit, "party")
-ctree_ci <- function(formula,
-                     data,
-                     rank_name,
-                     outcome_name,
-                     weights = NULL,
-                     type = c("CI", "CIg", "CIc"),
-                     control = ci_tree_control(),
-                     na.action = stats::na.omit,
-                     ...) {
-  type <- match.arg(type)
-  call <- match.call()
-  extra_args <- list(...)
-
-  if (length(extra_args) > 0L) {
-    warning("Additional arguments in `...` are ignored by greedy `ctree_ci()`.",
-      call. = FALSE
-    )
-  }
-
-  ctrl <- .ci_tree_normalize_control(control)
-
-  mf <- stats::model.frame(
-    formula = formula,
-    data = data,
-    na.action = na.action,
-    drop.unused.levels = FALSE
-  )
-  terms_object <- stats::terms(mf)
-
-  if (!is.null(weights)) {
-    if (any(weights < 0, na.rm = TRUE)) {
-      stop("weights must be non-negative")
-    }
-    if (anyNA(weights)) {
-      stop("weights must not contain missing values")
-    }
-
-    if (length(weights) == nrow(data)) {
-      omitted <- attr(mf, "na.action")
-      if (!is.null(omitted)) {
-        weights <- weights[-as.integer(omitted)]
-      }
-    }
-  } else {
-    weights <- rep(1, nrow(mf))
-  }
-
-  if (length(weights) != nrow(mf)) {
-    stop("weights must have the same length as the fitted model frame")
-  }
-
-  weights <- as.numeric(weights)
-  if (!any(weights > 0, na.rm = TRUE)) {
-    stop("at least one weight must be positive")
-  }
-
-  y_full <- .ci_tree_response(mf, rank_name, outcome_name)
-  response_id <- attr(terms_object, "response")
-  predictor_ids <- setdiff(seq_along(mf), response_id)
-
-  if (!length(predictor_ids)) {
-    stop("`formula` must contain at least one splitting variable.",
-      call. = FALSE
-    )
-  }
-
-  for (j in predictor_ids) {
-    if (is.character(mf[[j]])) {
-      mf[[j]] <- factor(mf[[j]])
-    }
-  }
-
-  ci_fun <- ci_factory(type)
-
-  tree <- .build_ci_tree(
-    data = mf,
-    y = y_full,
-    wt = weights,
-    vars = predictor_ids,
-    ctrl = ctrl,
-    ci_fun = ci_fun
-  )
-
-  fitted <- data.frame(
-    `(fitted)` = tree$fitted,
-    `(response)` = y_full[, 2],
-    `(weights)` = weights,
-    check.names = FALSE
-  )
-
-  fit <- partykit::party(
-    node = tree$node,
-    data = mf,
-    fitted = fitted,
-    terms = terms_object,
-    info = list(
-      call = call,
-      control = ctrl,
-      type = type,
-      rank_name = rank_name,
-      outcome_name = outcome_name,
-      greedy = TRUE
-    )
-  )
-  class(fit) <- unique(c("ci_tree", "constparty", class(fit)))
-  fit
 }

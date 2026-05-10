@@ -47,6 +47,37 @@ test_that("ci_factory computes expected CI variants on a simple example", {
   expect_equal(cic(y, wt), 0.4)
 })
 
+test_that("ci_factory matches cov.wt reference calculations", {
+  y <- cbind(
+    rank = c(4, 1, 3, 2, 5),
+    outcome = c(0, 1, 3, 2, 5)
+  )
+  wt <- c(1, 2, 1, 3, 2)
+
+  reference_score <- function(y, wt, type) {
+    ok <- stats::complete.cases(y) & !is.na(wt) & wt > 0
+    y <- y[ok, , drop = FALSE]
+    wt <- wt[ok]
+    y[, 1] <- rank_wt(y[, 1], wt)
+    cov12 <- stats::cov.wt(
+      x = as.matrix(data.frame(y1 = y[, 1], y2 = y[, 2])),
+      wt = wt
+    )$cov[1, 2]
+
+    if (type == "CI") {
+      return(abs(2 * cov12 / stats::weighted.mean(y[, 2], wt)))
+    }
+    if (type == "CIg") {
+      return(abs(2 * cov12))
+    }
+    4 * abs(2 * cov12) / (max(y[, 2]) - min(y[, 2]))
+  }
+
+  expect_equal(ci_factory("CI")(y, wt), reference_score(y, wt, "CI"))
+  expect_equal(ci_factory("CIg")(y, wt), reference_score(y, wt, "CIg"))
+  expect_equal(ci_factory("CIc")(y, wt), reference_score(y, wt, "CIc"))
+})
+
 test_that("ci_factory drops incomplete and non-positive-weight rows", {
   y1 <- cbind(c(10, 20, 30, NA), c(1, 0, 1, 1))
   wt1 <- c(1, 1, 2, 1)
@@ -97,6 +128,28 @@ test_that("weighted_ci_gain computes parent minus weighted child impurity", {
   expect_equal(
     weighted_ci_gain(y, wt, left, mock_ci_fun),
     110
+  )
+})
+
+test_that(".weighted_ci_gain_from_parent matches weighted_ci_gain", {
+  y <- cbind(
+    ses = c(10, 20, 30, 40, 50),
+    health = c(1, 0, 1, 0, 1)
+  )
+  wt <- c(1, 2, 1, 2, 1)
+  left <- c(TRUE, TRUE, FALSE, FALSE, FALSE)
+  ci <- ci_factory("CI")
+  cached_gain <- getFromNamespace(".weighted_ci_gain_from_parent", "ineqTrees")
+
+  expect_equal(
+    cached_gain(
+      y = y,
+      wt = wt,
+      left = left,
+      ci_fun = ci,
+      ci_parent = ci(y, wt)
+    ),
+    weighted_ci_gain(y, wt, left, ci)
   )
 })
 

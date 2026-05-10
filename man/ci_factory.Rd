@@ -34,13 +34,27 @@ covariance between rank and outcome and maps it to the requested index:
 \code{"CI"} divides by the weighted mean of the outcome, \code{"CIg"} returns the
 generalized form, and \code{"CIc"} applies an Erreygers-style range correction.
 Absolute values are returned.
+
+In mathematical notation, for weighted fractional rank \code{R}, outcome \code{Y},
+weighted outcome mean \code{mu}, and weighted covariance \code{cov_w}, the three
+implemented scores are:
+\deqn{CI = \left|2 cov_w(R, Y) / \mu\right|}
+\deqn{CIg = \left|2 cov_w(R, Y)\right|}
+\deqn{CIc = 4\left|2 cov_w(R, Y)\right| / (max(Y) - min(Y))}
+
+These scores are used as non-negative within-node inequality impurities in
+the greedy tree and forest. A value closer to zero means less
+socioeconomic-related inequality in the outcome within that node.
 }
-\examples{
-ci <- ci_factory("CI")
-y <- cbind(c(10, 20, 30), c(1, 0, 1))
-ci(y, c(1, 1, 2))
-cig <- ci_factory("CIg")
-cig(y, c(1, 1, 2))
-cic <- ci_factory("CIc")
-cic(y, c(1, 1, 2))
+\references{
+Wagstaff A, van Doorslaer E, Watanabe N (2003). "On Decomposing the Causes
+of Health Sector Inequalities with an Application to Malnutrition
+Inequalities in Vietnam." \emph{Journal of Econometrics}, 112(1), 207-223.
+doi:10.1016/S0304-4076(02)00161-6.
+
+Wagstaff A (2011). "The concentration index of a binary outcome revisited."
+\emph{Health Economics}, 20(10), 1155-1160. doi:10.1002/hec.1752.
+
+Erreygers G (2009). "Correcting the concentration index." \emph{Journal of Health
+Economics}, 28(2), 504-515. doi:10.1016/j.jhealeco.2008.02.003.
 }

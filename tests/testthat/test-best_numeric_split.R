@@ -229,7 +229,12 @@ test_that("best_global_ci_split respects min_gain", {
     outcome = c(1, 2, 3, 4),
     x = c(1, 2, 3, 4)
   )
-  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0, min_gain = Inf)
+  ctrl <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    min_gain = Inf
+  )
 
   split <- best_global_ci_split(
     x = toy_data,

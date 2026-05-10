@@ -1,0 +1,74 @@
+$by.self
+                        self.time self.pct total.time total.pct
+"match.arg"                  0.02    15.38       0.02     15.38
+"eval"                       0.01     7.69       0.13    100.00
+"cmp"                        0.01     7.69       0.05     38.46
+".ci_fast_score"             0.01     7.69       0.03     23.08
+"as.character"               0.01     7.69       0.01      7.69
+"as.list"                    0.01     7.69       0.01      7.69
+"cb$putcode"                 0.01     7.69       0.01      7.69
+"cmpIndices"                 0.01     7.69       0.01      7.69
+"dots.or.missing"            0.01     7.69       0.01      7.69
+"findVar"                    0.01     7.69       0.01      7.69
+"stats::complete.cases"      0.01     7.69       0.01      7.69
+"stats::weighted.mean"       0.01     7.69       0.01      7.69
+
+$by.total
+                                total.time total.pct self.time self.pct
+"eval"                                0.13    100.00      0.01     7.69
+"profile_expr"                        0.13    100.00      0.00     0.00
+".build_ci_tree"                      0.12     92.31      0.00     0.00
+".fit_ci_tree_from_frame"             0.12     92.31      0.00     0.00
+"build_node"                          0.12     92.31      0.00     0.00
+"ctree_ci"                            0.12     92.31      0.00     0.00
+"best_global_ci_split"                0.11     84.62      0.00     0.00
+"best_split_for_one_variable"         0.09     69.23      0.00     0.00
+"best_factor_split"                   0.07     53.85      0.00     0.00
+"cmpfun"                              0.06     46.15      0.00     0.00
+"compiler:::tryCmpfun"                0.06     46.15      0.00     0.00
+"doTryCatch"                          0.06     46.15      0.00     0.00
+"tryCatch"                            0.06     46.15      0.00     0.00
+"tryCatchList"                        0.06     46.15      0.00     0.00
+"tryCatchOne"                         0.06     46.15      0.00     0.00
+"cmp"                                 0.05     38.46      0.01     7.69
+"cmpCall"                             0.05     38.46      0.00     0.00
+"genCode"                             0.05     38.46      0.00     0.00
+"h"                                   0.05     38.46      0.00     0.00
+"tryInline"                           0.05     38.46      0.00     0.00
+".ci_fast_score"                      0.03     23.08      0.01     7.69
+"ci_fun"                              0.03     23.08      0.00     0.00
+"cmpCallSymFun"                       0.03     23.08      0.00     0.00
+"match.arg"                           0.02     15.38      0.02    15.38
+"cb$putconst"                         0.02     15.38      0.00     0.00
+"cmpCallArgs"                         0.02     15.38      0.00     0.00
+"cmpSymbolAssign"                     0.02     15.38      0.00     0.00
+"FUN"                                 0.02     15.38      0.00     0.00
+"lapply"                              0.02     15.38      0.00     0.00
+"order"                               0.02     15.38      0.00     0.00
+"sapply"                              0.02     15.38      0.00     0.00
+"as.character"                        0.01      7.69      0.01     7.69
+"as.list"                             0.01      7.69      0.01     7.69
+"cb$putcode"                          0.01      7.69      0.01     7.69
+"cmpIndices"                          0.01      7.69      0.01     7.69
+"dots.or.missing"                     0.01      7.69      0.01     7.69
+"findVar"                             0.01      7.69      0.01     7.69
+"stats::complete.cases"               0.01      7.69      0.01     7.69
+"stats::weighted.mean"                0.01      7.69      0.01     7.69
+".ci_tree_normalize_control"          0.01      7.69      0.00     0.00
+".weighted_ci_gain_from_parent"       0.01      7.69      0.00     0.00
+"cmpComplexAssign"                    0.01      7.69      0.00     0.00
+"cmpForBody"                          0.01      7.69      0.00     0.00
+"cmpPrim2"                            0.01      7.69      0.00     0.00
+"cmpSetterCall"                       0.01      7.69      0.00     0.00
+"cmpSubassignDispatch"                0.01      7.69      0.00     0.00
+"cmpSym"                              0.01      7.69      0.00     0.00
+"mayCallBrowser"                      0.01      7.69      0.00     0.00
+"mayCallBrowserList"                  0.01      7.69      0.00     0.00
+"trySetterInline"                     0.01      7.69      0.00     0.00
+
+$sample.interval
+[1] 0.01
+
+$sampling.time
+[1] 0.13
+

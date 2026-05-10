@@ -2,7 +2,7 @@
 % Please edit documentation in R/tree_default_name.R
 \name{plot.ci_tree}
 \alias{plot.ci_tree}
-\title{Plot a conditional inference tree with labeled split and node panels}
+\title{Plot a greedy concentration-index tree with labeled split and node panels}
 \usage{
 \method{plot}{ci_tree}(
   x,
@@ -26,7 +26,7 @@
 )
 }
 \arguments{
-\item{x}{A fitted \code{ci_tree} object created by \code{\link[=ctree_ci]{ctree_ci()}}.}
+\item{x}{A fitted \code{ci_tree} object created by \code{\link[=ci_tree]{ci_tree()}}.}
 
 \item{main}{Optional main title passed to the underlying plot method.}
 
@@ -61,7 +61,7 @@ terminal summaries.}
 Invisibly returns the plotted \code{ci_tree}.
 }
 \description{
-\code{ctree_ci()} returns objects with class \code{ci_tree}, so calling \code{plot()} on a
+\code{ci_tree()} returns objects with class \code{ci_tree}, so calling \code{plot()} on a
 fitted tree dispatches to this method. The method keeps the underlying
 \code{partykit} layout while supplying compact edge labels, labeled internal
 nodes, and optional terminal-node summaries by default.
@@ -74,7 +74,7 @@ toy_data <- data.frame(
   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 )
 
-fit <- ctree_ci(
+fit <- ci_tree(
   formula = cbind(rank, outcome) ~ income + group,
   data = toy_data,
   rank_name = "rank",

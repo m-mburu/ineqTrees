@@ -34,14 +34,14 @@ tree_pretty_var_name <- function(var_name, var_labels = NULL) {
   .tree_default_name(var_name)
 }
 
-#' Plot a conditional inference tree with labeled split and node panels
+#' Plot a greedy concentration-index tree with labeled split and node panels
 #'
-#' `ctree_ci()` returns objects with class `ci_tree`, so calling `plot()` on a
+#' `ci_tree()` returns objects with class `ci_tree`, so calling `plot()` on a
 #' fitted tree dispatches to this method. The method keeps the underlying
 #' `partykit` layout while supplying compact edge labels, labeled internal
 #' nodes, and optional terminal-node summaries by default.
 #'
-#' @param x A fitted `ci_tree` object created by [ctree_ci()].
+#' @param x A fitted `ci_tree` object created by [ci_tree()].
 #' @param main Optional main title passed to the underlying plot method.
 #' @param terminal_panel,inner_panel,edge_panel Optional panel functions passed
 #'   through to `partykit` plotting.
@@ -73,7 +73,7 @@ tree_pretty_var_name <- function(var_name, var_labels = NULL) {
 #'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 #' )
 #'
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   formula = cbind(rank, outcome) ~ income + group,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -191,7 +191,7 @@ plot.ci_tree <- function(x,
 #'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 #' )
 #'
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   formula = cbind(rank, outcome) ~ income + group,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -366,7 +366,7 @@ tree_compact_split_label <- function(
 #'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 #' )
 #'
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   formula = cbind(rank, outcome) ~ income + group,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -466,7 +466,7 @@ class(tree_edge_panel_compact) <- "grapcon_generator"
 #'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 #' )
 #'
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   formula = cbind(rank, outcome) ~ income + group,
 #'   data = toy_data,
 #'   rank_name = "rank",
@@ -599,7 +599,7 @@ class(tree_inner_panel_labeled) <- "grapcon_generator"
 #'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
 #' )
 #'
-#' fit <- ctree_ci(
+#' fit <- ci_tree(
 #'   formula = cbind(rank, outcome) ~ income + group,
 #'   data = toy_data,
 #'   rank_name = "rank",
