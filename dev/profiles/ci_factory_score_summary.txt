@@ -1,0 +1,15 @@
+$by.self
+        self.time self.pct total.time total.pct
+"Rprof"      0.01      100       0.01       100
+
+$by.total
+               total.time total.pct self.time self.pct
+"Rprof"              0.01       100      0.01      100
+"profile_expr"       0.01       100      0.00        0
+
+$sample.interval
+[1] 0.01
+
+$sampling.time
+[1] 0.01
+

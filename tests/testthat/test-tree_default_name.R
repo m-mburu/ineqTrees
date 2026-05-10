@@ -27,7 +27,7 @@ test_that("tree_edge_panel_compact is a graph-content generator", {
     group = factor(c("low", "low", "mid", "mid", "high", "high"))
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income + group,
     data = toy_data,
     rank_name = "rank",
@@ -47,7 +47,7 @@ test_that("tree_inner_panel_labeled is a graph-content generator", {
     group = factor(c("low", "low", "mid", "mid", "high", "high"))
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income + group,
     data = toy_data,
     rank_name = "rank",
@@ -67,7 +67,7 @@ test_that("tree_build_terminal_stats computes one row per terminal node", {
     group = factor(c("low", "low", "mid", "mid", "high", "high"))
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income + group,
     data = toy_data,
     rank_name = "rank",
@@ -108,7 +108,7 @@ test_that(
     income = c(2, 4, 6, 8)
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income,
     data = toy_data,
     rank_name = "rank",
@@ -134,7 +134,7 @@ test_that("tree_terminal_panel_stats is a graph-content generator", {
     group = factor(c("low", "low", "mid", "mid", "high", "high"))
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income + group,
     data = toy_data,
     rank_name = "rank",
@@ -163,7 +163,7 @@ test_that("plot dispatches for ci_tree without error", {
     group = factor(c("low", "low", "mid", "mid", "high", "high"))
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income + group,
     data = toy_data,
     rank_name = "rank",

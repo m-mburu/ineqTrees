@@ -99,12 +99,12 @@ ci_tree_control <- function(minsplit = 200L,
 #' Recover the two-column response for a greedy CI tree
 #'
 #' @description
-#' Extracts the rank/outcome response used by `ctree_ci()` from a model frame.
+#' Extracts the rank/outcome response used by `ci_tree()` from a model frame.
 #' The preferred interface is a two-column response such as
 #' `cbind(rank, outcome) ~ x1 + x2`, but this helper can also recover named
 #' columns from the model frame when they are available.
 #'
-#' @param mf A model frame produced from the `ctree_ci()` formula and data.
+#' @param mf A model frame produced from the `ci_tree()` formula and data.
 #' @param rank_name Name of the rank column to recover when the response is not
 #'   already a two-column matrix.
 #' @param outcome_name Name of the outcome column to recover when the response
@@ -137,7 +137,7 @@ ci_tree_control <- function(minsplit = 200L,
 
   if (is.null(y_full) || !is.matrix(y_full) || ncol(y_full) != 2L) {
     stop(
-      "Unable to recover the two-column response expected by `ctree_ci()`. ",
+      "Unable to recover the two-column response expected by `ci_tree()`. ",
       "Use a response like `cbind(rank, outcome) ~ ...`.",
       call. = FALSE
     )

@@ -46,8 +46,12 @@ ci_tree_builder.Rmd:
 ci_tree_models.Rmd:
   path: dev/ci_tree_models.Rmd
   state: active
-  R: R/ci_splitfun.R
-  tests: tests/testthat/test-ci_splitfun.R
+  R:
+  - R/ci_forest.R
+  - R/ci_tree.R
+  tests:
+  - tests/testthat/test-ci_tree.R
+  - tests/testthat/test-ci_forest.R
   vignettes: vignettes/ci-tree-models.Rmd
   inflate:
     flat_file: dev/ci_tree_models.Rmd
@@ -69,8 +73,13 @@ keep:
 model_selection.Rmd:
   path: dev/model_selection.Rmd
   state: active
-  R: R/ci_tree_control_grid.R
-  tests: tests/testthat/test-ci_tree_control_grid.R
+  R:
+  - R/predict_ci_tree_terminal_mean.R
+  - R/tune_ci_tree.R
+  - R/tune_ci_forest.R
+  tests:
+  - tests/testthat/test-predict_ci_tree_terminal_mean.R
+  - tests/testthat/test-tune_ci_forest.R
   vignettes: vignettes/model-selection.Rmd
   inflate:
     flat_file: dev/model_selection.Rmd

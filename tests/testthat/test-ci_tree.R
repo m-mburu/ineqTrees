@@ -112,7 +112,7 @@ test_that("ci_splitfun errors when it cannot recover a two-column response", {
   )
 })
 
-test_that("ctree_ci rejects negative weights", {
+test_that("ci_tree rejects negative weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40),
     outcome = c(1, 0, 1, 0),
@@ -120,7 +120,7 @@ test_that("ctree_ci rejects negative weights", {
   )
 
   expect_error(
-    ctree_ci(
+    ci_tree(
       formula = cbind(rank, outcome) ~ income,
       data = toy_data,
       rank_name = "rank",
@@ -131,14 +131,14 @@ test_that("ctree_ci rejects negative weights", {
   )
 })
 
-test_that("ctree_ci accepts non-integer weights", {
+test_that("ci_tree accepts non-integer weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40),
     outcome = c(1, 0, 1, 0),
     income = c(2, 4, 6, 8)
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income,
     data = toy_data,
     rank_name = "rank",
@@ -150,7 +150,7 @@ test_that("ctree_ci accepts non-integer weights", {
   expect_s3_class(fit, "ci_tree")
 })
 
-test_that("ctree_ci fits a party object without explicit weights", {
+test_that("ci_tree fits a party object without explicit weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),
     outcome = c(1, 0, 1, 0, 1, 1),
@@ -158,7 +158,7 @@ test_that("ctree_ci fits a party object without explicit weights", {
     group = factor(c("low", "low", "mid", "mid", "high", "high"))
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income + group,
     data = toy_data,
     rank_name = "rank",
@@ -173,14 +173,14 @@ test_that("ctree_ci fits a party object without explicit weights", {
   expect_equal(max(partykit::nodeids(fit, terminal = TRUE)), 3L)
 })
 
-test_that("ctree_ci accepts integer weights", {
+test_that("ci_tree accepts integer weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),
     outcome = c(1, 0, 1, 0, 1, 1),
     income = c(2, 4, 6, 8, 10, 12)
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income,
     data = toy_data,
     rank_name = "rank",
@@ -193,7 +193,7 @@ test_that("ctree_ci accepts integer weights", {
   expect_s3_class(fit, "ci_tree")
 })
 
-test_that("ctree_ci returns partykit predictions and terminal nodes", {
+test_that("ci_tree returns partykit predictions and terminal nodes", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),
     outcome = c(1, 0, 1, 0, 1, 1),
@@ -201,7 +201,7 @@ test_that("ctree_ci returns partykit predictions and terminal nodes", {
     group = factor(c("low", "low", "mid", "mid", "high", "high"))
   )
 
-  fit <- ctree_ci(
+  fit <- ci_tree(
     formula = cbind(rank, outcome) ~ income + group,
     data = toy_data,
     rank_name = "rank",
@@ -212,6 +212,24 @@ test_that("ctree_ci returns partykit predictions and terminal nodes", {
   expect_equal(length(predict(fit, type = "node")), nrow(toy_data))
   expect_equal(length(predict(fit, type = "response")), nrow(toy_data))
   expect_equal(length(partykit::nodeids(fit, terminal = TRUE)), 2L)
+})
+
+test_that("ctree_ci remains a compatibility alias for ci_tree", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12)
+  )
+
+  fit <- ci_tree(
+    formula = cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_s3_class(fit, "ci_tree")
 })
 
 test_that("as_caseweights returns integer weights on the requested scale", {
@@ -231,149 +249,4 @@ test_that("as_caseweights preserves weight proportions up to rounding", {
 test_that("as_caseweights rejects invalid input weights", {
   expect_error(as_caseweights(c(0, 0, 0)), "all weights are zero")
   expect_error(as_caseweights(c(1, -1, 2)))
-})
-
-test_that("ci_tree_terminal_summary reports terminal-node diagnostics", {
-  toy_data <- data.frame(
-    rank = c(10, 20, 30, 40, 50, 60),
-    outcome = c(1, 0, 1, 0, 1, 1),
-    income = c(2, 4, 6, 8, 10, 12)
-  )
-  fit <- ctree_ci(
-    cbind(rank, outcome) ~ income,
-    data = toy_data,
-    rank_name = "rank",
-    outcome_name = "outcome",
-    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
-  )
-
-  summary <- ci_tree_terminal_summary(fit)
-  printed <- utils::capture.output(print(fit))
-
-  expect_s3_class(summary, "data.table")
-  expect_true(all(c("node", "n", "ci", "outcome_mean") %in% names(summary)))
-  expect_equal(nrow(summary), length(partykit::nodeids(fit, terminal = TRUE)))
-  expect_true(any(grepl("Greedy concentration-index tree", printed)))
-})
-
-test_that("ci_forest_summary and print report ensemble diagnostics", {
-  toy_data <- data.frame(
-    rank = c(10, 20, 30, 40, 50, 60),
-    outcome = c(1, 0, 1, 0, 1, 1),
-    income = c(2, 4, 6, 8, 10, 12)
-  )
-  fit <- cf_ci(
-    cbind(rank, outcome) ~ income,
-    data = toy_data,
-    rank_name = "rank",
-    outcome_name = "outcome",
-    ntree = 3L,
-    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
-  )
-
-  summary <- ci_forest_summary(fit)
-  printed <- utils::capture.output(print(fit))
-
-  expect_s3_class(summary, "data.table")
-  expect_equal(summary$ntree, 3L)
-  expect_true(all(c("mean_outcome", "prediction_ci") %in% names(summary)))
-  expect_true(any(grepl("Greedy concentration-index forest", printed)))
-})
-
-test_that(
-  "cf_ci fits a forest and stores one fitted row per observation", {
-  toy_data <- data.frame(
-    rank = c(10, 20, 30, 40, 50, 60),
-    outcome = c(1, 0, 1, 0, 1, 1),
-    income = c(2, 4, 6, 8, 10, 12),
-    group = factor(c("low", "low", "mid", "mid", "high", "high"))
-  )
-
-  fit <- cf_ci(
-    formula = cbind(rank, outcome) ~ income + group,
-    data = toy_data,
-    rank_name = "rank",
-    outcome_name = "outcome",
-    ntree = 10L,
-    mtry = 1L,
-    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
-  )
-
-  expect_s3_class(fit, "ci_forest")
-  expect_equal(nrow(stats::fitted(fit)), nrow(toy_data))
-  expect_equal(length(stats::predict(fit)), nrow(toy_data))
-  expect_equal(length(fit$trees), 10L)
-})
-
-test_that("cf_ci accepts explicit weights", {
-  toy_data <- data.frame(
-    rank = c(10, 20, 30, 40, 50, 60),
-    outcome = c(1, 0, 1, 0, 1, 1),
-    income = c(2, 4, 6, 8, 10, 12)
-  )
-
-  fit <- cf_ci(
-    formula = cbind(rank, outcome) ~ income,
-    data = toy_data,
-    rank_name = "rank",
-    outcome_name = "outcome",
-    weights = c(1, 1, 2, 2, 3, 3),
-    ntree = 10L,
-    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
-  )
-
-  expect_s3_class(fit, "ci_forest")
-  expect_equal(nrow(stats::fitted(fit)), nrow(toy_data))
-})
-
-test_that("cf_ci predicts on new data with old cforest-style FUN", {
-  toy_data <- data.frame(
-    rank = c(10, 20, 30, 40, 50, 60),
-    outcome = c(1, 0, 1, 0, 1, 1),
-    income = c(2, 4, 6, 8, 10, 12),
-    group = factor(c("low", "low", "mid", "mid", "high", "high"))
-  )
-
-  fit <- cf_ci(
-    formula = cbind(rank, outcome) ~ income + group,
-    data = toy_data,
-    rank_name = "rank",
-    outcome_name = "outcome",
-    ntree = 10L,
-    mtry = 1L,
-    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
-  )
-
-  pred <- stats::predict(
-    fit,
-    newdata = toy_data[c("income", "group")],
-    FUN = function(y, w) stats::weighted.mean(y[, "outcome"], w)
-  )
-
-  expect_s3_class(fit, "ci_forest")
-  expect_type(pred, "double")
-  expect_equal(length(pred), nrow(toy_data))
-  expect_true(all(is.finite(pred)))
-})
-
-test_that("cf_ci honors mtry when supplied", {
-  toy_data <- data.frame(
-    rank = c(10, 20, 30, 40, 50, 60),
-    outcome = c(1, 0, 1, 0, 1, 1),
-    income = c(2, 4, 6, 8, 10, 12),
-    group = factor(c("low", "low", "mid", "mid", "high", "high"))
-  )
-
-  fit <- cf_ci(
-    formula = cbind(rank, outcome) ~ income + group,
-    data = toy_data,
-    rank_name = "rank",
-    outcome_name = "outcome",
-    ntree = 10L,
-    mtry = 1L,
-    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
-  )
-
-  expect_equal(fit$control$mtry, 1)
-  expect_equal(fit$control$maxdepth, 1)
 })

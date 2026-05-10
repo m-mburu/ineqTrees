@@ -146,7 +146,7 @@ set.seed(1)
 - This is a concentration-index tree, so the response is a two-column matrix of the ranking variable and the outcome. The `rank_name` and `outcome_name` arguments specify which columns of the data to use for those roles. The split criterion is based on concentration-index reduction, so the `control` argument specifies greedy controls rather than conditional-inference test controls.
 
 ```{r fit-tree}
-fit_tree <- ctree_ci(
+fit_tree <- ci_tree(
   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   data = kenya,
   rank_name = "wealth",
@@ -172,7 +172,7 @@ predictions across many greedy concentration-index trees. The tuned workflow
 later in the README uses the same model family with cross-validation.
 
 ```{r fit-forest}
-fit_forest <- cf_ci(
+fit_forest <- ci_forest(
   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   data = kenya,
   rank_name = "wealth",
@@ -198,7 +198,7 @@ kenya[, forest_risk := readme_forest_predict(
    fit_forest, .SD
 ), .SDcols = readme_predictors]
 
-surrogate_tree <- ctree_ci(
+surrogate_tree <- ci_tree(
   formula = cbind(wealth, forest_risk) ~ rural + ed + reg + unskilled,
   data = kenya,
   rank_name = "wealth",
@@ -311,7 +311,7 @@ tuning_data <- kenya[tuning_rows, , drop = FALSE]
 ## Tune tree hyperparameters
 
 The current model-selection workflow uses `ci_tree_control_grid()` to define
-candidate greedy controls and `tune_ctree_ci()` to score them with
+candidate greedy controls and `tune_ci_tree()` to score them with
 cross-validation. The concentration-index variant is tuned alongside the tree
 controls by passing several values to `type`.
 
@@ -325,7 +325,7 @@ tree_tune_grid <- ci_tree_control_grid(
 ```
 
 ```{r tree-tuning-fit}
-tree_tuning <- tune_ctree_ci(
+tree_tuning <- tune_ci_tree(
   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   data = tuning_data,
   rank_name = "wealth",
@@ -380,7 +380,7 @@ readme_tree_plot(
 
 ## Tune forest hyperparameters
 
-For forests, `tune_cf_ci()` uses the same greedy controls and adds `ntree` when
+For forests, `tune_ci_forest()` uses the same greedy controls and adds `ntree` when
 that column is present in the tuning grid. Each candidate forest is summarized
 by a surrogate greedy CI tree, and the grid is ranked by held-out CI validation
 gain from that surrogate.
@@ -396,7 +396,7 @@ forest_tune_grid <- ci_tree_control_grid(
 ```
 
 ```{r forest-tuning-fit}
-forest_tuning <- tune_cf_ci(
+forest_tuning <- tune_ci_forest(
   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   data = tuning_data,
   rank_name = "wealth",

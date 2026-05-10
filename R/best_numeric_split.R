@@ -67,6 +67,8 @@ best_factor_split <- function(
   present_levels <- full_levels[full_levels %in% unique(as.character(x))]
   if (length(present_levels) <= 1L) return(NULL)
 
+  ci_parent <- ci_fun(y, wt)
+
   # order factor levels by weighted mean outcome, then search cumulative
   # binary splits
   level_score <- sapply(
@@ -78,20 +80,35 @@ best_factor_split <- function(
   )
 
   ord_levels <- present_levels[order(level_score)]
+  level_weight <- sapply(
+    ord_levels,
+    function(lv) {
+      sum(wt[as.character(x) == lv], na.rm = TRUE)
+    }
+  )
+  cum_level_weight <- cumsum(level_weight)
+  total_weight <- cum_level_weight[length(cum_level_weight)]
   gains <- rep(-Inf, length(ord_levels) - 1L)
 
   for (k in seq_len(length(ord_levels) - 1L)) {
-    left_levels <- ord_levels[seq_len(k)]
-    left <- as.character(x) %in% left_levels
-
-    wl <- sum(wt[left], na.rm = TRUE)
-    wr <- sum(wt[!left], na.rm = TRUE)
-    wtot <- wl + wr
+    wl <- cum_level_weight[k]
+    wr <- total_weight - wl
 
     if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
-    if ((wl / wtot) < ctrl$minprob || (wr / wtot) < ctrl$minprob) next
+    if ((wl / total_weight) < ctrl$minprob ||
+        (wr / total_weight) < ctrl$minprob) {
+      next
+    }
 
-    gains[k] <- weighted_ci_gain(y = y, wt = wt, left = left, ci_fun = ci_fun)
+    left_levels <- ord_levels[seq_len(k)]
+    left <- as.character(x) %in% left_levels
+    gains[k] <- .weighted_ci_gain_from_parent(
+      y = y,
+      wt = wt,
+      left = left,
+      ci_fun = ci_fun,
+      ci_parent = ci_parent
+    )
   }
 
   if (!any(is.finite(gains))) return(NULL)
@@ -256,23 +273,29 @@ best_numeric_split <- function(
   }
 
   gains <- rep(-Inf, length(cut_pos))
+  ci_parent <- ci_fun(y, wt)
+  cum_wt <- cumsum(wt)
+  total_wt <- cum_wt[length(cum_wt)]
+  row_id <- seq_along(x)
 
   for (k in seq_along(cut_pos)) {
     pos <- cut_pos[k]
-    left <- seq_along(x) <= pos
-
-    wl <- sum(wt[left], na.rm = TRUE)
-    wr <- sum(wt[!left], na.rm = TRUE)
-    wtot <- wl + wr
+    wl <- cum_wt[pos]
+    wr <- total_wt - wl
 
     if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
-    if ((wl / wtot) < ctrl$minprob || (wr / wtot) < ctrl$minprob) next
+    if ((wl / total_wt) < ctrl$minprob ||
+        (wr / total_wt) < ctrl$minprob) {
+      next
+    }
 
-    gains[k] <- weighted_ci_gain(
+    left <- row_id <= pos
+    gains[k] <- .weighted_ci_gain_from_parent(
       y = y,
       wt = wt,
       left = left,
-      ci_fun = ci_fun
+      ci_fun = ci_fun,
+      ci_parent = ci_parent
     )
   }
 
@@ -282,7 +305,7 @@ best_numeric_split <- function(
 
   best_k <- cut_pos[which.max(gains)]
   cut <- (x[best_k] + x[best_k + 1L]) / 2
-  left <- seq_along(x) <= best_k
+  left <- row_id <= best_k
   left_original <- logical(length(left))
   left_original[ord] <- left
 

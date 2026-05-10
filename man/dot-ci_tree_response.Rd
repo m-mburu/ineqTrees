@@ -7,7 +7,7 @@
 .ci_tree_response(mf, rank_name, outcome_name)
 }
 \arguments{
-\item{mf}{A model frame produced from the \code{ctree_ci()} formula and data.}
+\item{mf}{A model frame produced from the \code{ci_tree()} formula and data.}
 
 \item{rank_name}{Name of the rank column to recover when the response is not
 already a two-column matrix.}
@@ -19,7 +19,7 @@ is not already a two-column matrix.}
 A numeric matrix with columns \code{rank} and \code{outcome}.
 }
 \description{
-Extracts the rank/outcome response used by \code{ctree_ci()} from a model frame.
+Extracts the rank/outcome response used by \code{ci_tree()} from a model frame.
 The preferred interface is a two-column response such as
 \code{cbind(rank, outcome) ~ x1 + x2}, but this helper can also recover named
 columns from the model frame when they are available.
