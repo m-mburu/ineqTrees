@@ -7,6 +7,7 @@
 shap_conc_decomp(
   shap,
   rank,
+  type = c("CI", "L"),
   prediction = NULL,
   baseline = NULL,
   from_dalex = FALSE,
@@ -24,7 +25,12 @@ with one numeric feature column per SHAP contributor. If \code{from_dalex = TRUE
 observation IDs, feature names, and SHAP values.}
 
 \item{rank}{A numeric vector giving the socioeconomic ranking variable for
-each observation.}
+each observation. When \code{type = "L"}, this is interpreted as the observed
+socioeconomic level variable.}
+
+\item{type}{One of \code{"CI"} or \code{"L"} selecting the decomposition target. \code{"CI"}
+uses fractional socioeconomic ranks. \code{"L"} uses the Erreygers--Kessels
+level-dependent bivariate index based on observed socioeconomic levels.}
 
 \item{prediction}{Optional numeric vector of model predictions. If omitted,
 predictions are reconstructed as \code{baseline + rowSums(shap)}.}
@@ -67,11 +73,15 @@ predicted outcome. The SHAP table can be supplied either in wide format
 format and reshaped internally.
 }
 \details{
-For each feature \code{k}, \code{D_k_SHAP} is computed as
+For \code{type = "CI"}, each feature \code{k}, \code{D_k_SHAP} is computed as
 \code{2 / (n * mu_hat)} times the sum of \code{phi_ik * (R_i - 0.5)} across
 observations, where \code{phi_ik} is the SHAP value for feature \code{k}, \code{R_i} is
 the fractional rank of the socioeconomic ordering variable, and \code{mu_hat}
 is the mean predicted outcome.
+
+For \code{type = "L"}, \code{rank} is treated as an observed socioeconomic level
+\code{s_i}. The decomposition uses \code{mean(((s_i - mu_s) / mu_s) * phi_ik)} for
+each feature, where \code{mu_s} is the mean socioeconomic level.
 }
 \examples{
 shap <- data.frame(

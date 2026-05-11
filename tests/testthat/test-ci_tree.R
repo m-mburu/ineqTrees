@@ -232,6 +232,26 @@ test_that("ctree_ci remains a compatibility alias for ci_tree", {
   expect_s3_class(fit, "ci_tree")
 })
 
+test_that("ci_tree accepts level-dependent L split scoring", {
+  toy_data <- data.frame(
+    ses = c(1, 2, 3, 4, 5, 6),
+    outcome = c(1, 1, 0, 0, 0, 1),
+    x = c(1, 1, 2, 2, 3, 3)
+  )
+
+  fit <- ci_tree(
+    formula = cbind(ses, outcome) ~ x,
+    data = toy_data,
+    rank_name = "ses",
+    outcome_name = "outcome",
+    type = "L",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_s3_class(fit, "ci_tree")
+  expect_equal(fit$info$type, "L")
+})
+
 test_that("as_caseweights returns integer weights on the requested scale", {
   out <- as_caseweights(c(1, 2, 3), scale = 60L)
 

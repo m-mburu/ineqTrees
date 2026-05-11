@@ -31,6 +31,7 @@ test_that("ci_factory returns scoring functions and validates type", {
   expect_true(is.function(ci_factory("CI")))
   expect_true(is.function(ci_factory("CIg")))
   expect_true(is.function(ci_factory("CIc")))
+  expect_true(is.function(ci_factory("L")))
   expect_error(ci_factory("bad"))
 })
 
@@ -117,6 +118,70 @@ test_that("ci_factory is invariant to rescaling weights", {
   ci <- ci_factory("CI")
 
   expect_equal(ci(y, c(1, 1, 2)), ci(y, c(10, 10, 20)))
+})
+
+test_that("ci_factory L computes level-dependent bivariate index", {
+  y <- cbind(
+    ses = c(1, 2, 3),
+    outcome = c(0, 1, 1)
+  )
+  wt <- c(1, 1, 1)
+
+  expect_equal(ci_factory("L")(y, wt), 1 / 6)
+})
+
+test_that("L index is zero when outcome is constant", {
+  y <- cbind(
+    ses = c(1, 2, 3, 4),
+    outcome = c(1, 1, 1, 1)
+  )
+  wt <- rep(1, 4)
+
+  expect_equal(ci_factory("L")(y, wt), 0)
+})
+
+test_that("L index is invariant to positive rescaling of SES", {
+  y1 <- cbind(
+    ses = c(1, 2, 3, 4),
+    outcome = c(0, 1, 0, 1)
+  )
+  y2 <- cbind(
+    ses = 10 * y1[, "ses"],
+    outcome = y1[, "outcome"]
+  )
+  wt <- rep(1, 4)
+
+  expect_equal(ci_factory("L")(y1, wt), ci_factory("L")(y2, wt))
+})
+
+test_that("L index warns once per session for negative socioeconomic levels", {
+  warning_state <- getFromNamespace(".ci_warning_state", "ineqTrees")
+  warning_state$negative_l <- FALSE
+  on.exit(warning_state$negative_l <- FALSE, add = TRUE)
+
+  y <- cbind(
+    ses = c(-1, 1, 2),
+    outcome = c(0, 1, 1)
+  )
+  wt <- rep(1, 3)
+  l_index <- ci_factory("L")
+
+  expect_warning(
+    l_index(y, wt),
+    "negative values"
+  )
+  expect_warning(
+    l_index(y, wt),
+    NA
+  )
+  expect_warning(
+    ci_factory("L")(y, wt),
+    NA
+  )
+  expect_warning(
+    ci_factory("CI")(y, wt),
+    NA
+  )
 })
 
 test_that("weighted_ci_gain computes parent minus weighted child impurity", {

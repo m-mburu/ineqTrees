@@ -12,7 +12,11 @@
 #'   TRUE`, `shap` should instead be a long DALEX-like table containing
 #'   observation IDs, feature names, and SHAP values.
 #' @param rank A numeric vector giving the socioeconomic ranking variable for
-#'   each observation.
+#'   each observation. When `type = "L"`, this is interpreted as the observed
+#'   socioeconomic level variable.
+#' @param type One of `"CI"` or `"L"` selecting the decomposition target. `"CI"`
+#'   uses fractional socioeconomic ranks. `"L"` uses the Erreygers--Kessels
+#'   level-dependent bivariate index based on observed socioeconomic levels.
 #' @param prediction Optional numeric vector of model predictions. If omitted,
 #'   predictions are reconstructed as `baseline + rowSums(shap)`.
 #' @param baseline Optional scalar baseline prediction. Required when
@@ -38,11 +42,15 @@
 #'   columns `feature`, `D_k_SHAP`, `pct_contribution`, and
 #'   `abs_contribution`.
 #'
-#' @details For each feature `k`, `D_k_SHAP` is computed as
+#' @details For `type = "CI"`, each feature `k`, `D_k_SHAP` is computed as
 #'   `2 / (n * mu_hat)` times the sum of `phi_ik * (R_i - 0.5)` across
 #'   observations, where `phi_ik` is the SHAP value for feature `k`, `R_i` is
 #'   the fractional rank of the socioeconomic ordering variable, and `mu_hat`
 #'   is the mean predicted outcome.
+#'
+#'   For `type = "L"`, `rank` is treated as an observed socioeconomic level
+#'   `s_i`. The decomposition uses `mean(((s_i - mu_s) / mu_s) * phi_ik)` for
+#'   each feature, where `mu_s` is the mean socioeconomic level.
 #'
 #' @export
 #' @examples
@@ -76,6 +84,7 @@
 shap_conc_decomp <- function(
     shap,
     rank,
+    type = c("CI", "L"),
     prediction = NULL,
     baseline = NULL,
     from_dalex = FALSE,
@@ -90,6 +99,7 @@ shap_conc_decomp <- function(
   .assert_scalar_flag(na_rm, "na_rm")
   .assert_scalar_flag(sort, "sort")
   .assert_scalar_numeric(tolerance, "tolerance")
+  type <- match.arg(type)
 
   if (isTRUE(from_dalex)) {
     shap <- .dalex_shap_to_wide(
@@ -168,29 +178,53 @@ shap_conc_decomp <- function(
 
   n_complete <- nrow(working_dt)
   rank_vector <- working_dt[["rank__"]]
-  rank_fraction <- fractional_rank(
-    rank_vector, ties_method = "average", na_rm = FALSE
-  )
-  centered_rank <- rank_fraction - 0.5
   prediction_vector <- working_dt[["prediction__"]]
   mu_hat <- mean(prediction_vector)
 
-  if (abs(mu_hat) <= tolerance) {
-    stop(
-      paste(
-        "The mean prediction is numerically zero, so the",
-        "concentration index is undefined."
-      ),
-      call. = FALSE
+  if (type == "CI") {
+    rank_fraction <- fractional_rank(
+      rank_vector, ties_method = "average", na_rm = FALSE
     )
-  }
+    index_weight <- rank_fraction - 0.5
 
-  scale_factor <- 2 / (n_complete * mu_hat)
+    if (abs(mu_hat) <= tolerance) {
+      stop(
+        paste(
+          "The mean prediction is numerically zero, so the",
+          "concentration index is undefined."
+        ),
+        call. = FALSE
+      )
+    }
+
+    scale_factor <- 2 / (n_complete * mu_hat)
+    contribution_score <- function(values) {
+      scale_factor * sum(values * index_weight)
+    }
+    total_ci <- scale_factor * sum(prediction_vector * index_weight)
+  } else {
+    mu_s <- mean(rank_vector)
+    if (!is.finite(mu_s) || abs(mu_s) <= tolerance) {
+      stop(
+        paste(
+          "The mean socioeconomic level is numerically zero, so the",
+          "level-dependent index is undefined."
+        ),
+        call. = FALSE
+      )
+    }
+
+    index_weight <- (rank_vector - mu_s) / mu_s
+    contribution_score <- function(values) {
+      mean(index_weight * values)
+    }
+    total_ci <- mean(index_weight * prediction_vector)
+  }
 
   contribution_wide <- data.table::as.data.table(
     as.list(vapply(
       names(shap_dt),
-      function(col) scale_factor * sum(working_dt[[col]] * centered_rank),
+      function(col) contribution_score(working_dt[[col]]),
       numeric(1L)
     ))
   )
@@ -203,7 +237,6 @@ shap_conc_decomp <- function(
     variable.factor = FALSE
   )
 
-  total_ci <- scale_factor * sum(prediction_vector * centered_rank)
   shap_total <- sum(contributions[["D_k_SHAP"]])
 
   contributions[["pct_contribution"]] <- if (abs(total_ci) <= tolerance) {
@@ -223,11 +256,12 @@ shap_conc_decomp <- function(
 
   diagnostics <- data.table::data.table(
     n = n_complete,
+    type = type,
     mean_prediction = mu_hat,
     concentration_index = total_ci,
     shap_sum = shap_total,
     additivity_gap = total_ci - shap_total,
-    centered_rank_sum = sum(centered_rank),
+    centered_rank_sum = sum(index_weight),
     prediction_source = prediction_source
   )
 

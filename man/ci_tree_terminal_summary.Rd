@@ -15,7 +15,8 @@ A \code{data.table} with one row per terminal node.
 \description{
 Extracts a compact table of terminal-node diagnostics from a fitted
 \code{\link[=ci_tree]{ci_tree()}} model. The table reports node sample size, weighted size,
-depth, node concentration index, and the node-level mean outcome.
+depth, node concentration index, the node-level mean outcome, and the
+decision rule defining each terminal subgroup.
 }
 \examples{
 toy_data <- data.frame(

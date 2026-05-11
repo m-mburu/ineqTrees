@@ -11,7 +11,7 @@ ci_forest(
   rank_name,
   outcome_name,
   weights = NULL,
-  type = c("CI", "CIg", "CIc"),
+  type = c("CI", "CIg", "CIc", "L"),
   control = ci_tree_control(),
   ntree = 500L,
   mtry = NULL,
@@ -34,8 +34,10 @@ cf_ci(...)
 
 \item{weights}{Optional non-negative case weights.}
 
-\item{type}{One of \code{"CI"}, \code{"CIg"}, or \code{"CIc"} selecting the concentration
-index variant used for split scoring.}
+\item{type}{One of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or \code{"L"} selecting the
+inequality index used for split scoring. \code{"L"} uses observed
+socioeconomic levels in the first response column rather than fractional
+ranks.}
 
 \item{control}{A control object created by \code{\link[=ci_tree_control]{ci_tree_control()}}. Objects from
 \code{\link[partykit:ctree_control]{partykit::ctree_control()}} are accepted for their shared controls, but

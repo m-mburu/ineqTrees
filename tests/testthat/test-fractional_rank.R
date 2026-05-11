@@ -99,6 +99,31 @@ test_that("shap_conc_decomp drops incomplete rows with na_rm", {
   expect_equal(out$contributions$D_k_SHAP, c(1 / 12, 1 / 12))
 })
 
+test_that("shap_conc_decomp supports level-dependent L decomposition", {
+  shap <- data.frame(
+    education = c(1, 0, -1),
+    water = c(0, 1, 1)
+  )
+
+  out <- shap_conc_decomp(
+    shap = shap,
+    rank = c(1, 2, 3),
+    type = "L",
+    baseline = 2,
+    sort = FALSE
+  )
+
+  expect_equal(out$diagnostics$type, "L")
+  expect_equal(out$diagnostics$concentration_index, -1 / 6)
+  expect_equal(out$diagnostics$shap_sum, -1 / 6)
+  expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
+  expect_equal(out$diagnostics$centered_rank_sum, 0, tolerance = 1e-12)
+
+  expect_equal(out$contributions$feature, c("education", "water"))
+  expect_equal(out$contributions$D_k_SHAP, c(-1 / 3, 1 / 6))
+  expect_equal(out$contributions$pct_contribution, c(200, -100))
+})
+
 test_that("shap_conc_decomp validates key inputs", {
   shap <- data.frame(x1 = c(1, -1), x2 = c(0, 0))
 
@@ -125,5 +150,9 @@ test_that("shap_conc_decomp validates key inputs", {
   expect_error(
     shap_conc_decomp(shap = shap, rank = c(1, NA), baseline = 1),
     "missing values"
+  )
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = c(-1, 1), type = "L", baseline = 1),
+    "mean socioeconomic level"
   )
 })

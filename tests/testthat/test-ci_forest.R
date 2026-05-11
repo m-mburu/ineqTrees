@@ -18,9 +18,11 @@ test_that("ci_tree_terminal_summary reports terminal-node diagnostics", {
   printed <- utils::capture.output(print(fit))
 
   expect_s3_class(summary, "data.table")
-  expect_true(all(c("node", "n", "ci", "outcome_mean") %in% names(summary)))
+  expect_true(all(c("node", "n", "ci", "outcome_mean", "rule") %in% names(summary)))
   expect_equal(nrow(summary), length(partykit::nodeids(fit, terminal = TRUE)))
+  expect_true(all(nzchar(summary$rule)))
   expect_true(any(grepl("Greedy concentration-index tree", printed)))
+  expect_true(any(grepl("Terminal node summary \\(highest criterion first\\)", printed)))
 })
 
 test_that("ci_forest_summary and print report ensemble diagnostics", {
@@ -165,4 +167,25 @@ test_that("cf_ci remains a compatibility alias for ci_forest", {
   )
 
   expect_s3_class(fit, "ci_forest")
+})
+
+test_that("ci_forest accepts level-dependent L split scoring", {
+  toy_data <- data.frame(
+    ses = c(1, 2, 3, 4, 5, 6),
+    outcome = c(1, 1, 0, 0, 0, 1),
+    x = c(1, 1, 2, 2, 3, 3)
+  )
+
+  fit <- ci_forest(
+    formula = cbind(ses, outcome) ~ x,
+    data = toy_data,
+    rank_name = "ses",
+    outcome_name = "outcome",
+    type = "L",
+    ntree = 3L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_s3_class(fit, "ci_forest")
+  expect_equal(fit$type, "L")
 })

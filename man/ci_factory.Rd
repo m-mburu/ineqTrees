@@ -4,11 +4,13 @@
 \alias{ci_factory}
 \title{Create concentration-index scoring functions}
 \usage{
-ci_factory(type = c("CI", "CIg", "CIc"))
+ci_factory(type = c("CI", "CIg", "CIc", "L"))
 }
 \arguments{
-\item{type}{One of \code{"CI"}, \code{"CIg"}, or \code{"CIc"} selecting the standard,
-generalized, or corrected concentration index.}
+\item{type}{One of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or \code{"L"}. \code{"L"} selects the
+Erreygers-Kessels level-dependent bivariate index. For \code{"L"}, the first
+response column is used as a socioeconomic level variable, not converted
+to ranks.}
 }
 \value{
 A function with signature \verb{function(y, wt)} where \code{y} is a two-column
@@ -28,12 +30,27 @@ This factory is intended for inequality-aware split scoring, where different
 concentration-index variants can be swapped in while keeping a common
 \verb{function(y, wt)} interface.
 
-The returned function first converts \code{y[, 1]} to weighted
+\code{"CI"}, \code{"CIg"}, and \code{"CIc"} are rank-dependent indices. For these
+scores, the returned function first converts \code{y[, 1]} to weighted
 fractional ranks using \code{\link[=rank_wt]{rank_wt()}}. It then computes the weighted
 covariance between rank and outcome and maps it to the requested index:
 \code{"CI"} divides by the weighted mean of the outcome, \code{"CIg"} returns the
 generalized form, and \code{"CIc"} applies an Erreygers-style range correction.
 Absolute values are returned.
+
+\code{"L"} is level-dependent. It uses the observed socioeconomic levels in
+\code{y[, 1]} directly, together with the health outcome in \code{y[, 2]}:
+\deqn{L = \sum_i p_i \left(\frac{s_i - \mu_s}{\mu_s}\right)y_i}
+where \verb{p_i = w_i / sum_i w_i} and \verb{mu_s = sum_i p_i s_i}. The returned
+value is \code{abs(L)}.
+
+Methodological warning: \code{"L"} requires the first response column to be a
+meaningful socioeconomic level variable, ideally income, consumption,
+expenditure, or another non-negative ratio-scale SES measure. It should
+not be used naively with a centered PCA wealth-index score whose mean may
+be close to zero or whose level scale has no direct interpretation. If
+using DHS wealth scores, treat \code{"L"} as a sensitivity analysis unless a
+defensible level interpretation exists.
 
 In mathematical notation, for weighted fractional rank \code{R}, outcome \code{Y},
 weighted outcome mean \code{mu}, and weighted covariance \code{cov_w}, the three
@@ -57,4 +74,9 @@ Wagstaff A (2011). "The concentration index of a binary outcome revisited."
 
 Erreygers G (2009). "Correcting the concentration index." \emph{Journal of Health
 Economics}, 28(2), 504-515. doi:10.1016/j.jhealeco.2008.02.003.
+
+Erreygers G, Kessels R (2017). "Regression-Based Decompositions of Rank-
+Dependent Indicators of Socioeconomic Inequality of Health." \emph{International
+Journal of Environmental Research and Public Health}, 14(7), 673.
+doi:10.3390/ijerph14070673.
 }

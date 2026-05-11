@@ -35,8 +35,10 @@ pkgload::load_all(export_all = TRUE)
 #'   when the response is not supplied as a two-column matrix.
 #' @param outcome_name Name of the outcome variable in the model frame when the
 #'   response is not supplied as a two-column matrix.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the concentration
-#'   index variant used for split scoring.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"` selecting the
+#'   inequality index used for split scoring. `"L"` uses observed
+#'   socioeconomic levels in the first response column rather than fractional
+#'   ranks.
 #'
 #' @return A function with signature
 #'   `function(model, trafo, data, subset, weights, whichvar, ctrl)` suitable
@@ -46,7 +48,9 @@ pkgload::load_all(export_all = TRUE)
 #'
 #' @export 
 
-ci_splitfun <- function(rank_name, outcome_name, type = c("CI", "CIg", "CIc")) {
+ci_splitfun <- function(rank_name,
+                        outcome_name,
+                        type = c("CI", "CIg", "CIc", "L")) {
   type <- match.arg(type)
   ci_fun <- ci_factory(type)
 
@@ -361,7 +365,8 @@ test_that("ci_splitfun errors when it cannot recover a two-column response", {
 #' \arg\max_{j \in \mathcal{J}_t,\ s \in \mathcal{S}_{jt}}
 #' G_m(t, j, s).}
 #' The gain `G_m` is computed by [weighted_ci_gain()] from the selected
-#' concentration-index impurity `m`, one of `"CI"`, `"CIg"`, or `"CIc"`.
+#' concentration-index impurity `m`, one of `"CI"`, `"CIg"`, `"CIc"`, or
+#' `"L"`.
 #'
 #' The fitted object uses [partykit::party()] for storage, traversal,
 #' prediction, and plotting, but the tree-growing rule is the package's greedy
@@ -380,8 +385,10 @@ test_that("ci_splitfun errors when it cannot recover a two-column response", {
 #' @param rank_name Name of the socioeconomic rank variable.
 #' @param outcome_name Name of the outcome variable.
 #' @param weights Optional non-negative numeric case weights.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the concentration
-#'   index variant used for split scoring.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"` selecting the
+#'   inequality index used for split scoring. `"L"` uses observed
+#'   socioeconomic levels in the first response column rather than fractional
+#'   ranks.
 #' @param control A control object created by [ci_tree_control()]. Objects from
 #'   [partykit::ctree_control()] are also accepted for shared controls such as
 #'   `minsplit`, `minbucket`, `minprob`, `maxdepth`, and `mtry`.
@@ -409,7 +416,7 @@ ci_tree <- function(formula,
                     rank_name,
                     outcome_name,
                     weights = NULL,
-                    type = c("CI", "CIg", "CIc"),
+                    type = c("CI", "CIg", "CIc", "L"),
                     control = ci_tree_control(),
                     na.action = stats::na.omit,
                     ...) {
@@ -645,6 +652,26 @@ test_that("ctree_ci remains a compatibility alias for ci_tree", {
 
   expect_s3_class(fit, "ci_tree")
 })
+
+test_that("ci_tree accepts level-dependent L split scoring", {
+  toy_data <- data.frame(
+    ses = c(1, 2, 3, 4, 5, 6),
+    outcome = c(1, 1, 0, 0, 0, 1),
+    x = c(1, 1, 2, 2, 3, 3)
+  )
+
+  fit <- ci_tree(
+    formula = cbind(ses, outcome) ~ x,
+    data = toy_data,
+    rank_name = "ses",
+    outcome_name = "outcome",
+    type = "L",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_s3_class(fit, "ci_tree")
+  expect_equal(fit$info$type, "L")
+})
 ```
 
 
@@ -814,8 +841,10 @@ test_that("as_caseweights rejects invalid input weights", {
 #' @param rank_name Name of the socioeconomic rank variable.
 #' @param outcome_name Name of the outcome variable.
 #' @param weights Optional non-negative case weights.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the concentration
-#'   index variant used for split scoring.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"` selecting the
+#'   inequality index used for split scoring. `"L"` uses observed
+#'   socioeconomic levels in the first response column rather than fractional
+#'   ranks.
 #' @param control A control object created by [ci_tree_control()]. Objects from
 #'   [partykit::ctree_control()] are accepted for their shared controls, but
 #'   conditional-inference test controls such as `mincriterion` are ignored by
@@ -850,7 +879,7 @@ ci_forest <- function(formula,
                       rank_name,
                       outcome_name,
                       weights = NULL,
-                      type = c("CI", "CIg", "CIc"),
+                      type = c("CI", "CIg", "CIc", "L"),
                       control = ci_tree_control(),
                       ntree = 500L,
                       mtry = NULL,
@@ -1152,6 +1181,45 @@ fitted.ci_forest <- function(object, ...) {
 }
 
 #' @noRd
+.ci_rule_piece <- function(var_name, label) {
+  display_name <- tree_pretty_var_name(var_name)
+  label <- gsub("\\s+", " ", trimws(as.character(label)))
+
+  if (grepl("^(<=|>=|<|>|=)", label)) {
+    return(paste(display_name, label))
+  }
+
+  paste0(display_name, " in {", label, "}")
+}
+
+#' @noRd
+.ci_collect_terminal_rules <- function(node, meta, path = character()) {
+  if (partykit::is.terminal(node)) {
+    rule <- if (length(path) == 0L) {
+      "all observations"
+    } else {
+      paste(path, collapse = " & ")
+    }
+
+    return(data.table::data.table(
+      node = as.integer(partykit::id_node(node)),
+      rule = rule
+    ))
+  }
+
+  split_info <- partykit::character_split(partykit::split_node(node), meta)
+  kids <- partykit::kids_node(node)
+
+  data.table::rbindlist(lapply(seq_along(kids), function(i) {
+    .ci_collect_terminal_rules(
+      node = kids[[i]],
+      meta = meta,
+      path = c(path, .ci_rule_piece(split_info$name, split_info$levels[[i]]))
+    )
+  }))
+}
+
+#' @noRd
 .ci_format_scalar <- function(x, digits = 3L) {
   if (length(x) == 0L || is.na(x)) {
     return("NA")
@@ -1172,7 +1240,8 @@ fitted.ci_forest <- function(object, ...) {
 #' @description
 #' Extracts a compact table of terminal-node diagnostics from a fitted
 #' [ci_tree()] model. The table reports node sample size, weighted size,
-#' depth, node concentration index, and the node-level mean outcome.
+#' depth, node concentration index, the node-level mean outcome, and the
+#' decision rule defining each terminal subgroup.
 #'
 #' @param object A fitted `ci_tree` object.
 #'
@@ -1205,6 +1274,10 @@ ci_tree_terminal_summary <- function(object) {
     ids = terminal_ids,
     FUN = partykit::info_node
   )
+  rules <- .ci_collect_terminal_rules(
+    node = partykit::node_party(object),
+    meta = partykit::data_party(object)
+  )
 
   out <- data.table::rbindlist(lapply(seq_along(terminal_ids), function(i) {
     info <- node_info[[i]]
@@ -1220,6 +1293,7 @@ ci_tree_terminal_summary <- function(object) {
     )
   }), fill = TRUE)
 
+  out <- merge(out, rules, by = "node", all.x = TRUE, sort = FALSE)
   data.table::setorderv(out, "node")
   out
 }
@@ -1321,13 +1395,18 @@ print.ci_tree <- function(x, ..., nodes = 10L, digits = 3L) {
     "\n",
     sep = ""
   )
-  cat("  CI = ", .ci_format_scalar(.ci_node_info_scalar(root, "ci"), digits), "\n\n",
+  cat("  ", .ci_or_na(info$type), " = ",
+    .ci_format_scalar(.ci_node_info_scalar(root, "ci"), digits),
+    "\n\n",
     sep = ""
   )
 
-  cat("Terminal node summary:\n")
-  terminal_print <- as.data.frame(utils::head(terminal, nodes))
-  terminal_print$ci <- round(terminal_print$ci, digits)
+  cat("Terminal node summary (highest criterion first):\n")
+  terminal_print <- data.table::copy(terminal)
+  data.table::setorderv(terminal_print, c("ci", "weight", "node"), c(-1L, -1L, 1L))
+  terminal_print <- as.data.frame(utils::head(terminal_print, nodes))
+  names(terminal_print)[names(terminal_print) == "ci"] <- .ci_or_na(info$type)
+  terminal_print[[.ci_or_na(info$type)]] <- round(terminal_print[[.ci_or_na(info$type)]], digits)
   terminal_print$outcome_mean <- round(terminal_print$outcome_mean, digits)
   terminal_print$outcome_percent <- round(terminal_print$outcome_percent, 1L)
   print(terminal_print, row.names = FALSE)
@@ -1395,7 +1474,9 @@ knit_print.ci_tree <- function(x, ...) {
   info <- .ci_party_info(x)
   size <- .ci_tree_size_summary(x)
   terminal <- ci_tree_terminal_summary(x)
-  terminal$ci <- round(terminal$ci, 3L)
+  data.table::setorderv(terminal, c("ci", "weight", "node"), c(-1L, -1L, 1L))
+  names(terminal)[names(terminal) == "ci"] <- .ci_or_na(info$type)
+  terminal[[.ci_or_na(info$type)]] <- round(terminal[[.ci_or_na(info$type)]], 3L)
   terminal$outcome_mean <- round(terminal$outcome_mean, 3L)
   terminal$outcome_percent <- round(terminal$outcome_percent, 1L)
 
@@ -1413,7 +1494,7 @@ knit_print.ci_tree <- function(x, ...) {
       size$max_depth
     ),
     "",
-    knitr::kable(terminal, caption = "Terminal-node summary")
+    knitr::kable(terminal, caption = "Terminal-node summary with subgroup rules")
   )
 
   knitr::asis_output(paste(text, collapse = "\n"))
@@ -1470,9 +1551,11 @@ test_that("ci_tree_terminal_summary reports terminal-node diagnostics", {
   printed <- utils::capture.output(print(fit))
 
   expect_s3_class(summary, "data.table")
-  expect_true(all(c("node", "n", "ci", "outcome_mean") %in% names(summary)))
+  expect_true(all(c("node", "n", "ci", "outcome_mean", "rule") %in% names(summary)))
   expect_equal(nrow(summary), length(partykit::nodeids(fit, terminal = TRUE)))
+  expect_true(all(nzchar(summary$rule)))
   expect_true(any(grepl("Greedy concentration-index tree", printed)))
+  expect_true(any(grepl("Terminal node summary \\(highest criterion first\\)", printed)))
 })
 
 test_that("ci_forest_summary and print report ensemble diagnostics", {
@@ -1640,6 +1723,27 @@ test_that("cf_ci remains a compatibility alias for ci_forest", {
   )
 
   expect_s3_class(fit, "ci_forest")
+})
+
+test_that("ci_forest accepts level-dependent L split scoring", {
+  toy_data <- data.frame(
+    ses = c(1, 2, 3, 4, 5, 6),
+    outcome = c(1, 1, 0, 0, 0, 1),
+    x = c(1, 1, 2, 2, 3, 3)
+  )
+
+  fit <- ci_forest(
+    formula = cbind(ses, outcome) ~ x,
+    data = toy_data,
+    rank_name = "ses",
+    outcome_name = "outcome",
+    type = "L",
+    ntree = 3L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_s3_class(fit, "ci_forest")
+  expect_equal(fit$type, "L")
 })
 ```
 
