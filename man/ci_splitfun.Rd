@@ -4,7 +4,7 @@
 \alias{ci_splitfun}
 \title{Create a concentration-index split function}
 \usage{
-ci_splitfun(rank_name, outcome_name, type = c("CI", "CIg", "CIc"))
+ci_splitfun(rank_name, outcome_name, type = c("CI", "CIg", "CIc", "L"))
 }
 \arguments{
 \item{rank_name}{Name of the socioeconomic rank variable in the model frame
@@ -13,8 +13,10 @@ when the response is not supplied as a two-column matrix.}
 \item{outcome_name}{Name of the outcome variable in the model frame when the
 response is not supplied as a two-column matrix.}
 
-\item{type}{One of \code{"CI"}, \code{"CIg"}, or \code{"CIc"} selecting the concentration
-index variant used for split scoring.}
+\item{type}{One of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or \code{"L"} selecting the
+inequality index used for split scoring. \code{"L"} uses observed
+socioeconomic levels in the first response column rather than fractional
+ranks.}
 }
 \value{
 A function with signature

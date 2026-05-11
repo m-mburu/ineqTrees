@@ -190,7 +190,7 @@ ci_forest_summary(fit_forest)
 
 ### Fit surrogarete tree to forest predictions
 
-- The surrogate is a greedy concentration-index tree that approximates the predictions of the fitted forest. This is useful for interpreting the forest and for tuning it with cross-validation, since the surrogate can be refit on held-out data and scored with CI gain.
+- The surrogate is a greedy concentration-index tree that approximates the predictions of the fitted forest. This is useful for interpreting the forest , since the surrogate can be refit on held-out data and scored with CI gain.
 
 ```{r surrogate-tree}
 setDT(kenya)
@@ -317,10 +317,10 @@ controls by passing several values to `type`.
 
 ```{r tree-tuning-grid}
 tree_tune_grid <- ci_tree_control_grid(
-  minsplit = c(150L, 250L),
-  minbucket = c(60L, 100L),
-  maxdepth = 2L:5L,
-  minprob = c(0.01, 0.1, 0.2, 0.3)
+  minsplit = c(100L),
+  minbucket = c(50L, 100L),
+  maxdepth = c(3L:6L),
+  minprob = c(0.01, 0.1)
 )
 ```
 
@@ -330,9 +330,9 @@ tree_tuning <- tune_ci_tree(
   data = tuning_data,
   rank_name = "wealth",
   outcome_name = "deadu5_num",
-  type = c("CI", "CIg", "CIc"),
+  type = c("CI", "CIg", "CIc", "L"),
   control_grid = tree_tune_grid,
-  v = 10L,
+  v = 5L,
   strata = "deadu5_num",
   seed = 20260507,
   metric = "validation_gain",
@@ -387,11 +387,12 @@ gain from that surrogate.
 
 ```{r forest-tuning-grid}
 forest_tune_grid <- ci_tree_control_grid(
-  minsplit = c(100L, 200L),
-  minbucket = c(50L, 100L, 200L),
+  minsplit = c(100L),
+  minbucket = c(50L, 100L),
   maxdepth = c(3L:6L),
   mtry = c(1L, 2L),
-  ntree = c(10L, 50L, 100L)
+  ntree = c(10L, 50L),
+  minprob = c(0.01, 0.1)
 )
 ```
 
@@ -401,9 +402,9 @@ forest_tuning <- tune_ci_forest(
   data = tuning_data,
   rank_name = "wealth",
   outcome_name = "deadu5_num",
-  type = c("CI", "CIg", "CIc"),
+  type = c("CI", "CIg", "CIc", "L"),
   control_grid = forest_tune_grid,
-  v = 10L,
+  v = 5L,
   strata = "deadu5_num",
   seed = 20260508,
   prediction_name = "forest_risk",

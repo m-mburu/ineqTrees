@@ -211,7 +211,7 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 
 #' @noRd
 .ci_match_type <- function(type) {
-  match.arg(type, choices = c("CI", "CIg", "CIc"), several.ok = TRUE)
+  match.arg(type, choices = c("CI", "CIg", "CIc", "L"), several.ok = TRUE)
 }
 
 #' @noRd
@@ -390,8 +390,10 @@ predict_ctree_ci_terminal_mean <- function(...) {
 #' @param rank_name Name of the socioeconomic ranking column.
 #' @param outcome_name Name of the outcome column.
 #' @param weights Optional non-negative validation weights.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the concentration
-#'   index variant used for validation scoring.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"` selecting the
+#'   inequality index used for validation scoring. `"L"` uses observed
+#'   socioeconomic levels in the first response column rather than fractional
+#'   ranks.
 #'
 #' @return A numeric validation gain.
 #'
@@ -416,7 +418,7 @@ ci_tree_validation_gain <- function(fit,
                                     rank_name,
                                     outcome_name,
                                     weights = NULL,
-                                    type = c("CI", "CIg", "CIc")) {
+                                    type = c("CI", "CIg", "CIc", "L")) {
   if (!inherits(fit, "party")) {
     stop("`fit` must inherit from class `party`.", call. = FALSE)
   }
@@ -601,7 +603,7 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #' @description
 #' Fits [ci_tree()] across a grid of greedy tree controls and concentration
 #' index criteria. If `type` contains multiple values, each of `"CI"`, `"CIg"`,
-#' and/or `"CIc"` is treated as a candidate objective and selected by the
+#' `"CIc"`, and/or `"L"` is treated as a candidate objective and selected by the
 #' validation metric.
 #'
 #' The default metric is `validation_gain`, the held-out reduction in
@@ -615,8 +617,9 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #' @param rank_name Name of the socioeconomic rank variable.
 #' @param outcome_name Name of the outcome variable.
 #' @param weights Optional non-negative case weights.
-#' @param type One or more of `"CI"`, `"CIg"`, or `"CIc"` selecting candidate
-#'   concentration-index objectives.
+#' @param type One or more of `"CI"`, `"CIg"`, `"CIc"`, or `"L"` selecting
+#'   candidate inequality objectives. `"L"` uses observed socioeconomic levels
+#'   in the first response column rather than fractional ranks.
 #' @param control_grid A data frame of candidate controls. Defaults to
 #'   [ci_tree_control_grid()]. If it contains a `type` column, that column is
 #'   used instead of expanding over `type`.
@@ -666,7 +669,7 @@ tune_ci_tree <- function(formula,
                          rank_name,
                          outcome_name,
                          weights = NULL,
-                         type = c("CI", "CIg", "CIc"),
+                         type = c("CI", "CIg", "CIc", "L"),
                          control_grid = NULL,
                          v = 5L,
                          strata = NULL,

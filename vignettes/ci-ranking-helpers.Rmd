@@ -45,6 +45,8 @@ cig <- ci_factory("CIg")
 cig(y, c(1, 1, 2))
 cic <- ci_factory("CIc")
 cic(y, c(1, 1, 2))
+l_index <- ci_factory("L")
+l_index(y, c(1, 1, 2))
 ```
 
 

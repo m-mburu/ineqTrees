@@ -113,8 +113,10 @@
 #' @param rank_name Name of the socioeconomic rank variable.
 #' @param outcome_name Name of the outcome variable.
 #' @param weights Optional non-negative case weights.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the concentration
-#'   index variant used for split scoring.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"` selecting the
+#'   inequality index used for split scoring. `"L"` uses observed
+#'   socioeconomic levels in the first response column rather than fractional
+#'   ranks.
 #' @param control A control object created by [ci_tree_control()]. Objects from
 #'   [partykit::ctree_control()] are accepted for their shared controls, but
 #'   conditional-inference test controls such as `mincriterion` are ignored by
@@ -149,7 +151,7 @@ ci_forest <- function(formula,
                       rank_name,
                       outcome_name,
                       weights = NULL,
-                      type = c("CI", "CIg", "CIc"),
+                      type = c("CI", "CIg", "CIc", "L"),
                       control = ci_tree_control(),
                       ntree = 500L,
                       mtry = NULL,
@@ -449,6 +451,45 @@ fitted.ci_forest <- function(object, ...) {
 }
 
 #' @noRd
+.ci_rule_piece <- function(var_name, label) {
+  display_name <- tree_pretty_var_name(var_name)
+  label <- gsub("\\s+", " ", trimws(as.character(label)))
+
+  if (grepl("^(<=|>=|<|>|=)", label)) {
+    return(paste(display_name, label))
+  }
+
+  paste0(display_name, " in {", label, "}")
+}
+
+#' @noRd
+.ci_collect_terminal_rules <- function(node, meta, path = character()) {
+  if (partykit::is.terminal(node)) {
+    rule <- if (length(path) == 0L) {
+      "all observations"
+    } else {
+      paste(path, collapse = " & ")
+    }
+
+    return(data.table::data.table(
+      node = as.integer(partykit::id_node(node)),
+      rule = rule
+    ))
+  }
+
+  split_info <- partykit::character_split(partykit::split_node(node), meta)
+  kids <- partykit::kids_node(node)
+
+  data.table::rbindlist(lapply(seq_along(kids), function(i) {
+    .ci_collect_terminal_rules(
+      node = kids[[i]],
+      meta = meta,
+      path = c(path, .ci_rule_piece(split_info$name, split_info$levels[[i]]))
+    )
+  }))
+}
+
+#' @noRd
 .ci_format_scalar <- function(x, digits = 3L) {
   if (length(x) == 0L || is.na(x)) {
     return("NA")
@@ -469,7 +510,8 @@ fitted.ci_forest <- function(object, ...) {
 #' @description
 #' Extracts a compact table of terminal-node diagnostics from a fitted
 #' [ci_tree()] model. The table reports node sample size, weighted size,
-#' depth, node concentration index, and the node-level mean outcome.
+#' depth, node concentration index, the node-level mean outcome, and the
+#' decision rule defining each terminal subgroup.
 #'
 #' @param object A fitted `ci_tree` object.
 #'
@@ -520,6 +562,10 @@ ci_tree_terminal_summary <- function(object) {
     ids = terminal_ids,
     FUN = partykit::info_node
   )
+  rules <- .ci_collect_terminal_rules(
+    node = partykit::node_party(object),
+    meta = partykit::data_party(object)
+  )
 
   out <- data.table::rbindlist(lapply(seq_along(terminal_ids), function(i) {
     info <- node_info[[i]]
@@ -535,6 +581,7 @@ ci_tree_terminal_summary <- function(object) {
     )
   }), fill = TRUE)
 
+  out <- merge(out, rules, by = "node", all.x = TRUE, sort = FALSE)
   data.table::setorderv(out, "node")
   out
 }
@@ -636,13 +683,18 @@ print.ci_tree <- function(x, ..., nodes = 10L, digits = 3L) {
     "\n",
     sep = ""
   )
-  cat("  CI = ", .ci_format_scalar(.ci_node_info_scalar(root, "ci"), digits), "\n\n",
+  cat("  ", .ci_or_na(info$type), " = ",
+    .ci_format_scalar(.ci_node_info_scalar(root, "ci"), digits),
+    "\n\n",
     sep = ""
   )
 
-  cat("Terminal node summary:\n")
-  terminal_print <- as.data.frame(utils::head(terminal, nodes))
-  terminal_print$ci <- round(terminal_print$ci, digits)
+  cat("Terminal node summary (highest criterion first):\n")
+  terminal_print <- data.table::copy(terminal)
+  data.table::setorderv(terminal_print, c("ci", "weight", "node"), c(-1L, -1L, 1L))
+  terminal_print <- as.data.frame(utils::head(terminal_print, nodes))
+  names(terminal_print)[names(terminal_print) == "ci"] <- .ci_or_na(info$type)
+  terminal_print[[.ci_or_na(info$type)]] <- round(terminal_print[[.ci_or_na(info$type)]], digits)
   terminal_print$outcome_mean <- round(terminal_print$outcome_mean, digits)
   terminal_print$outcome_percent <- round(terminal_print$outcome_percent, 1L)
   print(terminal_print, row.names = FALSE)
@@ -710,7 +762,9 @@ knit_print.ci_tree <- function(x, ...) {
   info <- .ci_party_info(x)
   size <- .ci_tree_size_summary(x)
   terminal <- ci_tree_terminal_summary(x)
-  terminal$ci <- round(terminal$ci, 3L)
+  data.table::setorderv(terminal, c("ci", "weight", "node"), c(-1L, -1L, 1L))
+  names(terminal)[names(terminal) == "ci"] <- .ci_or_na(info$type)
+  terminal[[.ci_or_na(info$type)]] <- round(terminal[[.ci_or_na(info$type)]], 3L)
   terminal$outcome_mean <- round(terminal$outcome_mean, 3L)
   terminal$outcome_percent <- round(terminal$outcome_percent, 1L)
 
@@ -728,7 +782,7 @@ knit_print.ci_tree <- function(x, ...) {
       size$max_depth
     ),
     "",
-    knitr::kable(terminal, caption = "Terminal-node summary")
+    knitr::kable(terminal, caption = "Terminal-node summary with subgroup rules")
   )
 
   knitr::asis_output(paste(text, collapse = "\n"))

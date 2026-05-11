@@ -10,7 +10,7 @@
 #'
 #' @param y A two-column numeric matrix with rank variable and outcome.
 #' @param wt Non-negative case weights.
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"`.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"`.
 #'
 #' @return A single non-negative concentration-index score.
 #'
@@ -23,6 +23,8 @@
 #' cig(y, c(1, 1, 2))
 #' cic <- ci_factory("CIc")
 #' cic(y, c(1, 1, 2))
+#' l_index <- ci_factory("L")
+#' l_index(y, c(1, 1, 2))
 .ci_fast_score <- function(y, wt, type) {
   ok <- stats::complete.cases(y) & !is.na(wt) & wt > 0
   if (!any(ok) || sum(ok) <= 1L) {
@@ -36,6 +38,21 @@
   total_wt <- sum(wt)
   if (!is.finite(total_wt) || total_wt <= 0) {
     return(0)
+  }
+
+  if (type == "L") {
+    mu_s <- stats::weighted.mean(rank, wt)
+    if (!is.finite(mu_s) || abs(mu_s) <= .Machine$double.eps) {
+      return(0)
+    }
+
+    p <- wt / total_wt
+    l_index <- sum(p * ((rank - mu_s) / mu_s) * outcome)
+    if (!is.finite(l_index)) {
+      return(0)
+    }
+
+    return(abs(l_index))
   }
 
   n <- length(wt)
@@ -84,6 +101,45 @@
   4 * abs(2 * cov12) / rng
 }
 
+#' Track session-level CI warnings
+#'
+#' @noRd
+.ci_warning_state <- new.env(parent = emptyenv())
+.ci_warning_state$negative_l <- FALSE
+
+#' Warn once when L is used with negative socioeconomic levels
+#'
+#' @param ses Numeric socioeconomic level variable.
+#'
+#' @return `TRUE` when a warning was issued, otherwise `FALSE`.
+#'
+#' @noRd
+.ci_warn_negative_l_levels <- function(ses) {
+  if (isTRUE(.ci_warning_state$negative_l)) {
+    return(FALSE)
+  }
+
+  if (!any(is.finite(ses) & ses < 0, na.rm = TRUE)) {
+    return(FALSE)
+  }
+
+  warning(
+    paste(
+      '`type = "L"` uses observed socioeconomic levels rather than',
+      "fractional ranks. The first response column contains negative values;",
+      "the Erreygers-Kessels level-dependent index is intended for meaningful",
+      "ratio-scale socioeconomic levels such as income, consumption, or",
+      "expenditure. Centered wealth-index scores with negative values may be",
+      "inappropriate for this criterion. See",
+      "https://doi.org/10.3390/ijerph14070673.",
+      "This warning is shown once per R session."
+    ),
+    call. = FALSE
+  )
+  .ci_warning_state$negative_l <- TRUE
+  TRUE
+}
+
 #' Create concentration-index scoring functions
 #'
 #' Build a function that computes a weighted concentration-index criterion from
@@ -94,8 +150,10 @@
 #' concentration-index variants can be swapped in while keeping a common
 #' `function(y, wt)` interface.
 #'
-#' @param type One of `"CI"`, `"CIg"`, or `"CIc"` selecting the standard,
-#'   generalized, or corrected concentration index.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"`. `"L"` selects the
+#'   Erreygers-Kessels level-dependent bivariate index. For `"L"`, the first
+#'   response column is used as a socioeconomic level variable, not converted
+#'   to ranks.
 #'
 #' @return A function with signature `function(y, wt)` where `y` is a two-column
 #'   numeric matrix and `wt` is a vector of positive case weights. The returned
@@ -104,12 +162,27 @@
 #'   than two valid observations remain or when the required denominator is
 #'   degenerate.
 #'
-#' @details The returned function first converts `y[, 1]` to weighted
+#' @details `"CI"`, `"CIg"`, and `"CIc"` are rank-dependent indices. For these
+#'   scores, the returned function first converts `y[, 1]` to weighted
 #'   fractional ranks using [rank_wt()]. It then computes the weighted
 #'   covariance between rank and outcome and maps it to the requested index:
 #'   `"CI"` divides by the weighted mean of the outcome, `"CIg"` returns the
 #'   generalized form, and `"CIc"` applies an Erreygers-style range correction.
 #'   Absolute values are returned.
+#'
+#'   `"L"` is level-dependent. It uses the observed socioeconomic levels in
+#'   `y[, 1]` directly, together with the health outcome in `y[, 2]`:
+#'   \deqn{L = \sum_i p_i \left(\frac{s_i - \mu_s}{\mu_s}\right)y_i}
+#'   where `p_i = w_i / sum_i w_i` and `mu_s = sum_i p_i s_i`. The returned
+#'   value is `abs(L)`.
+#'
+#'   Methodological warning: `"L"` requires the first response column to be a
+#'   meaningful socioeconomic level variable, ideally income, consumption,
+#'   expenditure, or another non-negative ratio-scale SES measure. It should
+#'   not be used naively with a centered PCA wealth-index score whose mean may
+#'   be close to zero or whose level scale has no direct interpretation. If
+#'   using DHS wealth scores, treat `"L"` as a sensitivity analysis unless a
+#'   defensible level interpretation exists.
 #'
 #'   In mathematical notation, for weighted fractional rank `R`, outcome `Y`,
 #'   weighted outcome mean `mu`, and weighted covariance `cov_w`, the three
@@ -133,13 +206,21 @@
 #'
 #' Erreygers G (2009). "Correcting the concentration index." *Journal of Health
 #' Economics*, 28(2), 504-515. doi:10.1016/j.jhealeco.2008.02.003.
+#'
+#' Erreygers G, Kessels R (2017). "Regression-Based Decompositions of Rank-
+#' Dependent Indicators of Socioeconomic Inequality of Health." *International
+#' Journal of Environmental Research and Public Health*, 14(7), 673.
+#' doi:10.3390/ijerph14070673.
 #' @export 
 
-ci_factory <- function(type = c("CI", "CIg", "CIc")) {
+ci_factory <- function(type = c("CI", "CIg", "CIc", "L")) {
   type <- match.arg(type)
 
   function(y, wt) {
     stopifnot(is.matrix(y), ncol(y) == 2L, length(wt) == nrow(y))
+    if (type == "L") {
+      .ci_warn_negative_l_levels(y[, 1])
+    }
     .ci_fast_score(y = y, wt = wt, type = type)
   }
 }

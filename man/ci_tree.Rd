@@ -11,7 +11,7 @@ ci_tree(
   rank_name,
   outcome_name,
   weights = NULL,
-  type = c("CI", "CIg", "CIc"),
+  type = c("CI", "CIg", "CIc", "L"),
   control = ci_tree_control(),
   na.action = stats::na.omit,
   ...
@@ -31,8 +31,10 @@ ctree_ci(...)
 
 \item{weights}{Optional non-negative numeric case weights.}
 
-\item{type}{One of \code{"CI"}, \code{"CIg"}, or \code{"CIc"} selecting the concentration
-index variant used for split scoring.}
+\item{type}{One of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or \code{"L"} selecting the
+inequality index used for split scoring. \code{"L"} uses observed
+socioeconomic levels in the first response column rather than fractional
+ranks.}
 
 \item{control}{A control object created by \code{\link[=ci_tree_control]{ci_tree_control()}}. Objects from
 \code{\link[partykit:ctree_control]{partykit::ctree_control()}} are also accepted for shared controls such as
@@ -69,7 +71,8 @@ with the largest concentration-index gain:
 \arg\max_{j \in \mathcal{J}_t,\ s \in \mathcal{S}_{jt}}
 G_m(t, j, s).}
 The gain \code{G_m} is computed by \code{\link[=weighted_ci_gain]{weighted_ci_gain()}} from the selected
-concentration-index impurity \code{m}, one of \code{"CI"}, \code{"CIg"}, or \code{"CIc"}.
+concentration-index impurity \code{m}, one of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or
+\code{"L"}.
 
 The fitted object uses \code{\link[partykit:party]{partykit::party()}} for storage, traversal,
 prediction, and plotting, but the tree-growing rule is the package's greedy

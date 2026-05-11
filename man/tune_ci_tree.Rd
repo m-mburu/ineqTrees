@@ -12,7 +12,7 @@ tune_ci_tree(
   rank_name,
   outcome_name,
   weights = NULL,
-  type = c("CI", "CIg", "CIc"),
+  type = c("CI", "CIg", "CIc", "L"),
   control_grid = NULL,
   v = 5L,
   strata = NULL,
@@ -39,8 +39,9 @@ tune_ctree_ci(...)
 
 \item{weights}{Optional non-negative case weights.}
 
-\item{type}{One or more of \code{"CI"}, \code{"CIg"}, or \code{"CIc"} selecting candidate
-concentration-index objectives.}
+\item{type}{One or more of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or \code{"L"} selecting
+candidate inequality objectives. \code{"L"} uses observed socioeconomic levels
+in the first response column rather than fractional ranks.}
 
 \item{control_grid}{A data frame of candidate controls. Defaults to
 \code{\link[=ci_tree_control_grid]{ci_tree_control_grid()}}. If it contains a \code{type} column, that column is
@@ -76,7 +77,7 @@ A \code{ci_tree_tuning} object.
 \description{
 Fits \code{\link[=ci_tree]{ci_tree()}} across a grid of greedy tree controls and concentration
 index criteria. If \code{type} contains multiple values, each of \code{"CI"}, \code{"CIg"},
-and/or \code{"CIc"} is treated as a candidate objective and selected by the
+\code{"CIc"}, and/or \code{"L"} is treated as a candidate objective and selected by the
 validation metric.
 
 The default metric is \code{validation_gain}, the held-out reduction in
