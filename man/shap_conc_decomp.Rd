@@ -7,9 +7,10 @@
 shap_conc_decomp(
   shap,
   rank,
-  type = c("CI", "L"),
+  type = c("CI", "CIg", "CIc", "L"),
   prediction = NULL,
   baseline = NULL,
+  weights = NULL,
   from_dalex = FALSE,
   dalex_id_col = NULL,
   dalex_variable_col = NULL,
@@ -28,15 +29,21 @@ observation IDs, feature names, and SHAP values.}
 each observation. When \code{type = "L"}, this is interpreted as the observed
 socioeconomic level variable.}
 
-\item{type}{One of \code{"CI"} or \code{"L"} selecting the decomposition target. \code{"CI"}
-uses fractional socioeconomic ranks. \code{"L"} uses the Erreygers--Kessels
-level-dependent bivariate index based on observed socioeconomic levels.}
+\item{type}{One of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or \code{"L"} selecting the
+decomposition target. The first three are rank-dependent concentration
+indices scored consistently with \code{\link[=ci_factory]{ci_factory()}}. \code{"L"} uses the
+Erreygers--Kessels level-dependent bivariate index based on observed
+socioeconomic levels.}
 
 \item{prediction}{Optional numeric vector of model predictions. If omitted,
 predictions are reconstructed as \code{baseline + rowSums(shap)}.}
 
 \item{baseline}{Optional scalar baseline prediction. Required when
 \code{prediction} is not supplied.}
+
+\item{weights}{Optional numeric vector of non-negative case weights. If
+omitted, equal weights are used. Observations with non-positive weights do
+not contribute to the decomposition.}
 
 \item{from_dalex}{Logical scalar. If \code{TRUE}, reshape a DALEX-like long SHAP
 table to wide format before decomposition.}
@@ -73,15 +80,22 @@ predicted outcome. The SHAP table can be supplied either in wide format
 format and reshaped internally.
 }
 \details{
-For \code{type = "CI"}, each feature \code{k}, \code{D_k_SHAP} is computed as
-\code{2 / (n * mu_hat)} times the sum of \code{phi_ik * (R_i - 0.5)} across
-observations, where \code{phi_ik} is the SHAP value for feature \code{k}, \code{R_i} is
-the fractional rank of the socioeconomic ordering variable, and \code{mu_hat}
-is the mean predicted outcome.
+The total \code{concentration_index} reported in \code{diagnostics} is the
+non-negative score returned by \code{ci_factory(type)}. Feature contributions
+are computed on the signed linear scale for the selected index and then
+oriented so they sum to the non-negative factory score when the SHAP values
+reconstruct the prediction.
+
+For rank-dependent types, weighted fractional ranks and the same unbiased
+weighted covariance convention used by \code{\link[=ci_factory]{ci_factory()}} are used. \code{"CI"}
+divides feature covariances by the weighted mean prediction, \code{"CIg"} uses
+the generalized covariance form, and \code{"CIc"} applies the prediction-range
+correction.
 
 For \code{type = "L"}, \code{rank} is treated as an observed socioeconomic level
-\code{s_i}. The decomposition uses \code{mean(((s_i - mu_s) / mu_s) * phi_ik)} for
-each feature, where \code{mu_s} is the mean socioeconomic level.
+\code{s_i}. The decomposition uses the weighted mean of
+\code{((s_i - mu_s) / mu_s) * phi_ik} for each feature, where \code{mu_s} is the
+weighted mean socioeconomic level.
 }
 \examples{
 shap <- data.frame(

@@ -9,7 +9,7 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.path = "man/figures/README-",
   out.width = "100%",
-  dpi = 300
+  dpi = 600
 )
 ```
 
@@ -156,7 +156,7 @@ fit_tree <- ci_tree(
 ```
 
 ```{r tree-summary}
-fit_tree
+#fit_tree
 ci_tree_terminal_summary(fit_tree)
 ```
 
@@ -205,7 +205,7 @@ surrogate_tree <- ci_tree(
   outcome_name = "forest_risk",
   control = ci_tree_control(maxdepth = 4L)
 )
-surrogate_tree
+#surrogate_tree
 ```
 
 ## plot
@@ -225,6 +225,135 @@ readme_tree_plot(
 
 - Approximate SHAP values for the fitted forest with `fastshap::explain()`, using a prediction wrapper that returns the predicted outcome for each observation. 
 - Decompose the concentration index of those predicted risks with `shap_conc_decomp()`.
+
+The model does not have to be an `ineqTrees` forest. `shap_conc_decomp()` only
+needs three things: SHAP values, the socioeconomic ranking variable, and the
+model's predicted risk. That means the same step also works after fitting an
+ordinary prediction model, for example a `ranger` random forest tuned with
+tidymodels for risk of under-five death.
+
+```{r ranger-tidymodels-shap-sketch}
+library(tidymodels)
+library(ranger)
+
+ranger_data <- as.data.frame(
+  kenya[, c("wealth", "deadu5_num", readme_predictors), with = FALSE]
+)
+ranger_data$deadu5 <- factor(
+  ifelse(ranger_data$deadu5_num == 1, "died", "alive"),
+  levels = c("died", "alive")
+)
+
+ranger_risk_predict <- function(object, newdata) {
+  prob <- predict(object, new_data = as.data.frame(newdata), type = "prob")
+  as.numeric(prob$.pred_died)
+}
+
+ranger_folds <- vfold_cv(ranger_data, v = 5, strata = deadu5)
+
+ranger_spec <- rand_forest(
+  trees = 500,
+  mtry = tune(),
+  min_n = tune()
+) %>%
+  set_engine("ranger", probability = TRUE) %>%
+  set_mode("classification")
+
+ranger_wflow <- workflow() %>%
+  add_model(ranger_spec) %>%
+  add_formula(deadu5 ~ rural + ed + reg + unskilled)
+
+ranger_grid <- grid_regular(
+  mtry(range = c(1L, length(readme_predictors))),
+  min_n(range = c(5L, 40L)),
+  levels = 3
+)
+
+ranger_tuning <- tune_grid(
+  ranger_wflow,
+  resamples = ranger_folds,
+  grid = ranger_grid,
+  metrics = metric_set(roc_auc, accuracy)
+)
+
+best_ranger <- finalize_workflow(
+  ranger_wflow,
+  select_best(ranger_tuning, metric = "roc_auc")
+) %>%
+  fit(data = ranger_data)
+
+ranger_X <- ranger_data[, readme_predictors, drop = FALSE]
+ranger_eval_n <- min(400L, nrow(ranger_data))
+ranger_rows <- sort(sample.int(nrow(ranger_data), ranger_eval_n))
+ranger_X_eval <- ranger_X[ranger_rows, , drop = FALSE]
+ranger_pred_eval <- ranger_risk_predict(best_ranger, ranger_X_eval)
+
+ranger_shap <- fastshap::explain(
+  object = best_ranger,
+  X = ranger_X,
+  pred_wrapper = ranger_risk_predict,
+  newdata = ranger_X_eval,
+  nsim = 64,
+  adjust = TRUE
+)
+
+ranger_decomp <- shap_conc_decomp(
+  shap = ranger_shap,
+  rank = ranger_data$wealth[ranger_rows],
+  prediction = ranger_pred_eval
+)
+```
+
+```{r ranger-shap-decomposition-data}
+ranger_shap_diagnostics <- as.data.frame(ranger_decomp$diagnostics)
+ranger_shap_contrib_table <- as.data.frame(ranger_decomp$contributions)
+ranger_shap_contrib_table <- ranger_shap_contrib_table[
+  order(-ranger_shap_contrib_table$abs_contribution),
+  ,
+  drop = FALSE
+]
+```
+
+```{r ranger-shap-diagnostics}
+knitr::kable(
+  ranger_shap_diagnostics,
+  digits = 3,
+  caption = "Ranger SHAP decomposition diagnostics"
+)
+```
+
+```{r ranger-shap-contributions-table}
+knitr::kable(
+  ranger_shap_contrib_table,
+  digits = 3,
+  caption = "Ranger SHAP-based concentration-index contributions"
+)
+```
+
+```{r ranger-shap-decomposition-plot, fig.width=8, fig.height=5, fig.alt="A horizontal bar chart of ranger SHAP-based percentage contributions to the concentration index."}
+library(ggplot2)
+ggplot(
+  ranger_shap_contrib_table,
+  aes(
+    x = stats::reorder(feature, pct_contribution),
+    y = pct_contribution,
+    fill = pct_contribution > 0
+  )
+) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("#2166ac", "#b2182b"),
+    guide = "none"
+  ) +
+  labs(
+    x = NULL,
+    y = "Percentage contribution",
+    title = "Ranger SHAP-based concentration-index decomposition"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
 
 ```{r shap-compute}
 set.seed(20260328)
@@ -364,7 +493,7 @@ tree_tuning_table <- readme_tuning_table(
 )
 
 knitr::kable(
-  tree_tuning_table,
+  tree_tuning_table[1:5,],
   digits = 3,
   caption = "Cross-validated greedy tree tuning results"
 )
@@ -437,7 +566,7 @@ forest_tuning_table <- readme_tuning_table(
 )
 
 knitr::kable(
-  forest_tuning_table,
+  forest_tuning_table[1:5, ],
   digits = 3,
   caption = "Cross-validated greedy forest tuning results ranked by validation gain"
 )

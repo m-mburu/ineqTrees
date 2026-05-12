@@ -334,13 +334,18 @@ pkgload::load_all(export_all = FALSE)
 #' @param rank A numeric vector giving the socioeconomic ranking variable for
 #'   each observation. When `type = "L"`, this is interpreted as the observed
 #'   socioeconomic level variable.
-#' @param type One of `"CI"` or `"L"` selecting the decomposition target. `"CI"`
-#'   uses fractional socioeconomic ranks. `"L"` uses the Erreygers--Kessels
-#'   level-dependent bivariate index based on observed socioeconomic levels.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"` selecting the
+#'   decomposition target. The first three are rank-dependent concentration
+#'   indices scored consistently with [ci_factory()]. `"L"` uses the
+#'   Erreygers--Kessels level-dependent bivariate index based on observed
+#'   socioeconomic levels.
 #' @param prediction Optional numeric vector of model predictions. If omitted,
 #'   predictions are reconstructed as `baseline + rowSums(shap)`.
 #' @param baseline Optional scalar baseline prediction. Required when
 #'   `prediction` is not supplied.
+#' @param weights Optional numeric vector of non-negative case weights. If
+#'   omitted, equal weights are used. Observations with non-positive weights do
+#'   not contribute to the decomposition.
 #' @param from_dalex Logical scalar. If `TRUE`, reshape a DALEX-like long SHAP
 #'   table to wide format before decomposition.
 #' @param dalex_id_col Optional column name identifying observations in the
@@ -362,23 +367,31 @@ pkgload::load_all(export_all = FALSE)
 #'   columns `feature`, `D_k_SHAP`, `pct_contribution`, and
 #'   `abs_contribution`.
 #'
-#' @details For `type = "CI"`, each feature `k`, `D_k_SHAP` is computed as
-#'   `2 / (n * mu_hat)` times the sum of `phi_ik * (R_i - 0.5)` across
-#'   observations, where `phi_ik` is the SHAP value for feature `k`, `R_i` is
-#'   the fractional rank of the socioeconomic ordering variable, and `mu_hat`
-#'   is the mean predicted outcome.
+#' @details The total `concentration_index` reported in `diagnostics` is the
+#'   non-negative score returned by `ci_factory(type)`. Feature contributions
+#'   are computed on the signed linear scale for the selected index and then
+#'   oriented so they sum to the non-negative factory score when the SHAP values
+#'   reconstruct the prediction.
+#'
+#'   For rank-dependent types, weighted fractional ranks and the same unbiased
+#'   weighted covariance convention used by [ci_factory()] are used. `"CI"`
+#'   divides feature covariances by the weighted mean prediction, `"CIg"` uses
+#'   the generalized covariance form, and `"CIc"` applies the prediction-range
+#'   correction.
 #'
 #'   For `type = "L"`, `rank` is treated as an observed socioeconomic level
-#'   `s_i`. The decomposition uses `mean(((s_i - mu_s) / mu_s) * phi_ik)` for
-#'   each feature, where `mu_s` is the mean socioeconomic level.
+#'   `s_i`. The decomposition uses the weighted mean of
+#'   `((s_i - mu_s) / mu_s) * phi_ik` for each feature, where `mu_s` is the
+#'   weighted mean socioeconomic level.
 #'
 #' @export
 shap_conc_decomp <- function(
     shap,
     rank,
-    type = c("CI", "L"),
+    type = c("CI", "CIg", "CIc", "L"),
     prediction = NULL,
     baseline = NULL,
+    weights = NULL,
     from_dalex = FALSE,
     dalex_id_col = NULL,
     dalex_variable_col = NULL,
@@ -411,6 +424,21 @@ shap_conc_decomp <- function(
   if (!is.null(prediction) && length(prediction) != n) {
     stop("`prediction` must have length equal to nrow(`shap`).", call. = FALSE)
   }
+  if (is.null(weights)) {
+    weights <- rep.int(1, n)
+  } else if (!is.numeric(weights) || length(weights) != n) {
+    stop("`weights` must be numeric with length equal to nrow(`shap`).",
+      call. = FALSE
+    )
+  } else if (any(!is.finite(weights) & !is.na(weights))) {
+    stop("`weights` must contain only finite values or NA.", call. = FALSE)
+  } else if (anyNA(weights) && !na_rm) {
+    stop(
+      "`weights` contains missing values. Set `na_rm = TRUE` to drop ",
+      "incomplete rows.",
+      call. = FALSE
+    )
+  }
   if (is.null(prediction)) {
     if (is.null(baseline)) {
       stop(
@@ -440,6 +468,7 @@ shap_conc_decomp <- function(
 
   working_dt <- data.table::copy(shap_dt)
   working_dt[["rank__"]] <- rank
+  working_dt[["weights__"]] <- as.numeric(weights)
 
   if (!is.null(prediction)) {
     working_dt[["prediction__"]] <- as.numeric(prediction)
@@ -449,6 +478,7 @@ shap_conc_decomp <- function(
     required_cols <- c(
       names(shap_dt),
       "rank__",
+      "weights__",
       if (!is.null(prediction)) "prediction__"
     )
     keep <- stats::complete.cases(working_dt[, required_cols, with = FALSE])
@@ -457,6 +487,12 @@ shap_conc_decomp <- function(
 
   if (nrow(working_dt) == 0L) {
     stop("No complete cases remain after applying `na_rm`.", call. = FALSE)
+  }
+
+  working_dt <- working_dt[working_dt[["weights__"]] > 0, ]
+
+  if (nrow(working_dt) == 0L) {
+    stop("No positive-weight complete cases remain.", call. = FALSE)
   }
 
   if (is.null(prediction)) {
@@ -471,15 +507,26 @@ shap_conc_decomp <- function(
   n_complete <- nrow(working_dt)
   rank_vector <- working_dt[["rank__"]]
   prediction_vector <- working_dt[["prediction__"]]
-  mu_hat <- mean(prediction_vector)
+  weight_vector <- working_dt[["weights__"]]
+  weight_sum <- sum(weight_vector)
+  weight_prob <- weight_vector / weight_sum
+  mu_hat <- stats::weighted.mean(prediction_vector, weight_vector)
 
-  if (type == "CI") {
-    rank_fraction <- fractional_rank(
-      rank_vector, ties_method = "average", na_rm = FALSE
-    )
-    index_weight <- rank_fraction - 0.5
+  if (type %in% c("CI", "CIg", "CIc")) {
+    rank_fraction <- rank_wt(rank_vector, weight_vector)
+    mean_rank <- sum(weight_prob * rank_fraction)
+    index_weight <- rank_fraction - mean_rank
+    cov_denom <- 1 - sum(weight_prob^2)
 
-    if (abs(mu_hat) <= tolerance) {
+    weighted_cov_with_rank <- function(values) {
+      if (!is.finite(cov_denom) || cov_denom <= tolerance) {
+        return(0)
+      }
+      mean_value <- sum(weight_prob * values)
+      sum(weight_prob * index_weight * (values - mean_value)) / cov_denom
+    }
+
+    if (type == "CI" && abs(mu_hat) <= tolerance) {
       stop(
         paste(
           "The mean prediction is numerically zero, so the",
@@ -489,13 +536,29 @@ shap_conc_decomp <- function(
       )
     }
 
-    scale_factor <- 2 / (n_complete * mu_hat)
-    contribution_score <- function(values) {
-      scale_factor * sum(values * index_weight)
+    prediction_range <- diff(range(prediction_vector))
+    if (type == "CIc" &&
+        (!is.finite(prediction_range) || prediction_range <= tolerance)) {
+      stop(
+        paste(
+          "The prediction range is numerically zero, so the",
+          "corrected concentration index is undefined."
+        ),
+        call. = FALSE
+      )
     }
-    total_ci <- scale_factor * sum(prediction_vector * index_weight)
+
+    scale_factor <- switch(type,
+      CI = 2 / mu_hat,
+      CIg = 2,
+      CIc = 8 / prediction_range
+    )
+    contribution_score <- function(values) {
+      scale_factor * weighted_cov_with_rank(values)
+    }
+    signed_total_ci <- contribution_score(prediction_vector)
   } else {
-    mu_s <- mean(rank_vector)
+    mu_s <- stats::weighted.mean(rank_vector, weight_vector)
     if (!is.finite(mu_s) || abs(mu_s) <= tolerance) {
       stop(
         paste(
@@ -508,15 +571,21 @@ shap_conc_decomp <- function(
 
     index_weight <- (rank_vector - mu_s) / mu_s
     contribution_score <- function(values) {
-      mean(index_weight * values)
+      sum(weight_prob * index_weight * values)
     }
-    total_ci <- mean(index_weight * prediction_vector)
+    signed_total_ci <- contribution_score(prediction_vector)
   }
 
+  ci_fun <- ci_factory(type)
+  ci_score <- ci_fun(cbind(rank = rank_vector, outcome = prediction_vector),
+    weight_vector
+  )
+
+  score_direction <- if (signed_total_ci < 0) -1 else 1
   contribution_wide <- data.table::as.data.table(
     as.list(vapply(
       names(shap_dt),
-      function(col) contribution_score(working_dt[[col]]),
+      function(col) score_direction * contribution_score(working_dt[[col]]),
       numeric(1L)
     ))
   )
@@ -531,10 +600,10 @@ shap_conc_decomp <- function(
 
   shap_total <- sum(contributions[["D_k_SHAP"]])
 
-  contributions[["pct_contribution"]] <- if (abs(total_ci) <= tolerance) {
+  contributions[["pct_contribution"]] <- if (abs(ci_score) <= tolerance) {
     rep(NA_real_, nrow(contributions))
   } else {
-    100 * contributions[["D_k_SHAP"]] / total_ci
+    100 * contributions[["D_k_SHAP"]] / ci_score
   }
   contributions[["abs_contribution"]] <- abs(contributions[["D_k_SHAP"]])
 
@@ -548,12 +617,15 @@ shap_conc_decomp <- function(
 
   diagnostics <- data.table::data.table(
     n = n_complete,
+    weight_sum = weight_sum,
     type = type,
     mean_prediction = mu_hat,
-    concentration_index = total_ci,
+    concentration_index = ci_score,
+    signed_concentration_index = signed_total_ci,
+    score_direction = score_direction,
     shap_sum = shap_total,
-    additivity_gap = total_ci - shap_total,
-    centered_rank_sum = sum(index_weight),
+    additivity_gap = ci_score - shap_total,
+    centered_rank_sum = sum(weight_prob * index_weight),
     prediction_source = prediction_source
   )
 
@@ -702,17 +774,20 @@ test_that("shap_conc_decomp decomposes a wide SHAP table", {
 
   expect_s3_class(out, "shap_ci_decomposition")
   expect_equal(out$diagnostics$n, 3)
+  expect_equal(out$diagnostics$weight_sum, 3)
   expect_equal(out$diagnostics$mean_prediction, 8 / 3)
-  expect_equal(out$diagnostics$concentration_index, -1 / 12)
-  expect_equal(out$diagnostics$shap_sum, -1 / 12)
+  expect_equal(out$diagnostics$concentration_index, 1 / 8)
+  expect_equal(out$diagnostics$signed_concentration_index, -1 / 8)
+  expect_equal(out$diagnostics$score_direction, -1)
+  expect_equal(out$diagnostics$shap_sum, 1 / 8)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$centered_rank_sum, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$prediction_source, "baseline + rowSums(shap)")
 
   expect_equal(out$contributions$feature, c("education", "water"))
-  expect_equal(out$contributions$D_k_SHAP, c(-1 / 6, 1 / 12))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 4, -1 / 8))
   expect_equal(out$contributions$pct_contribution, c(200, -100))
-  expect_equal(out$contributions$abs_contribution, c(1 / 6, 1 / 12))
+  expect_equal(out$contributions$abs_contribution, c(1 / 4, 1 / 8))
 })
 
 test_that("shap_conc_decomp reshapes DALEX-like SHAP tables", {
@@ -763,10 +838,42 @@ test_that("shap_conc_decomp drops incomplete rows with na_rm", {
 
   expect_equal(out$diagnostics$n, 2)
   expect_equal(out$diagnostics$prediction_source, "prediction")
-  expect_equal(out$diagnostics$concentration_index, 1 / 6)
+  expect_equal(out$diagnostics$concentration_index, 1 / 3)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$contributions$feature, c("x1", "x2"))
-  expect_equal(out$contributions$D_k_SHAP, c(1 / 12, 1 / 12))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 6, 1 / 6))
+})
+
+test_that("shap_conc_decomp uses ci_factory scores for weighted variants", {
+  shap <- data.frame(
+    education = c(1, 0, -1, 1),
+    water = c(0, 1, 1, -1)
+  )
+  rank <- c(4, 1, 3, 2)
+  weights <- c(1, 2, 1, 3)
+  prediction <- 2 + rowSums(shap)
+
+  for (type in c("CI", "CIg", "CIc")) {
+    out <- shap_conc_decomp(
+      shap = shap,
+      rank = rank,
+      type = type,
+      baseline = 2,
+      weights = weights,
+      sort = FALSE
+    )
+
+    expect_equal(
+      out$diagnostics$concentration_index,
+      ci_factory(type)(cbind(rank = rank, outcome = prediction), weights)
+    )
+    expect_equal(
+      out$diagnostics$shap_sum,
+      out$diagnostics$concentration_index,
+      tolerance = 1e-12
+    )
+    expect_equal(out$diagnostics$weight_sum, sum(weights))
+  }
 })
 
 test_that("shap_conc_decomp supports level-dependent L decomposition", {
@@ -784,13 +891,14 @@ test_that("shap_conc_decomp supports level-dependent L decomposition", {
   )
 
   expect_equal(out$diagnostics$type, "L")
-  expect_equal(out$diagnostics$concentration_index, -1 / 6)
-  expect_equal(out$diagnostics$shap_sum, -1 / 6)
+  expect_equal(out$diagnostics$concentration_index, 1 / 6)
+  expect_equal(out$diagnostics$signed_concentration_index, -1 / 6)
+  expect_equal(out$diagnostics$shap_sum, 1 / 6)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$centered_rank_sum, 0, tolerance = 1e-12)
 
   expect_equal(out$contributions$feature, c("education", "water"))
-  expect_equal(out$contributions$D_k_SHAP, c(-1 / 3, 1 / 6))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 3, -1 / 6))
   expect_equal(out$contributions$pct_contribution, c(200, -100))
 })
 
@@ -820,6 +928,12 @@ test_that("shap_conc_decomp validates key inputs", {
   expect_error(
     shap_conc_decomp(shap = shap, rank = c(1, NA), baseline = 1),
     "missing values"
+  )
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = c(1, 2), baseline = 1,
+      weights = c(1, NA)
+    ),
+    "weights"
   )
   expect_error(
     shap_conc_decomp(shap = shap, rank = c(-1, 1), type = "L", baseline = 1),
