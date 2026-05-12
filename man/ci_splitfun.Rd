@@ -36,28 +36,46 @@ like response in the first model-frame column, or from separate columns named
 by \code{rank_name} and \code{outcome_name}.
 }
 \examples{
+data(kenya, package = "ineqTrees")
+
+kenya_model_vars <- c(
+  "wealth",
+  "deadu5_num",
+  "rural",
+  "ed",
+  "reg",
+  "unskilled"
+)
+
+kenya_model_data <- kenya[
+  stats::complete.cases(kenya[, kenya_model_vars]),
+  kenya_model_vars
+]
+
+set.seed(20260512)
+kenya_model_data <- kenya_model_data[
+  sample.int(nrow(kenya_model_data), 800L),
+  ,
+  drop = FALSE
+]
+
 splitfun <- ci_splitfun(
-  rank_name = "rank",
-  outcome_name = "outcome",
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
   type = "CI"
 )
 
-toy_data <- data.frame(
-  rank = c(10, 20, 30, 40, 50),
-  outcome = c(1, 0, 1, 0, 1),
-  income = c(2, 4, 6, 8, 10)
-)
-
-ctrl <- list(minsplit = 1, minbucket = 1, minprob = 0)
+ctrl <- ci_tree_control(minsplit = 100, minbucket = 50, minprob = 0.05)
 
 split <- splitfun(
   model = NULL,
   trafo = NULL,
-  data = toy_data,
-  subset = seq_len(nrow(toy_data)),
-  weights = rep(1, nrow(toy_data)),
-  whichvar = 3,
+  data = kenya_model_data,
+  subset = seq_len(nrow(kenya_model_data)),
+  weights = rep(1, nrow(kenya_model_data)),
+  whichvar = match("reg", names(kenya_model_data)),
   ctrl = ctrl
 )
-split$breaks
+
+partykit::character_split(split, kenya_model_data)
 }

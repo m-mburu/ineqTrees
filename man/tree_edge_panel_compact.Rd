@@ -49,21 +49,41 @@ using \code{\link[=tree_compact_split_label]{tree_compact_split_label()}}. This 
 many levels or when tree plots need shorter, more readable split labels.
 }
 \examples{
-toy_data <- data.frame(
-  rank = c(10, 20, 30, 40, 50, 60),
-  outcome = c(1, 0, 1, 0, 1, 1),
-  income = c(2, 4, 6, 8, 10, 12),
-  group = factor(c("low", "low", "mid", "mid", "high", "high"))
+data(kenya, package = "ineqTrees")
+kenya_plot_vars <- c("wealth", "deadu5_num", "rural", "ed", "reg", "unskilled")
+kenya_plot_data <- kenya[
+  stats::complete.cases(kenya[, kenya_plot_vars]),
+  kenya_plot_vars
+]
+set.seed(20260512)
+kenya_plot_data <- kenya_plot_data[
+  sample.int(nrow(kenya_plot_data), 800L),
+  ,
+  drop = FALSE
+]
+kenya_plot_fit <- ci_tree(
+  cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  data = kenya_plot_data,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  control = ci_tree_control(
+    minsplit = 100,
+    minbucket = 50,
+    minprob = 0.05,
+    maxdepth = 3
+  )
 )
-
-fit <- ci_tree(
-  formula = cbind(rank, outcome) ~ income + group,
-  data = toy_data,
-  rank_name = "rank",
-  outcome_name = "outcome",
-  control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+kenya_var_labels <- c(
+  rural = "Residence",
+  ed = "Mother education",
+  reg = "Province",
+  unskilled = "Mother occupation"
 )
 
 inherits(tree_edge_panel_compact, "grapcon_generator")
-is.function(tree_edge_panel_compact(fit))
+is.function(tree_edge_panel_compact(
+  kenya_plot_fit,
+  var_labels = kenya_var_labels,
+  plural_overrides = c(Province = "provinces")
+))
 }

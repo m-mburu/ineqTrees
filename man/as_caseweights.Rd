@@ -23,6 +23,31 @@ integer case weights.
 as_caseweights(c(1, 2, 3), scale = 60L)
 as_caseweights(c(0.2, 0.3, 0.5))
 
-as_caseweights(c(1, 2, 3), scale = 60L)
-as_caseweights(c(0.2, 0.3, 0.5))
+data(kenya, package = "ineqTrees")
+
+kenya_model_data <- kenya[
+  stats::complete.cases(kenya[, "wealth", drop = FALSE]),
+  "wealth",
+  drop = FALSE
+]
+
+set.seed(20260512)
+kenya_model_data <- kenya_model_data[
+  sample.int(nrow(kenya_model_data), 800L),
+  ,
+  drop = FALSE
+]
+
+wealth_quintile <- cut(
+  kenya_model_data$wealth,
+  breaks = stats::quantile(
+    kenya_model_data$wealth,
+    probs = seq(0, 1, by = 0.2),
+    na.rm = TRUE
+  ),
+  include.lowest = TRUE
+)
+
+quintile_weights <- as.numeric(table(wealth_quintile))
+as_caseweights(quintile_weights, scale = 1000L)
 }
