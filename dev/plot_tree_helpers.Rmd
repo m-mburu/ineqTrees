@@ -909,7 +909,7 @@ plot.ci_tree <- function(x,
 }
 ```
 
-```{r, example-plot_ci_tree}
+```{r, example-plot_ci_tree, fig.alt=c("A compact concentration-index tree plot for the toy data.", "A compact concentration-index tree plot with terminal-node summary statistics for the toy data.")}
 toy_data <- data.frame(
   rank = c(10, 20, 30, 40, 50, 60),
   outcome = c(1, 0, 1, 0, 1, 1),

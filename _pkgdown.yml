@@ -1,0 +1,30 @@
+url: https://m-mburu.github.io/ineqTrees/
+
+template:
+  bootstrap: 5
+
+development:
+  mode: release
+
+home:
+  title: ineqTrees
+  description: Tree-based decomposition of health inequality.
+
+navbar:
+  structure:
+    left: [intro, reference, articles]
+    right: [search, github]
+
+articles:
+  - title: Tree models
+    contents:
+      - inequality-aware-party-trees
+      - ci-tree-models
+      - ci-tree-builder
+      - ci-split-search
+  - title: Model selection and interpretation
+    contents:
+      - model-selection
+      - ci-ranking-helpers
+      - shap_decomposition
+      - plots-for-party-trees
