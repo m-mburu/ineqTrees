@@ -1,0 +1,659 @@
+---
+title: "Data preprocessing helpers"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r development, include=FALSE}
+library(testthat)
+```
+
+<!--
+ Source of truth for DHS-style data preprocessing helpers. Run the inflate
+ chunk at the bottom after editing.
+-->
+
+```{r development-load}
+# Load already included functions if relevant
+pkgload::load_all(export_all = TRUE)
+```
+
+# DHS fixed-width imports and child-level preparation
+
+```{r development-data-prep}
+# Helpers adapted from thesis data preparation scripts. Authentication and
+# cookie-based downloading should stay in local, non-package scripts.
+```
+
+```{r function-sas_at_to_fwf}
+#' Parse SAS fixed-width input positions
+#'
+#' Read a DHS-style SAS input file and extract fixed-width column positions
+#' from statements such as `@1 HIVCLUST 8.0` or `@16 HIV01 $6.`.
+#'
+#' @param sas_file Path to a SAS input file.
+#'
+#' @return A data frame with `start`, `end`, `width`, and `var` columns.
+#'
+#' @export
+sas_at_to_fwf <- function(sas_file) {
+  lines <- readLines(sas_file, warn = FALSE)
+  pattern <- paste0(
+    "^\\s*@\\s*(\\d+)\\s+",
+    "([A-Za-z0-9_]+)\\s+",
+    "(\\$)?\\s*(\\d+)(?:\\.|\\.\\d+)?"
+  )
+  matches <- regmatches(lines, regexec(pattern, lines))
+  matches <- matches[lengths(matches) > 0L]
+
+  if (!length(matches)) {
+    return(data.frame(
+      start = integer(),
+      end = integer(),
+      width = integer(),
+      var = character(),
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  starts <- as.integer(vapply(matches, `[[`, character(1), 2L))
+  vars <- vapply(matches, `[[`, character(1), 3L)
+  widths <- as.integer(vapply(matches, `[[`, character(1), 5L))
+
+  out <- data.frame(
+    start = starts,
+    end = starts + widths - 1L,
+    width = widths,
+    var = vars,
+    stringsAsFactors = FALSE
+  )
+  out[order(out$start), , drop = FALSE]
+}
+```
+
+```{r function-read_dhs_zip}
+#' Read a DHS zip file containing DAT and SAS files
+#'
+#' Unzips one DHS archive, finds the first `.DAT` and `.SAS` file, parses the
+#' SAS fixed-width layout, and reads the data as character columns.
+#'
+#' @param zip_file Path to a DHS zip archive.
+#'
+#' @return A `data.table`, or `NULL` when the archive does not contain both
+#'   `.DAT` and `.SAS` files.
+#'
+#' @export
+read_dhs_zip <- function(zip_file) {
+  temp_dir <- file.path(
+    tempdir(),
+    paste0("dhs_", Sys.getpid(), "_", sample.int(1e6, 1L))
+  )
+  dir.create(temp_dir, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(temp_dir, recursive = TRUE), add = TRUE)
+
+  utils::unzip(zip_file, exdir = temp_dir)
+  files_in_temp <- list.files(temp_dir, full.names = TRUE, recursive = TRUE)
+
+  dat_file <- files_in_temp[grepl("\\.DAT$", files_in_temp, ignore.case = TRUE)]
+  sas_file <- files_in_temp[grepl("\\.SAS$", files_in_temp, ignore.case = TRUE)]
+
+  if (!length(dat_file) || !length(sas_file)) {
+    message(
+      "  [!] Skipping ", basename(zip_file),
+      ": missing .DAT or .SAS files."
+    )
+    return(NULL)
+  }
+
+  spec <- sas_at_to_fwf(sas_file[1L])
+  if (!nrow(spec)) {
+    stop(
+      "No fixed-width positions found in ",
+      basename(sas_file[1L]), ".",
+      call. = FALSE
+    )
+  }
+
+  widths <- integer()
+  col_names <- character()
+  next_start <- 1L
+  for (i in seq_len(nrow(spec))) {
+    if (spec$start[i] > next_start) {
+      widths <- c(widths, -(spec$start[i] - next_start))
+    }
+    widths <- c(widths, spec$width[i])
+    col_names <- c(col_names, spec$var[i])
+    next_start <- spec$end[i] + 1L
+  }
+
+  df <- utils::read.fwf(
+    file = dat_file[1L],
+    widths = widths,
+    col.names = col_names,
+    colClasses = "character",
+    stringsAsFactors = FALSE,
+    strip.white = FALSE
+  )
+
+  data.table::as.data.table(df)
+}
+```
+
+```{r function-build_dhs_catalog}
+#' Build a catalog of downloaded DHS files
+#'
+#' @param zip_dir Directory containing downloaded DHS zip archives.
+#'
+#' @return A `data.table` with parsed country, module type, phase, version, and
+#'   survey ID columns.
+#'
+#' @export
+build_dhs_catalog <- function(zip_dir = file.path("data", "downloaded")) {
+  zips <- list.files(
+    zip_dir,
+    pattern = "\\.zip$",
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+  if (!length(zips)) {
+    return(data.table::data.table())
+  }
+
+  catalog <- data.table::data.table(
+    file_path = zips,
+    base_name = basename(zips)
+  )
+  catalog$file_stub <- tools::file_path_sans_ext(catalog$base_name)
+  catalog$country <- substr(catalog$file_stub, 1L, 2L)
+  catalog$type <- substr(catalog$file_stub, 3L, 4L)
+  catalog$phase <- substr(catalog$file_stub, 5L, 5L)
+  catalog$version <- substr(catalog$file_stub, 6L, 6L)
+  catalog$survey_id <- paste0(catalog$phase, catalog$version)
+
+  catalog
+}
+```
+
+```{r function-standardize_dhs_ids}
+#' Standardize DHS ID columns for merging
+#'
+#' DHS modules use different variable names for household, person, mother,
+#' father, and child IDs. This helper normalizes the ID names used by the merge
+#' helpers in this file.
+#'
+#' @param dt A rectangular data object.
+#' @param dtype DHS module type, such as `"KR"`, `"BR"`, `"IR"`, or `"HR"`.
+#'
+#' @return A `data.table` with lower-case names and standardized ID columns.
+#'
+#' @export
+standardize_dhs_ids <- function(dt, dtype) {
+  dt_copy <- data.table::copy(data.table::as.data.table(dt))
+  data.table::setnames(dt_copy, tolower(names(dt_copy)))
+
+  dtype <- toupper(dtype)
+  rename_map <- list(
+    HR = c(hv001 = "cluster_id", hv002 = "household_id", hvidx = "line_id"),
+    PR = c(hv001 = "cluster_id", hv002 = "household_id", hvidx = "line_id"),
+    CR = c(
+      v001 = "cluster_id",
+      v002 = "household_id",
+      v003 = "mother_line_id",
+      mv001 = "father_cluster_id",
+      mv002 = "father_household_id",
+      mv003 = "father_line_id"
+    ),
+    IR = c(v001 = "cluster_id", v002 = "household_id", v003 = "line_id"),
+    MR = c(mv001 = "cluster_id", mv002 = "household_id", mv003 = "line_id"),
+    KR = c(
+      v001 = "cluster_id",
+      v002 = "household_id",
+      v003 = "mother_line_id",
+      b16 = "child_line_id"
+    ),
+    BR = c(
+      v001 = "cluster_id",
+      v002 = "household_id",
+      v003 = "mother_line_id",
+      b16 = "child_line_id"
+    ),
+    AR = c(
+      hivclust = "cluster_id",
+      hivnumb = "household_id",
+      hivline = "line_id"
+    )
+  )
+
+  if (!dtype %in% names(rename_map)) {
+    warning(sprintf("Unsupported DHS module type: %s", dtype), call. = FALSE)
+    return(dt_copy)
+  }
+
+  map <- rename_map[[dtype]]
+  old_names <- intersect(names(map), names(dt_copy))
+  if (length(old_names)) {
+    data.table::setnames(dt_copy, old_names, unname(map[old_names]))
+  }
+
+  id_cols <- intersect(
+    c(
+      "cluster_id",
+      "household_id",
+      "line_id",
+      "mother_line_id",
+      "child_line_id",
+      "father_cluster_id",
+      "father_household_id",
+      "father_line_id"
+    ),
+    names(dt_copy)
+  )
+  for (col in id_cols) {
+    data.table::set(dt_copy, j = col, value = as.integer(dt_copy[[col]]))
+  }
+
+  dt_copy
+}
+```
+
+```{r function-prep-merge-helpers}
+#' Drop duplicate payload columns before joining DHS modules
+#'
+#' @param dt A `data.table` to be merged into another table.
+#' @param existing_names Column names already present in the target table.
+#' @param by_cols Join key columns that must be kept.
+#'
+#' @return A `data.table` with duplicate non-key columns removed.
+#'
+#' @keywords internal
+#' @noRd
+.drop_duplicate_payload <- function(dt, existing_names, by_cols) {
+  duplicate_names <- intersect(setdiff(names(dt), by_cols), existing_names)
+  keep_names <- setdiff(names(dt), duplicate_names)
+  dt[, keep_names, with = FALSE]
+}
+
+#' Merge two DHS modules when all join keys are available
+#'
+#' @param x Left-hand `data.table`.
+#' @param y Right-hand `data.table`.
+#' @param by_x Key columns in `x`.
+#' @param by_y Key columns in `y`. Defaults to `by_x`.
+#' @param suffix Suffix passed to `merge()`.
+#'
+#' @return The merged `data.table`, or `x` unchanged when required keys are
+#'   missing.
+#'
+#' @keywords internal
+#' @noRd
+.merge_if_keys <- function(x, y, by_x, by_y = by_x, suffix = "") {
+  if (is.null(x) || is.null(y)) {
+    return(x)
+  }
+  if (!all(by_x %in% names(x)) || !all(by_y %in% names(y))) {
+    return(x)
+  }
+  y_use <- .drop_duplicate_payload(y, names(x), by_y)
+  merge(
+    x,
+    y_use,
+    by.x = by_x,
+    by.y = by_y,
+    all.x = TRUE,
+    suffixes = c("", suffix)
+  )
+}
+```
+
+```{r function-dictionary_vars_for_dt}
+#' Build a safe column list from a DHS dictionary
+#'
+#' Returns only dictionary variables that exist in a prepared data table. This
+#' is useful when a shared dictionary spans multiple DHS modules but the
+#' analytic table contains only a subset of them.
+#'
+#' @param dt A data table or data frame.
+#' @param dict_dt A dictionary table with a `variable_name` column.
+#' @param id_cols ID columns to include when available.
+#' @param warn_missing If `TRUE`, message about requested variables not present
+#'   in `dt`.
+#'
+#' @return A character vector of available column names.
+#'
+#' @export
+dictionary_vars_for_dt <- function(dt,
+                                   dict_dt,
+                                   id_cols = c(
+                                     "cluster_id",
+                                     "household_id",
+                                     "line_id",
+                                     "mother_line_id",
+                                     "child_line_id"
+                                   ),
+                                   warn_missing = TRUE) {
+  dt <- data.table::as.data.table(dt)
+  dict_dt <- data.table::as.data.table(dict_dt)
+
+  if (!"variable_name" %in% names(dict_dt)) {
+    stop("`dict_dt` must include a `variable_name` column.", call. = FALSE)
+  }
+
+  requested <- unique(c(id_cols, dict_dt[["variable_name"]]))
+  available <- intersect(requested, names(dt))
+  missing <- setdiff(requested, names(dt))
+
+  if (isTRUE(warn_missing) && length(missing)) {
+    message(
+      sprintf(
+        "Dropping %d dictionary variables not present in the dataset: %s",
+        length(missing),
+        paste(utils::head(missing, 10L), collapse = ", ")
+      ),
+      if (length(missing) > 10L) " ..."
+    )
+  }
+
+  available
+}
+```
+
+```{r function-prepare_country_phase}
+#' Prepare a child-level DHS dataset for one country and survey release
+#'
+#' Builds a child-focused analytic table. The master table is anchored on KR
+#' when available, otherwise BR, and can be enriched with CR, IR, HR, PR, and
+#' AR modules when join keys are present.
+#'
+#' @param target_country Two-letter DHS country code.
+#' @param target_phase DHS phase code.
+#' @param target_version Optional survey version. Required when multiple
+#'   releases exist for the same country and phase.
+#' @param zip_dir Directory containing downloaded DHS zip archives.
+#'
+#' @return A list with `catalog`, `raw`, and `master` elements, or `NULL` when
+#'   no files are available for the requested country and phase.
+#'
+#' @export
+prepare_country_phase <- function(target_country,
+                                  target_phase,
+                                  target_version = NULL,
+                                  zip_dir = file.path("data", "downloaded")) {
+  catalog <- build_dhs_catalog(zip_dir)
+  phase_files <- catalog[
+    catalog$country == target_country &
+      catalog$phase == target_phase,
+  ]
+
+  if (!nrow(phase_files)) {
+    message(sprintf(
+      "No files found for %s phase %s",
+      target_country, target_phase
+    ))
+    return(NULL)
+  }
+
+  analysis_types <- c("AR", "BR", "CR", "HR", "IR", "KR", "MR", "PR")
+  survey_candidates <- phase_files[phase_files$type %in% analysis_types, ]
+  if (!nrow(survey_candidates)) {
+    survey_candidates <- phase_files
+  }
+
+  available_surveys <- sort(unique(survey_candidates$survey_id))
+  if (is.null(target_version)) {
+    if (length(available_surveys) > 1L) {
+      stop(
+        sprintf(
+          paste0(
+            "Multiple survey versions found for %s phase %s: %s. ",
+            "Please specify `target_version` so releases are not mixed."
+          ),
+          target_country,
+          target_phase,
+          paste(available_surveys, collapse = ", ")
+        ),
+        call. = FALSE
+      )
+    }
+    target_version <- unique(phase_files$version)
+  }
+
+  selected_survey <- paste0(target_phase, target_version)
+  phase_files <- phase_files[phase_files$survey_id == selected_survey, ]
+
+  if (!nrow(phase_files)) {
+    stop(
+      sprintf(
+        "No files found for %s survey %s.",
+        target_country,
+        selected_survey
+      ),
+      call. = FALSE
+    )
+  }
+
+  message("==========================================================")
+  message(sprintf(
+    "Processing Country: %s  |  Phase: %s  |  Version: %s",
+    target_country,
+    target_phase,
+    target_version
+  ))
+  message("==========================================================")
+
+  data_list <- list()
+  for (i in seq_len(nrow(phase_files))) {
+    f_path <- phase_files$file_path[i]
+    f_type <- phase_files$type[i]
+
+    message("  -> Reading module: ", f_type, " from ", phase_files$base_name[i])
+    dt <- read_dhs_zip(f_path)
+    if (!is.null(dt)) {
+      data_list[[f_type]] <- standardize_dhs_ids(dt, f_type)
+    }
+  }
+
+  has_KR <- "KR" %in% names(data_list)
+  has_BR <- "BR" %in% names(data_list)
+  has_CR <- "CR" %in% names(data_list)
+  has_IR <- "IR" %in% names(data_list)
+  has_HR <- "HR" %in% names(data_list)
+  has_PR <- "PR" %in% names(data_list)
+  has_AR <- "AR" %in% names(data_list)
+
+  if (has_KR) {
+    merged_dt <- data.table::copy(data_list[["KR"]])
+    base_module <- "KR"
+  } else if (has_BR) {
+    merged_dt <- data.table::copy(data_list[["BR"]])
+    base_module <- "BR"
+  } else {
+    stop(
+      sprintf(
+        "No KR or BR child recode found for %s survey %s.",
+        target_country,
+        selected_survey
+      ),
+      call. = FALSE
+    )
+  }
+
+  merged_dt$survey_country <- target_country
+  merged_dt$survey_phase <- target_phase
+  merged_dt$survey_version <- target_version
+  merged_dt$survey_id <- selected_survey
+  merged_dt$base_module <- base_module
+
+  if (has_BR && base_module != "BR") {
+    message("  -> Adding birth history variables (BR) to the child base...")
+    merged_dt <- .merge_if_keys(
+      merged_dt,
+      data_list[["BR"]],
+      by_x = c("caseid", "bidx"),
+      by_y = c("caseid", "bidx"),
+      suffix = "_br"
+    )
+  }
+
+  if (has_CR) {
+    message(
+      "  -> Adding couples/parent context variables (CR) to the child base..."
+    )
+    merged_dt <- .merge_if_keys(
+      merged_dt,
+      data_list[["CR"]],
+      by_x = c("cluster_id", "household_id", "mother_line_id"),
+      by_y = c("cluster_id", "household_id", "mother_line_id"),
+      suffix = "_cr"
+    )
+  }
+
+  if (has_IR) {
+    message(
+      "  -> Adding maternal interview variables (IR) to the child base..."
+    )
+    merged_dt <- .merge_if_keys(
+      merged_dt,
+      data_list[["IR"]],
+      by_x = c("cluster_id", "household_id", "mother_line_id"),
+      by_y = c("cluster_id", "household_id", "line_id"),
+      suffix = "_ir"
+    )
+  }
+
+  if (has_HR) {
+    message("  -> Adding household characteristics (HR) to the child base...")
+    merged_dt <- .merge_if_keys(
+      merged_dt,
+      data_list[["HR"]],
+      by_x = c("cluster_id", "household_id"),
+      by_y = c("cluster_id", "household_id"),
+      suffix = "_hr"
+    )
+  }
+
+  if (has_PR && "child_line_id" %in% names(merged_dt)) {
+    message(
+      "  -> Adding household member roster variables (PR) for the child..."
+    )
+    merged_dt <- .merge_if_keys(
+      merged_dt,
+      data_list[["PR"]],
+      by_x = c("cluster_id", "household_id", "child_line_id"),
+      by_y = c("cluster_id", "household_id", "line_id"),
+      suffix = "_pr"
+    )
+  }
+
+  if (has_AR && "child_line_id" %in% names(merged_dt)) {
+    message(
+      "  -> Adding HIV testing variables (AR) where child line IDs match..."
+    )
+    merged_dt <- .merge_if_keys(
+      merged_dt,
+      data_list[["AR"]],
+      by_x = c("cluster_id", "household_id", "child_line_id"),
+      by_y = c("cluster_id", "household_id", "line_id"),
+      suffix = "_ar"
+    )
+  }
+
+  message(sprintf(
+    "  => Final merged dataset has %d rows and %d columns",
+    nrow(merged_dt),
+    ncol(merged_dt)
+  ))
+
+  list(
+    catalog = phase_files,
+    raw = data_list,
+    master = merged_dt
+  )
+}
+```
+
+```{r example-data-prep}
+sas_file <- tempfile(fileext = ".SAS")
+writeLines(c("@1 HIVCLUST 8.0", "@16 HIV01 $6."), sas_file)
+sas_at_to_fwf(sas_file)
+```
+
+```{r tests-data-prep}
+test_that("sas_at_to_fwf parses DHS SAS positions", {
+  sas_file <- tempfile(fileext = ".SAS")
+  writeLines(c(
+    "INPUT",
+    "  @1 HIVCLUST 8.0",
+    "  @16 HIV01 $6.",
+    ";"
+  ), sas_file)
+
+  expect_equal(
+    sas_at_to_fwf(sas_file),
+    data.frame(
+      start = c(1L, 16L),
+      end = c(8L, 21L),
+      width = c(8L, 6L),
+      var = c("HIVCLUST", "HIV01"),
+      stringsAsFactors = FALSE
+    )
+  )
+})
+
+test_that("standardize_dhs_ids normalizes module-specific IDs", {
+  dt <- data.frame(
+    V001 = "10",
+    V002 = "20",
+    V003 = "3",
+    B16 = "4",
+    stringsAsFactors = FALSE
+  )
+
+  out <- standardize_dhs_ids(dt, "KR")
+
+  expect_equal(
+    names(out),
+    c("cluster_id", "household_id", "mother_line_id", "child_line_id")
+  )
+  expect_equal(out$cluster_id, 10L)
+  expect_equal(out$child_line_id, 4L)
+})
+
+test_that("dictionary_vars_for_dt keeps only available variables", {
+  dt <- data.frame(
+    cluster_id = 1L,
+    household_id = 2L,
+    wealth = 3,
+    outcome = 1
+  )
+  dict <- data.frame(
+    variable_name = c("wealth", "missing_var", "outcome"),
+    stringsAsFactors = FALSE
+  )
+
+  expect_message(
+    out <- dictionary_vars_for_dt(dt, dict),
+    "Dropping"
+  )
+  expect_equal(out, c("cluster_id", "household_id", "wealth", "outcome"))
+})
+
+test_that("merge helper drops duplicate non-key payload columns", {
+  x <- data.table::data.table(id = 1:2, keep = c("a", "b"))
+  y <- data.table::data.table(id = 1:2, keep = c("x", "y"), add = c(3, 4))
+
+  out <- .merge_if_keys(x, y, by_x = "id")
+
+  expect_equal(names(out), c("id", "keep", "add"))
+  expect_equal(out$add, c(3, 4))
+})
+```
+
+```{r development-inflate, eval=FALSE}
+# Run but keep eval=FALSE to avoid infinite loop
+# Execute in the console directly
+fusen::inflate(
+  flat_file = "dev/data_preprocessing.Rmd",
+  vignette_name = "Data preprocessing helpers"
+)
+```

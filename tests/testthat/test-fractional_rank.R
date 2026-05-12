@@ -32,17 +32,20 @@ test_that("shap_conc_decomp decomposes a wide SHAP table", {
 
   expect_s3_class(out, "shap_ci_decomposition")
   expect_equal(out$diagnostics$n, 3)
+  expect_equal(out$diagnostics$weight_sum, 3)
   expect_equal(out$diagnostics$mean_prediction, 8 / 3)
-  expect_equal(out$diagnostics$concentration_index, -1 / 12)
-  expect_equal(out$diagnostics$shap_sum, -1 / 12)
+  expect_equal(out$diagnostics$concentration_index, 1 / 8)
+  expect_equal(out$diagnostics$signed_concentration_index, -1 / 8)
+  expect_equal(out$diagnostics$score_direction, -1)
+  expect_equal(out$diagnostics$shap_sum, 1 / 8)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$centered_rank_sum, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$prediction_source, "baseline + rowSums(shap)")
 
   expect_equal(out$contributions$feature, c("education", "water"))
-  expect_equal(out$contributions$D_k_SHAP, c(-1 / 6, 1 / 12))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 4, -1 / 8))
   expect_equal(out$contributions$pct_contribution, c(200, -100))
-  expect_equal(out$contributions$abs_contribution, c(1 / 6, 1 / 12))
+  expect_equal(out$contributions$abs_contribution, c(1 / 4, 1 / 8))
 })
 
 test_that("shap_conc_decomp reshapes DALEX-like SHAP tables", {
@@ -93,10 +96,42 @@ test_that("shap_conc_decomp drops incomplete rows with na_rm", {
 
   expect_equal(out$diagnostics$n, 2)
   expect_equal(out$diagnostics$prediction_source, "prediction")
-  expect_equal(out$diagnostics$concentration_index, 1 / 6)
+  expect_equal(out$diagnostics$concentration_index, 1 / 3)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$contributions$feature, c("x1", "x2"))
-  expect_equal(out$contributions$D_k_SHAP, c(1 / 12, 1 / 12))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 6, 1 / 6))
+})
+
+test_that("shap_conc_decomp uses ci_factory scores for weighted variants", {
+  shap <- data.frame(
+    education = c(1, 0, -1, 1),
+    water = c(0, 1, 1, -1)
+  )
+  rank <- c(4, 1, 3, 2)
+  weights <- c(1, 2, 1, 3)
+  prediction <- 2 + rowSums(shap)
+
+  for (type in c("CI", "CIg", "CIc")) {
+    out <- shap_conc_decomp(
+      shap = shap,
+      rank = rank,
+      type = type,
+      baseline = 2,
+      weights = weights,
+      sort = FALSE
+    )
+
+    expect_equal(
+      out$diagnostics$concentration_index,
+      ci_factory(type)(cbind(rank = rank, outcome = prediction), weights)
+    )
+    expect_equal(
+      out$diagnostics$shap_sum,
+      out$diagnostics$concentration_index,
+      tolerance = 1e-12
+    )
+    expect_equal(out$diagnostics$weight_sum, sum(weights))
+  }
 })
 
 test_that("shap_conc_decomp supports level-dependent L decomposition", {
@@ -114,13 +149,14 @@ test_that("shap_conc_decomp supports level-dependent L decomposition", {
   )
 
   expect_equal(out$diagnostics$type, "L")
-  expect_equal(out$diagnostics$concentration_index, -1 / 6)
-  expect_equal(out$diagnostics$shap_sum, -1 / 6)
+  expect_equal(out$diagnostics$concentration_index, 1 / 6)
+  expect_equal(out$diagnostics$signed_concentration_index, -1 / 6)
+  expect_equal(out$diagnostics$shap_sum, 1 / 6)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$centered_rank_sum, 0, tolerance = 1e-12)
 
   expect_equal(out$contributions$feature, c("education", "water"))
-  expect_equal(out$contributions$D_k_SHAP, c(-1 / 3, 1 / 6))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 3, -1 / 6))
   expect_equal(out$contributions$pct_contribution, c(200, -100))
 })
 
@@ -150,6 +186,12 @@ test_that("shap_conc_decomp validates key inputs", {
   expect_error(
     shap_conc_decomp(shap = shap, rank = c(1, NA), baseline = 1),
     "missing values"
+  )
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = c(1, 2), baseline = 1,
+      weights = c(1, NA)
+    ),
+    "weights"
   )
   expect_error(
     shap_conc_decomp(shap = shap, rank = c(-1, 1), type = "L", baseline = 1),
