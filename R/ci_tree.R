@@ -76,8 +76,33 @@
 #' as_caseweights(c(1, 2, 3), scale = 60L)
 #' as_caseweights(c(0.2, 0.3, 0.5))
 #'
-#' as_caseweights(c(1, 2, 3), scale = 60L)
-#' as_caseweights(c(0.2, 0.3, 0.5))
+#' data(kenya, package = "ineqTrees")
+#'
+#' kenya_model_data <- kenya[
+#'   stats::complete.cases(kenya[, "wealth", drop = FALSE]),
+#'   "wealth",
+#'   drop = FALSE
+#' ]
+#'
+#' set.seed(20260512)
+#' kenya_model_data <- kenya_model_data[
+#'   sample.int(nrow(kenya_model_data), 800L),
+#'   ,
+#'   drop = FALSE
+#' ]
+#'
+#' wealth_quintile <- cut(
+#'   kenya_model_data$wealth,
+#'   breaks = stats::quantile(
+#'     kenya_model_data$wealth,
+#'     probs = seq(0, 1, by = 0.2),
+#'     na.rm = TRUE
+#'   ),
+#'   include.lowest = TRUE
+#' )
+#'
+#' quintile_weights <- as.numeric(table(wealth_quintile))
+#' as_caseweights(quintile_weights, scale = 1000L)
 #' @export
 
 as_caseweights <- function(w, scale = 10000L) {
@@ -114,30 +139,48 @@ as_caseweights <- function(w, scale = 10000L) {
 #'
 #' @export 
 #' @examples
+#' data(kenya, package = "ineqTrees")
+#'
+#' kenya_model_vars <- c(
+#'   "wealth",
+#'   "deadu5_num",
+#'   "rural",
+#'   "ed",
+#'   "reg",
+#'   "unskilled"
+#' )
+#'
+#' kenya_model_data <- kenya[
+#'   stats::complete.cases(kenya[, kenya_model_vars]),
+#'   kenya_model_vars
+#' ]
+#'
+#' set.seed(20260512)
+#' kenya_model_data <- kenya_model_data[
+#'   sample.int(nrow(kenya_model_data), 800L),
+#'   ,
+#'   drop = FALSE
+#' ]
+#'
 #' splitfun <- ci_splitfun(
-#'   rank_name = "rank",
-#'   outcome_name = "outcome",
+#'   rank_name = "wealth",
+#'   outcome_name = "deadu5_num",
 #'   type = "CI"
 #' )
 #'
-#' toy_data <- data.frame(
-#'   rank = c(10, 20, 30, 40, 50),
-#'   outcome = c(1, 0, 1, 0, 1),
-#'   income = c(2, 4, 6, 8, 10)
-#' )
-#'
-#' ctrl <- list(minsplit = 1, minbucket = 1, minprob = 0)
+#' ctrl <- ci_tree_control(minsplit = 100, minbucket = 50, minprob = 0.05)
 #'
 #' split <- splitfun(
 #'   model = NULL,
 #'   trafo = NULL,
-#'   data = toy_data,
-#'   subset = seq_len(nrow(toy_data)),
-#'   weights = rep(1, nrow(toy_data)),
-#'   whichvar = 3,
+#'   data = kenya_model_data,
+#'   subset = seq_len(nrow(kenya_model_data)),
+#'   weights = rep(1, nrow(kenya_model_data)),
+#'   whichvar = match("reg", names(kenya_model_data)),
 #'   ctrl = ctrl
 #' )
-#' split$breaks
+#'
+#' partykit::character_split(split, kenya_model_data)
 
 ci_splitfun <- function(rank_name,
                         outcome_name,
@@ -392,22 +435,44 @@ ci_tree <- function(formula,
 #' @rdname ci_tree
 #' @export
 #' @examples
-#' toy_data <- data.frame(
-#'   rank = c(10, 20, 30, 40, 50, 60),
-#'   outcome = c(1, 0, 1, 0, 1, 1),
-#'   income = c(2, 4, 6, 8, 10, 12),
-#'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
+#' data(kenya, package = "ineqTrees")
+#'
+#' kenya_model_vars <- c(
+#'   "wealth",
+#'   "deadu5_num",
+#'   "rural",
+#'   "ed",
+#'   "reg",
+#'   "unskilled"
 #' )
+#'
+#' kenya_model_data <- kenya[
+#'   stats::complete.cases(kenya[, kenya_model_vars]),
+#'   kenya_model_vars
+#' ]
+#'
+#' set.seed(20260512)
+#' kenya_model_data <- kenya_model_data[
+#'   sample.int(nrow(kenya_model_data), 800L),
+#'   ,
+#'   drop = FALSE
+#' ]
 #'
 #' fit <- ci_tree(
-#'   formula = cbind(rank, outcome) ~ income + group,
-#'   data = toy_data,
-#'   rank_name = "rank",
-#'   outcome_name = "outcome",
-#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+#'   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+#'   data = kenya_model_data,
+#'   rank_name = "wealth",
+#'   outcome_name = "deadu5_num",
+#'   control = ci_tree_control(
+#'     minsplit = 100,
+#'     minbucket = 50,
+#'     minprob = 0.05,
+#'     maxdepth = 3
+#'   )
 #' )
 #'
-#' inherits(fit, "party")
+#' fit
+#' ci_tree_terminal_summary(fit)
 ctree_ci <- function(...) {
   ci_tree(...)
 }

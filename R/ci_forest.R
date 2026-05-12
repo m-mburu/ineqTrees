@@ -532,24 +532,47 @@ fitted.ci_forest <- function(object, ...) {
 #' )
 #' ci_tree_terminal_summary(fit)
 #'
-#' toy_data <- data.frame(
-#'   rank = c(10, 20, 30, 40, 50, 60),
-#'   outcome = c(1, 0, 1, 0, 1, 1),
-#'   income = c(2, 4, 6, 8, 10, 12),
-#'   group = factor(c("low", "low", "mid", "mid", "high", "high"))
+#' data(kenya, package = "ineqTrees")
+#'
+#' kenya_model_vars <- c(
+#'   "wealth",
+#'   "deadu5_num",
+#'   "rural",
+#'   "ed",
+#'   "reg",
+#'   "unskilled"
 #' )
 #'
-#' fit <- ci_forest(
-#'   formula = cbind(rank, outcome) ~ income + group,
-#'   data = toy_data,
-#'   rank_name = "rank",
-#'   outcome_name = "outcome",
+#' kenya_model_data <- kenya[
+#'   stats::complete.cases(kenya[, kenya_model_vars]),
+#'   kenya_model_vars
+#' ]
+#'
+#' set.seed(20260512)
+#' kenya_model_data <- kenya_model_data[
+#'   sample.int(nrow(kenya_model_data), 800L),
+#'   ,
+#'   drop = FALSE
+#' ]
+#'
+#' set.seed(20260512)
+#' forest_fit <- ci_forest(
+#'   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+#'   data = kenya_model_data,
+#'   rank_name = "wealth",
+#'   outcome_name = "deadu5_num",
 #'   ntree = 10L,
-#'   mtry = 1L,
-#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+#'   mtry = 2L,
+#'   control = ci_tree_control(
+#'     minsplit = 100,
+#'     minbucket = 50,
+#'     minprob = 0.05,
+#'     maxdepth = 3
+#'   )
 #' )
 #'
-#' nrow(stats::fitted(fit))
+#' ci_forest_summary(forest_fit)
+#' head(stats::predict(forest_fit, OOB = FALSE))
 #' @export
 ci_tree_terminal_summary <- function(object) {
   if (!inherits(object, "ci_tree")) {

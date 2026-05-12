@@ -62,6 +62,21 @@ ci_tree_models.Rmd:
     overwrite: 'yes'
     clean: ask
     codecov: false
+flat_partytrees.Rmd:
+  path: dev/flat_partytrees.Rmd
+  state: active
+  R: []
+  tests: []
+  vignettes: vignettes/inequality-aware-party-trees.Rmd
+  inflate:
+    flat_file: dev/flat_partytrees.Rmd
+    vignette_name: Inequality-aware party trees
+    open_vignette: false
+    check: false
+    document: false
+    overwrite: 'yes'
+    clean: 'no'
+    codecov: false
 keep:
   path: keep
   state: active
@@ -69,7 +84,7 @@ keep:
   - R/doc_kenya.R
   - R/utils-pipe.R
   tests: []
-  vignettes: vignettes/inequality-aware-party-trees.Rmd
+  vignettes: []
 model_selection.Rmd:
   path: dev/model_selection.Rmd
   state: active
