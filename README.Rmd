@@ -160,7 +160,7 @@ fit_tree
 ci_tree_terminal_summary(fit_tree)
 ```
 
-```{r readme-tree-plot, fig.width=15, fig.height=9}
+```{r readme-tree-plot, fig.width=15, fig.height=9, fig.alt="A concentration-index tree fitted to under-five mortality in the Kenya example data."}
 readme_tree_plot(fit_tree, kenya, "deadu5_num")
 ```
 
@@ -210,7 +210,7 @@ surrogate_tree
 
 ## plot
 
-```{r surrogate-tree-plot, fig.width=15, fig.height=9 }
+```{r surrogate-tree-plot, fig.width=15, fig.height=9, fig.alt="A surrogate concentration-index tree approximating fitted forest predictions."}
 readme_tree_plot(
   surrogate_tree,
   kenya,
@@ -275,7 +275,7 @@ knitr::kable(
 )
 ```
 
-```{r shap-decomposition-plot, fig.width=8, fig.height=5}
+```{r shap-decomposition-plot, fig.width=8, fig.height=5, fig.alt="A horizontal bar chart of SHAP-based percentage contributions to the concentration index."}
 library(ggplot2)
 ggplot(
   shap_contrib_table,
@@ -370,7 +370,7 @@ knitr::kable(
 )
 ```
 
-```{r tree-tuning-plot, fig.width=15, fig.height=9}
+```{r tree-tuning-plot, fig.width=15, fig.height=9, fig.alt="The best concentration-index tree selected by cross-validated tuning."}
 readme_tree_plot(
   fit = tree_tuning$best_fit,
   data = tuning_data,
@@ -452,7 +452,7 @@ forest_surrogate_data <- forest_tuning$best_surrogate_data
 forest_surrogate_fit <- forest_tuning$best_surrogate
 ```
 
-```{r forest-surrogate-plot, fig.width=15, fig.height=9}
+```{r forest-surrogate-plot, fig.width=15, fig.height=9, fig.alt="A surrogate tree summarizing the best tuned concentration-index forest."}
 readme_tree_plot(
   fit = forest_surrogate_fit,
   data = forest_surrogate_data,

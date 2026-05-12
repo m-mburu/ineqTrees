@@ -10,7 +10,7 @@ Description: Provides tools for analysing socioeconomic inequality in
     concentration-index utilities, subgroup interpretation, and SHAP-based
     decomposition of fitted outcomes into determinant contributions.
 License: MIT + file LICENSE
-URL: https://github.com/m-mburu/ineqTrees
+URL: https://m-mburu.github.io/ineqTrees/, https://github.com/m-mburu/ineqTrees
 BugReports: https://github.com/m-mburu/ineqTrees/issues
 Depends: 
     R (>= 3.5)

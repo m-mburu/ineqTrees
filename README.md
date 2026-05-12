@@ -135,7 +135,7 @@ ci_tree_terminal_summary(fit_tree)
 readme_tree_plot(fit_tree, kenya, "deadu5_num")
 ```
 
-<img src="man/figures/README-readme-tree-plot-1.png" width="100%" />
+<img src="man/figures/README-readme-tree-plot-1.png" alt="A concentration-index tree fitted to under-five mortality in the Kenya example data." width="100%" />
 
 ## Fitting a forest
 
@@ -239,7 +239,7 @@ readme_tree_plot(
 )
 ```
 
-<img src="man/figures/README-surrogate-tree-plot-1.png" width="100%" />
+<img src="man/figures/README-surrogate-tree-plot-1.png" alt="A surrogate concentration-index tree approximating fitted forest predictions." width="100%" />
 
 ## SHAP-based decomposition
 
@@ -338,7 +338,7 @@ ggplot(
   theme(panel.grid.minor = element_blank())
 ```
 
-<img src="man/figures/README-shap-decomposition-plot-1.png" width="100%" />
+<img src="man/figures/README-shap-decomposition-plot-1.png" alt="A horizontal bar chart of SHAP-based percentage contributions to the concentration index." width="100%" />
 
 ``` r
 set.seed(20260507)
@@ -493,7 +493,7 @@ readme_tree_plot(
 )
 ```
 
-<img src="man/figures/README-tree-tuning-plot-1.png" width="100%" />
+<img src="man/figures/README-tree-tuning-plot-1.png" alt="The best concentration-index tree selected by cross-validated tuning." width="100%" />
 
 ## Tune forest hyperparameters
 
@@ -838,4 +838,4 @@ readme_tree_plot(
 )
 ```
 
-<img src="man/figures/README-forest-surrogate-plot-1.png" width="100%" />
+<img src="man/figures/README-forest-surrogate-plot-1.png" alt="A surrogate tree summarizing the best tuned concentration-index forest." width="100%" />
