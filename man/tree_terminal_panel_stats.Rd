@@ -41,7 +41,7 @@ summary values.}
 }
 \value{
 A graph-content generator function suitable for the \code{terminal_panel}
-argument of \code{\link[partykit:party-plot]{partykit::plot.party()}}.
+argument of \code{\link[partykit:plot.party]{partykit::plot.party()}}.
 }
 \description{
 Builds a \code{partykit} graph-content generator that draws terminal nodes using

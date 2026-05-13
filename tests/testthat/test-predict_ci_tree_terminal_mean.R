@@ -20,6 +20,25 @@ test_that("ci_tree_control_grid creates greedy controls only", {
   expect_false("mincriterion" %in% names(grid))
 })
 
+test_that("ci_dials_grid converts tidymodels-style names", {
+  dials_grid <- data.frame(
+    mtry = c(1L, 2L),
+    min_n = c(5L, 10L),
+    tree_depth = c(2L, 3L),
+    trees = c(7L, 9L)
+  )
+
+  grid <- ci_dials_grid(dials_grid, minprob = 0.05)
+
+  expect_s3_class(grid, "data.table")
+  expect_equal(grid$minbucket, c(5L, 10L))
+  expect_equal(grid$minsplit, c(10L, 20L))
+  expect_equal(grid$maxdepth, c(2L, 3L))
+  expect_equal(grid$mtry, c(1L, 2L))
+  expect_equal(grid$ntree, c(7L, 9L))
+  expect_equal(grid$minprob, c(0.05, 0.05))
+})
+
 test_that("ci_cv_folds creates reproducible folds", {
   folds_a <- ci_cv_folds(12, v = 3, seed = 99)
   folds_b <- ci_cv_folds(12, v = 3, seed = 99)

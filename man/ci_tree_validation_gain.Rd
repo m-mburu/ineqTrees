@@ -10,7 +10,8 @@ ci_tree_validation_gain(
   rank_name,
   outcome_name,
   weights = NULL,
-  type = c("CI", "CIg", "CIc", "L")
+  type = c("CI", "CIg", "CIc", "L"),
+  root_impurity = NULL
 )
 }
 \arguments{
@@ -28,6 +29,10 @@ ci_tree_validation_gain(
 inequality index used for validation scoring. \code{"L"} uses observed
 socioeconomic levels in the first response column rather than fractional
 ranks.}
+
+\item{root_impurity}{Optional pre-computed root impurity for the validation
+sample under the selected concentration-index criterion. If \code{NULL}, the
+root impurity is computed from \code{new_data}.}
 }
 \value{
 A numeric validation gain.

@@ -41,7 +41,7 @@ plural nouns for summarized level groups.}
 }
 \value{
 A graph-content generator function suitable for the \code{edge_panel}
-argument of \code{\link[partykit:party-plot]{partykit::plot.party()}}.
+argument of \code{\link[partykit:plot.party]{partykit::plot.party()}}.
 }
 \description{
 Builds a \code{partykit} graph-content generator that draws compact edge labels

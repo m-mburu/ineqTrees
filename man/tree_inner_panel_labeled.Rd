@@ -29,13 +29,13 @@ nodes.}
 }
 \value{
 A graph-content generator function suitable for the \code{inner_panel}
-argument of \code{\link[partykit:party-plot]{partykit::plot.party()}}.
+argument of \code{\link[partykit:plot.party]{partykit::plot.party()}}.
 }
 \description{
 Builds a \code{partykit} graph-content generator that draws internal tree nodes
 with readable variable labels and optional split-test p-values. The returned
 generator is intended for use in the \code{inner_panel} argument of
-\code{\link[partykit:party-plot]{partykit::plot.party()}}.
+\code{\link[partykit:plot.party]{partykit::plot.party()}}.
 }
 \examples{
 data(kenya, package = "ineqTrees")

@@ -94,6 +94,44 @@ kenya_model <- kenya_child[
 ]
 
 predictors <- c("rural", "ed", "reg", "unskilled")
+criterion_types <- c("CI", "CIg", "CIc", "L")
+```
+
+
+```{r helper-functions}
+best_settings_by_type <- function(x, metric = "validation_gain") {
+  out <- copy(as.data.table(x))
+  if ("metric" %in% names(out)) {
+    out <- out[out$metric == metric, , drop = FALSE]
+  }
+  data.table::setorderv(out, c("type", "mean_score"), c(1L, -1L))
+  out[type %in% criterion_types, .SD[1L], by = type]
+}
+
+add_root_gain_columns <- function(best_dt, root_table) {
+  out <- copy(as.data.table(best_dt))
+
+  root_lookup <- root_table[
+    ,
+    .(
+      type = criterion,
+      root_ci_index = root_ci_index
+    )
+  ]
+
+  out <- merge(out, root_lookup, by = "type", all.x = TRUE, sort = FALSE)
+
+  out[
+    ,
+    percent_gain_recovered := data.table::fifelse(
+      is.finite(root_ci_index) & root_ci_index > 0,
+      100 * mean_score / root_ci_index,
+      NA_real_
+    )
+  ]
+
+  out
+}
 ```
 
 
@@ -102,23 +140,103 @@ predictors <- c("rural", "ed", "reg", "unskilled")
 The concentration index summarizes whether the outcome is concentrated among
 poorer or richer children after ordering observations by the ranking variable.
 `ci_factory()` returns a scoring function. The same scoring function is used
-inside the tree splitter.
+inside the tree splitter, and each criterion has its own root-node benchmark.
 ```{r root-concentration-index}
-ci <- ci_factory("CI")
-
-root_ci <- ci(
-  cbind(rank = kenya_model$wealth, outcome = kenya_model$deadu5_num),
-  kenya_model$sample_weight
+root_response <- cbind(
+  rank = kenya_model$wealth,
+  outcome = kenya_model$deadu5_num
 )
 
-root_ci
+root_weights <- kenya_model$sample_weight
+
+whole_sample_ci <- data.table(criterion = criterion_types)[
+  ,
+  .(
+    root_ci_index = ci_factory(criterion)(root_response, root_weights)
+  ),
+  by = criterion
+]
+
+ci <- ci_factory("CI")
+
+whole_sample_ci
 ```
 
 
-The value is a root-node diagnostic: before any subgrouping, this is the
-inequality score for the outcome in the analysis sample.
+The `root_ci_index` is the baseline impurity before any subgrouping. The same
+`type` argument appears in the tree and tuning functions, so each fitted model
+should be compared with the root benchmark for the same concentration-index
+criterion.
 
-## 3. Fit a greedy concentration-index tree
+## 3. Fit trees with different concentration indices
+
+`ci_tree()` can optimize several related concentration-index objectives. This
+is important in applied work because the preferred index depends on the
+outcome scale and on whether the ranking variable should be treated as a
+fractional rank or as observed socioeconomic levels.
+
+- `"CI"` is the standard concentration index.
+- `"CIg"` is a generalized concentration index.
+- `"CIc"` is a corrected concentration index for bounded outcomes.
+- `"L"` uses the observed socioeconomic levels in the first response column.
+
+You select the objective with the `type` argument. The fitted objects have the
+same interface, so they can be printed, summarized, validated, or plotted in
+the same way.
+```{r fit-index-specific-trees}
+tree_control <- ci_tree_control(
+  minsplit = 120,
+  minbucket = 60,
+  minprob = 0.05,
+  maxdepth = 3
+)
+
+tree_by_type <- setNames(
+  lapply(criterion_types, function(ci_type) {
+    ci_tree(
+      formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+      data = kenya_model,
+      rank_name = "wealth",
+      outcome_name = "deadu5_num",
+      weights = kenya_model$sample_weight,
+      type = ci_type,
+      control = tree_control
+    )
+  }),
+  criterion_types
+)
+
+type_comparison <- rbindlist(lapply(names(tree_by_type), function(ci_type) {
+  fit <- tree_by_type[[ci_type]]
+
+  data.table(
+    type = ci_type,
+    terminal_nodes = length(partykit::nodeids(fit, terminal = TRUE)),
+    validation_gain = ci_tree_validation_gain(
+      fit = fit,
+      new_data = kenya_model,
+      rank_name = "wealth",
+      outcome_name = "deadu5_num",
+      weights = kenya_model$sample_weight,
+      type = ci_type
+    )
+  )
+}))
+
+type_comparison[order(-validation_gain)]
+```
+
+
+In this quick comparison, larger validation gain means the terminal-node
+partition removes more concentration-index impurity than the unsplit root in
+the same sample. In a final analysis, use cross-validation to select among
+indices and tree-size controls rather than choosing the largest in-sample
+score.
+
+For the rest of the introduction we continue with the standard concentration
+index tree.
+
+## 4. Fit a greedy concentration-index tree
 
 `ci_tree()` grows a binary tree by looking for splits that reduce within-node
 concentration-index impurity. The formula uses `cbind(wealth, deadu5_num)` so
@@ -130,12 +248,8 @@ tree_fit <- ci_tree(
   rank_name = "wealth",
   outcome_name = "deadu5_num",
   weights = kenya_model$sample_weight,
-  control = ci_tree_control(
-    minsplit = 120,
-    minbucket = 60,
-    minprob = 0.05,
-    maxdepth = 3
-  )
+  type = "CI",
+  control = tree_control
 )
 
 tree_fit
@@ -159,14 +273,30 @@ The `rule` column describes the subgroup path leading to each terminal node.
 High mortality and high within-node concentration index point to subgroups
 where the outcome remains both common and unequally distributed by wealth.
 
-## 4. Plot the fitted tree
+## 5. Plot the fitted tree
 
 The plotting method uses `partykit` under the hood, but the package adds
 compact split labels and terminal-node statistics that are easier to read for
-large factor splits.
-```{r plot-ci-tree}
+large factor splits. The plain call is useful when you want a quick look at
+the tree structure.
+```{r plot-ci-tree-basic}
 #| fig.width: 12.0
 #| fig.height: 7.0
+#| fig.alt: A basic plot of a concentration-index tree for under-five death in the Kenya
+#|   example data.
+
+plot(tree_fit)
+```
+
+
+For reports, the most useful improvement is usually to add readable variable
+names and terminal-node summaries. The `terminal_stats`, `stat_labels`, and
+`stat_formatters` arguments let the plot carry the sample size, outcome rate,
+and mean rank in each terminal node instead of leaving those quantities for a
+separate table.
+```{r plot-ci-tree}
+#| fig.width: 14.0
+#| fig.height: 10.0
 #| fig.alt: A concentration-index tree for under-five death in the Kenya example data.
 
 plot(
@@ -197,7 +327,12 @@ plot(
 ```
 
 
-## 5. Use the tree as a prediction rule
+With those arguments, the terminal panels become self-contained: a reader can
+see not only where the split sends observations, but also how large each group
+is, how common under-five death is in the group, and where the group sits on
+the wealth ranking.
+
+## 6. Use the tree as a prediction rule
 
 The tree is fitted to explain inequality, but it can also be used as a simple
 risk model by assigning each child the mean outcome in their terminal node.
@@ -232,11 +367,19 @@ ci_tree_validation_gain(
 ```
 
 
-## 6. Tune tree controls
+## 7. Select a tree by cross-validation
 
-Tree depth and minimum node size control the trade-off between detail and
-stability. `tune_ci_tree()` evaluates candidate controls by cross-validation.
-The example below keeps the grid small so the vignette builds quickly.
+Tree depth, minimum node size, and the concentration-index objective all
+control the trade-off between detail and stability. `tune_ci_tree()` is the
+model-selection helper: it evaluates candidate controls by cross-validation,
+scores each candidate on held-out folds, and can refit the selected tree on
+the full analysis table.
+
+The default metric is `"validation_gain"`, which selects the model that most
+reduces concentration-index impurity on validation folds. Prediction-oriented
+metrics are also available with `metric = "brier"`, `"log_loss"`, or
+`"roc_auc"`. The example below keeps the grid small so the vignette builds
+quickly.
 ```{r tune-tree}
 tuning_grid <- ci_tree_control_grid(
   minsplit = c(120L, 180L),
@@ -251,7 +394,7 @@ tree_tuning <- tune_ci_tree(
   rank_name = "wealth",
   outcome_name = "deadu5_num",
   weights = kenya_model$sample_weight,
-  type = "CI",
+  type = criterion_types,
   control_grid = tuning_grid,
   v = 3L,
   strata = "deadu5_num",
@@ -261,22 +404,152 @@ tree_tuning <- tune_ci_tree(
 
 tree_tuning$summary[
   order(-mean_score),
-  .(minsplit, minbucket, maxdepth, mean_score, mean_terminal_nodes)
+  .(metric, type, minsplit, minbucket, maxdepth, mean_score, mean_terminal_nodes)
 ]
 ```
 
 
-The selected tree is available as `tree_tuning$best_fit`, which can be printed,
+The tuning object stores fold-level metrics, grid-level summaries, selected
+controls, and optional diagnostics. The collector helpers give a stable way to
+inspect those pieces without relying on list internals.
+```{r inspect-tree-tuning}
+ci_show_best(tree_tuning, metric = "validation_gain", n = 4)[
+  ,
+  .(type, minsplit, maxdepth, mean_score, sd_score, mean_terminal_nodes)
+]
+
+ci_select_best(tree_tuning)[
+  ,
+  .(type, minsplit, minbucket, maxdepth, mean_score)
+]
+```
+
+
+`control_ci_tune()` controls optional outputs. Here we score two metrics in a
+single cross-validation run, save validation predictions, and extract a small
+diagnostic from each fitted fold-level tree.
+```{r tune-tree-control}
+diagnostic_tuning <- tune_ci_tree(
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  data = kenya_model,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  weights = kenya_model$sample_weight,
+  type = "CI",
+  control_grid = tuning_grid[1],
+  v = 2L,
+  strata = "deadu5_num",
+  seed = 20260514,
+  metrics = c("validation_gain", "brier"),
+  control = control_ci_tune(
+    save_pred = TRUE,
+    extract = function(fit) {
+      length(partykit::nodeids(fit, terminal = TRUE))
+    }
+  ),
+  refit = FALSE
+)
+
+ci_collect_metrics(diagnostic_tuning)[
+  ,
+  .(metric, mean_score, sd_score, mean_terminal_nodes)
+]
+
+head(ci_collect_predictions(diagnostic_tuning)[
+  ,
+  .(grid_id, fold_id, row_id, outcome, .pred)
+])
+
+ci_collect_extracts(diagnostic_tuning)[
+  ,
+  .(
+    grid_id,
+    fold_id,
+    type,
+    terminal_nodes = unlist(.extracts)
+  )
+]
+```
+
+
+When you already use `rsample`, you can pass an rset with `resamples` instead
+of asking `ineqTrees` to create folds from `v` and `strata`.
+```{r tune-tree-rsample}
+if (requireNamespace("rsample", quietly = TRUE)) {
+  tree_folds <- rsample::vfold_cv(
+    as.data.frame(kenya_model),
+    v = 2L,
+    strata = deadu5_num
+  )
+
+  rsample_tuning <- tune_ci_tree(
+    formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+    data = kenya_model,
+    rank_name = "wealth",
+    outcome_name = "deadu5_num",
+    weights = kenya_model$sample_weight,
+    type = "CI",
+    control_grid = tuning_grid[1],
+    resamples = tree_folds,
+    seed = 20260515,
+    refit = FALSE
+  )
+
+  ci_collect_metrics(rsample_tuning)[
+    ,
+    .(metric, type, mean_score, folds_completed)
+  ]
+}
+```
+
+
+The top rows show the best candidates across the whole tuning run. Because the
+four criteria are on different numerical scales, it is also useful to report
+the best setting within each criterion and scale the validation gain by that
+criterion's root impurity.
+```{r best-tree-by-type}
+tree_best_by_type <- add_root_gain_columns(
+  best_settings_by_type(tree_tuning$summary),
+  whole_sample_ci
+)
+
+tree_best_by_type_table <- copy(tree_best_by_type[
+  ,
+  .(
+    type,
+    minsplit,
+    minbucket,
+    minprob,
+    maxdepth,
+    root_ci_index,
+    mean_validation_gain = mean_score,
+    percent_gain_recovered,
+    sd_validation_gain = sd_score,
+    mean_terminal_nodes
+  )
+])
+
+tree_best_by_type_table[
+  ,
+  percent_gain_recovered := sprintf("%.1f%%", percent_gain_recovered)
+]
+
+tree_best_by_type_table
+```
+
+
+The selected tree is available as `tree_tuning$best_fit`, and the selected
+index is available as `tree_tuning$best_type`. The best fit can be printed,
 summarized, or plotted in the same way as `tree_fit`.
 ```{r best-tuned-tree}
 tree_tuning$best_params[
   ,
-  .(minsplit, minbucket, maxdepth, mean_score, mean_terminal_nodes)
+  .(type, minsplit, minbucket, maxdepth, mean_score, mean_terminal_nodes)
 ]
 ```
 
 
-## 7. Fit a concentration-index forest
+## 8. Fit and tune a concentration-index forest
 
 `ci_forest()` averages predictions from many greedy concentration-index trees.
 The forest can be useful when the goal is a smoother risk estimate, while a
@@ -304,6 +577,103 @@ ci_forest_summary(forest_fit)
 ```
 
 
+The same cross-validation idea applies to forests. `tune_ci_forest()` tunes
+forest controls and returns validation gain from an interpretable surrogate
+tree fitted to the forest predictions. The grid below uses `dials` to create
+a regular search over familiar tidymodels parameters, then converts the result
+with `ci_dials_grid()`. For a larger applied analysis, you could use
+`levels = 3L` or add `dials::tree_depth()` and `dials::trees()` to the grid.
+```{r tune-forest}
+forest_dials_grid <- dials::grid_regular(
+  dials::mtry(range = c(2L, length(predictors))),
+  dials::min_n(range = c(60L, 120L)),
+  levels = 2L
+)
+
+forest_grid <- ci_dials_grid(
+  forest_dials_grid,
+  minprob = 0.05,
+  maxdepth = 2L,
+  ntree = 8L
+)
+
+forest_tuning <- tune_ci_forest(
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  data = kenya_model,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  weights = kenya_model$sample_weight,
+  type = criterion_types,
+  control_grid = forest_grid,
+  v = 3L,
+  strata = "deadu5_num",
+  seed = 20260513,
+  metrics = c("validation_gain", "brier"),
+  control = control_ci_tune(save_pred = TRUE),
+  refit = TRUE
+)
+
+forest_best_by_type <- add_root_gain_columns(
+  best_settings_by_type(
+    ci_collect_metrics(forest_tuning, metric = "validation_gain")
+  ),
+  whole_sample_ci
+)
+
+forest_best_by_type_table <- copy(forest_best_by_type[
+  ,
+  .(
+    type,
+    ntree,
+    mtry,
+    minsplit,
+    minbucket,
+    minprob,
+    maxdepth,
+    root_ci_index,
+    mean_validation_gain = mean_score,
+    percent_gain_recovered,
+    sd_validation_gain = sd_score,
+    mean_terminal_nodes
+  )
+])
+
+forest_best_by_type_table[
+  ,
+  percent_gain_recovered := sprintf("%.1f%%", percent_gain_recovered)
+]
+
+forest_best_by_type_table
+```
+
+
+The same collector helpers work for forests. With `save_pred = TRUE`, the
+validation predictions are available for quick diagnostic checks.
+```{r inspect-forest-tuning}
+ci_show_best(forest_tuning, metric = "validation_gain", n = 4)[
+  ,
+  .(type, ntree, mtry, minbucket, mean_score, mean_terminal_nodes)
+]
+
+ci_collect_metrics(forest_tuning, metric = "brier")[
+  order(mean_score),
+  .(type, ntree, mtry, mean_score, sd_score)
+]
+
+head(ci_collect_predictions(forest_tuning)[
+  ,
+  .(grid_id, fold_id, type, row_id, outcome, .pred)
+])
+```
+
+
+The percentage gain is calculated as
+`100 * mean_validation_gain / root_ci_index`. This shows how much of the
+whole-sample/root concentration-index impurity is recovered by the selected
+model for each concentration-index criterion. Because the denominator is
+criterion-specific, the percentage makes the gains easier to compare within
+each CI definition.
+
 The fitted values are predicted risks. Their concentration index can be
 compared with the concentration index of the observed outcome.
 ```{r forest-prediction-ci}
@@ -316,7 +686,7 @@ ci(
 ```
 
 
-## 8. Decompose fitted inequality with SHAP values
+## 9. Decompose fitted inequality with SHAP values
 
 When model explanations are available as SHAP values, `shap_conc_decomp()`
 decomposes the concentration index of the fitted risk into feature-level
@@ -352,13 +722,17 @@ decomp$contributions[
 This decomposition should be read as a model-based explanation of fitted
 inequality, not as a causal attribution.
 
-## 9. Where to go next
+## 10. Where to go next
 
 The introductory workflow covers the main objects:
 
 - `ci_factory()` for concentration-index scoring;
-- `ci_tree()` for interpretable inequality-aware subgrouping;
-- `tune_ci_tree()` for choosing tree controls by validation gain;
+- `ci_tree()` for interpretable inequality-aware subgrouping with `type =
+  "CI"`, `"CIg"`, `"CIc"`, or `"L"`;
+- `tune_ci_tree()` for cross-validated model selection across tree controls
+  and concentration-index objectives;
+- `control_ci_tune()` and the `ci_collect_*()` helpers for saving predictions,
+  extracting fold diagnostics, collecting notes, and inspecting tuning results;
 - `ci_forest()` for ensemble risk estimation;
 - `shap_conc_decomp()` for decomposing fitted inequality when SHAP values are
   available.
