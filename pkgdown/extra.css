@@ -1,0 +1,243 @@
+
+/* Modern Data Science Blog Styles */
+
+/* Improved Typography */
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  line-height: 1.6;
+  /* color: #2c3e50;  Removed to let theme handle text color */
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  /* color: #1a252f; Removed to let theme handle text color */
+  margin-top: 1.5em;
+}
+
+
+/* Navbar Tweaks */
+.navbar {
+  padding: 0.8rem 1rem;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* Dark mode: reduce the "glow" from the navbar shadow */
+body.quarto-dark .navbar {
+  box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+}
+
+.navbar-brand {
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+/* Post Grid Enhancements for 'Flatly' Feel */
+.quarto-grid-item {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+
+.quarto-grid-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.quarto-grid-item .card-body {
+  padding: 1.25rem;
+}
+
+.listing-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+/* Hero Section on Index */
+.hero-banner {
+  padding: 3rem 1rem;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+/* Dark mode banner */
+body.quarto-dark .hero-banner {
+  background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+}
+
+.hero-title {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: #2c3e50;
+  margin-bottom: 0.5rem;
+}
+
+/* Dark mode title */
+body.quarto-dark .hero-title {
+  color: #ecf0f1;
+}
+
+.hero-subtitle {
+  font-size: 1.2rem;
+  color: #7f8c8d;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Dark mode subtitle */
+body.quarto-dark .hero-subtitle {
+  color: #bdc3c7;
+}
+
+/* Dark mode grid borders */
+body.quarto-dark .quarto-grid-item {
+  border-color: #444;
+}
+
+
+/* Heading color: keep the Flatly-like look in light mode, but let dark mode inherit from the theme */
+body:not(.quarto-dark) h1,
+body:not(.quarto-dark) h2,
+body:not(.quarto-dark) h3,
+body:not(.quarto-dark) h4,
+body:not(.quarto-dark) h5,
+body:not(.quarto-dark) h6 {
+  color: #2c3e50; /* Matches Flatly primary/secondary */
+}
+
+body.quarto-dark h1,
+body.quarto-dark h2,
+body.quarto-dark h3,
+body.quarto-dark h4,
+body.quarto-dark h5,
+body.quarto-dark h6 {
+  color: inherit;
+}
+
+/* Links in post titles */
+div.quarto-post .listing-title a {
+    color: #2c3e50;
+    text-decoration: none;
+}
+
+/* Dark mode: use theme link colors for listing titles */
+body.quarto-dark div.quarto-post .listing-title a {
+  color: inherit;
+}
+
+div.quarto-post .listing-title a:hover {
+    color: #18bc9c; /* Flatly teal */
+}
+
+body.quarto-dark div.quarto-post .listing-title a:hover {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* DataTables (DT) — improve gridline visibility in dark mode
+   DT uses its own CSS defaults (light gray borders) which get lost on dark backgrounds.
+   These overrides only apply in Quarto dark mode. */
+body.quarto-dark table.dataTable.cell-border > thead > tr > th,
+body.quarto-dark table.dataTable.cell-border > thead > tr > td {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+body.quarto-dark table.dataTable.cell-border > tbody > tr > th,
+body.quarto-dark table.dataTable.cell-border > tbody > tr > td {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+body.quarto-dark table.dataTable {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+body.quarto-dark .dataTables_wrapper .dataTables_filter input,
+body.quarto-dark .dataTables_wrapper .dataTables_length select {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* DataTables pagination in dark mode
+   Bootstrap theme styles `.page-link` with a filled accent background by default.
+   For DT pagination this makes "Next"/"Previous" look like active buttons.
+   Keep only the active page highlighted. */
+body.quarto-dark .dataTables_wrapper .dataTables_paginate .page-item:not(.active):not(.disabled) .page-link {
+  background-color: transparent !important;
+  color: inherit !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+}
+
+body.quarto-dark .dataTables_wrapper .dataTables_paginate .page-item.disabled .page-link {
+  background-color: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  opacity: 0.6;
+}
+
+body.quarto-dark .dataTables_wrapper .dataTables_paginate .page-item.active .page-link {
+  border: 1px solid transparent !important;
+}
+
+
+
+.ggiraph-svg, .girafe{
+  font-size: 15px;
+  max-width: 720px !important;
+  margin:auto;
+  width: 100% !important;
+  height: auto !important;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+
+
+.girafe_container_std {
+    position: relative;
+    text-align: center;
+    width: 100%; 
+    height: 100%; 
+    margin: 0 auto;
+    padding: 0;
+   
+}
+
+.nav-tabs > li.active > a, .nav-tabs > li.active > a:focus, .nav-tabs > li.active > a:hover {
+    cursor: default;
+    background-color: transparent !important;
+    font-weight: bold;
+    border: transparent !important;
+    border-top-color: transparent !important;
+    border-right-color: transparent !important;
+    border-bottom-color: transparent !important;
+    border-left-color: transparent !important;
+    border-image-outset: 0 !important;
+    border-image-repeat: stretch !important;
+    border-image-slice: 100% !important;
+    border-image-source: none !important;
+    border-image-width: 1 !important;
+    border-bottom-style: solid;
+    border-bottom-width: 2px;
+}
+
+
+
+.shiny-main-container {
+  max-width: 100% !important;
+  margin: auto;
+  height: auto !important;
+}
+
+.shiny-plot-output .ggiraph-svg{
+  max-width: auto !important;
+  margin:auto;
+  max-height: 400px;
+  width: 100% !important;
+  height: auto !important;
+  position: relative !important;
+  aspect-ratio: 9/ 5 !important;
+}
+
+

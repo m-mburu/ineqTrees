@@ -409,10 +409,88 @@ tree_grid <- grid_regular(
 tree_grid
 ```
 
-`tune_grid()` works on the prediction scale, so the simplest metrics inside the
-tuning loop are standard regression scores such as RMSE and MAE. Exact
-concentration-index gain can then be computed for the finalized tree, where the
-terminal-node partition is available.
+To tune directly on the inequality objective, we wrap `ci_gain()` as a
+yardstick-compatible metric. `tune_grid()` passes prediction rows to metrics,
+so the wrapper uses the `.row` column to recover each assessment row's rank and
+sampling weight from the original analysis table.
+
+```{r ci-gain-tuning-metric}
+ci_gain_tuning <- yardstick::new_numeric_metric(
+  function(data,
+           truth,
+           estimate,
+           na_rm = TRUE,
+           ci_type = "CI",
+           ...) {
+    truth <- rlang::enquo(truth)
+    estimate <- rlang::enquo(estimate)
+    metric_data <- tibble::as_tibble(data)
+
+    row_id <- if (".row" %in% names(metric_data)) {
+      suppressWarnings(as.integer(metric_data$.row))
+    } else {
+      rep(NA_integer_, nrow(metric_data))
+    }
+
+    if (all(!is.na(row_id)) && max(row_id) <= nrow(kenya_model)) {
+      metric_data$.rank <- kenya_model$wealth[row_id]
+      metric_data$.weight <- kenya_model$sample_weight[row_id]
+    } else if (all(c("wealth", "sample_weight") %in% names(metric_data))) {
+      metric_data$.rank <- metric_data$wealth
+      metric_data$.weight <- metric_data$sample_weight
+    } else {
+      stop(
+        "The CI gain tuning metric needs `.row` or `wealth`/`sample_weight`.",
+        call. = FALSE
+      )
+    }
+
+    score_one <- function(x) {
+      score <- ineqTrees::ci_gain(
+        x,
+        truth = !!truth,
+        estimate = !!estimate,
+        rank = .rank,
+        case_weights = .weight,
+        type = ci_type,
+        na_rm = na_rm
+      )[[".estimate"]]
+
+      tibble::tibble(
+        .metric = "ci_gain_tuning",
+        .estimator = "standard",
+        .estimate = score
+      )
+    }
+
+    tuning_cols <- intersect(
+      c(".config", "tree_depth", "trees", "mtry", "min_n"),
+      names(metric_data)
+    )
+
+    if (length(tuning_cols) > 0L) {
+      split_key <- do.call(
+        interaction,
+        c(metric_data[, tuning_cols, drop = FALSE], drop = TRUE, sep = "\r")
+      )
+
+      return(tibble::as_tibble(do.call(rbind, lapply(split(metric_data, split_key), function(x) {
+        out <- score_one(x)
+        for (col in tuning_cols) {
+          out[[col]] <- x[[col]][[1]]
+        }
+        out
+      }))))
+    }
+
+    score_one(metric_data)
+  },
+  direction = "maximize"
+)
+```
+
+The tuning loop can still collect familiar prediction metrics such as RMSE and
+MAE, but model selection is now driven by held-out concentration-index gain.
 
 ```{r tune-tree}
 set.seed(20260516)
@@ -421,7 +499,7 @@ tree_tuned <- tune_grid(
   tree_wf,
   resamples = tree_folds,
   grid = tree_grid,
-  metrics = metric_set(rmse, mae),
+  metrics = metric_set(ci_gain_tuning, rmse, mae),
   control = control_grid(save_pred = TRUE)
 )
 
@@ -429,9 +507,9 @@ collect_metrics(tree_tuned)
 ```
 
 ```{r inspect-tree-tuning}
-show_best(tree_tuned, metric = "rmse", n = 4)
+show_best(tree_tuned, metric = "ci_gain_tuning", n = 4)
 
-best_tree <- select_best(tree_tuned, metric = "rmse")
+best_tree <- select_best(tree_tuned, metric = "ci_gain_tuning")
 best_tree
 ```
 
@@ -660,7 +738,7 @@ forest_tuned <- tune_grid(
   forest_wf,
   resamples = tree_folds,
   grid = forest_grid,
-  metrics = metric_set(rmse, mae),
+  metrics = metric_set(ci_gain_tuning, rmse, mae),
   control = control_grid(save_pred = TRUE)
 )
 
@@ -668,9 +746,9 @@ collect_metrics(forest_tuned)
 ```
 
 ```{r inspect-forest-tuning}
-show_best(forest_tuned, metric = "rmse", n = 4)
+show_best(forest_tuned, metric = "ci_gain_tuning", n = 4)
 
-best_forest <- select_best(forest_tuned, metric = "rmse")
+best_forest <- select_best(forest_tuned, metric = "ci_gain_tuning")
 best_forest
 ```
 
@@ -751,8 +829,8 @@ article, but through a different orchestration layer:
   fits;
 - `workflow()`, `vfold_cv()`, `grid_regular()`, and `tune_grid()` provide the
   resampling and tuning machinery;
-- `ci_gain()` reconnects the tidymodels fit to the concentration-index
-  interpretation.
+- `ci_gain()` can be used both as the tuning metric and as the final
+  concentration-index interpretation.
 
 If you want the most direct concentration-index tuning workflow, the package
 helpers such as `tune_ci_tree()` and `tune_ci_forest()` are still the most
