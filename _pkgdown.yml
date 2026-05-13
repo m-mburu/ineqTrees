@@ -2,6 +2,20 @@ url: https://m-mburu.github.io/ineqTrees/
 
 template:
   bootstrap: 5
+  light-switch: true
+  theme: github-light
+  theme-dark: github-dark
+  includes:
+    in_header: |
+      <script>
+      (function () {
+        try {
+          if (!localStorage.getItem("theme")) {
+            localStorage.setItem("theme", "dark");
+          }
+        } catch (error) {}
+      })();
+      </script>
 
 development:
   mode: release
@@ -13,7 +27,7 @@ home:
 navbar:
   structure:
     left: [intro, reference, articles]
-    right: [search, github]
+    right: [search, github, lightswitch]
 
 articles:
   - title: Overview
