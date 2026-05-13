@@ -55,7 +55,7 @@ terminal summaries.}
 
 \item{edge_fill, inner_fill, terminal_fill}{Fill colors for the custom panels.}
 
-\item{...}{Additional arguments passed to \code{\link[partykit:party-plot]{partykit::plot.party()}}.}
+\item{...}{Additional arguments passed to \code{\link[partykit:plot.party]{partykit::plot.party()}}.}
 }
 \value{
 Invisibly returns the plotted \code{ci_tree}.

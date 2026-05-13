@@ -65,6 +65,153 @@ ci_tree_control_grid <- function(minsplit = c(50L, 100L, 200L),
   data.table::as.data.table(grid)
 }
 
+#' Convert a dials-style grid to greedy CI controls
+#'
+#' @description
+#' Converts a data frame produced by tools such as `dials::grid_regular()` into
+#' the control-grid columns expected by [tune_ci_tree()] and [tune_ci_forest()].
+#' The helper keeps `ineqTrees` independent of tidymodels while making common
+#' dials names usable in package tuning workflows.
+#'
+#' Recognized input columns are `min_n` or `minbucket`, `tree_depth` or
+#' `maxdepth`, `mtry`, `trees` or `ntree`, `minsplit`, `minprob`, and
+#' `min_gain`. When `minsplit` is not supplied, it defaults to twice the child
+#' node size (`minbucket`), which is a common starting point for binary splits.
+#'
+#' @param grid A data frame or tibble, typically from `dials::grid_regular()`.
+#' @param minsplit Optional parent-node sizes. If `NULL`, a `minsplit` column is
+#'   used when present; otherwise `2 * minbucket` is used.
+#' @param minbucket Optional child-node sizes. If `NULL`, a `minbucket` column
+#'   or dials `min_n` column is used.
+#' @param minprob Minimum child-node weight proportions.
+#' @param maxdepth Optional maximum tree depths. If `NULL`, a `maxdepth` column
+#'   or dials `tree_depth` column is used, falling back to the
+#'   [ci_tree_control()] default.
+#' @param min_gain Minimum concentration-index gains required for a split.
+#' @param mtry Optional numbers of variables sampled at each split. If `NULL`,
+#'   an `mtry` column is used when present.
+#' @param ntree Optional numbers of trees for forest tuning. If `NULL`, an
+#'   `ntree` or dials `trees` column is used when present.
+#'
+#' @return A `data.table` with one row per candidate control setting.
+#'
+#' @examples
+#' if (requireNamespace("dials", quietly = TRUE)) {
+#'   dials_grid <- dials::grid_regular(
+#'     dials::mtry(range = c(2L, 4L)),
+#'     dials::min_n(range = c(20L, 60L)),
+#'     dials::tree_depth(range = c(2L, 3L)),
+#'     levels = 2L
+#'   )
+#'
+#'   ci_dials_grid(dials_grid, minprob = 0.05, ntree = 10L)
+#' }
+#'
+#' @export
+ci_dials_grid <- function(grid,
+                          minsplit = NULL,
+                          minbucket = NULL,
+                          minprob = 0.01,
+                          maxdepth = NULL,
+                          min_gain = 0,
+                          mtry = NULL,
+                          ntree = NULL) {
+  grid <- as.data.frame(grid)
+  if (nrow(grid) == 0L) {
+    stop("`grid` must contain at least one row.", call. = FALSE)
+  }
+
+  first_column <- function(names) {
+    hit <- intersect(names, colnames(grid))
+    if (length(hit)) {
+      grid[[hit[1L]]]
+    } else {
+      NULL
+    }
+  }
+
+  recycle_rows <- function(x, name) {
+    if (length(x) == 1L) {
+      return(rep(x, nrow(grid)))
+    }
+    if (length(x) == nrow(grid)) {
+      return(x)
+    }
+    stop(
+      sprintf("`%s` must have length 1 or one value per row in `grid`.", name),
+      call. = FALSE
+    )
+  }
+
+  minbucket_values <- minbucket
+  if (is.null(minbucket_values)) {
+    minbucket_values <- first_column(c("minbucket", "min_n"))
+  }
+  if (is.null(minbucket_values)) {
+    stop(
+      "`grid` must contain `min_n` or `minbucket`, or `minbucket` must be supplied.",
+      call. = FALSE
+    )
+  }
+  minbucket_values <- as.integer(recycle_rows(minbucket_values, "minbucket"))
+
+  minsplit_values <- minsplit
+  if (is.null(minsplit_values)) {
+    minsplit_values <- first_column("minsplit")
+  }
+  if (is.null(minsplit_values)) {
+    minsplit_values <- 2L * minbucket_values
+  }
+  minsplit_values <- as.integer(recycle_rows(minsplit_values, "minsplit"))
+
+  maxdepth_values <- maxdepth
+  if (is.null(maxdepth_values)) {
+    maxdepth_values <- first_column(c("maxdepth", "tree_depth"))
+  }
+  if (is.null(maxdepth_values)) {
+    maxdepth_values <- ci_tree_control()$maxdepth
+  }
+  maxdepth_values <- as.integer(recycle_rows(maxdepth_values, "maxdepth"))
+
+  minprob_values <- first_column("minprob")
+  if (is.null(minprob_values)) {
+    minprob_values <- minprob
+  }
+  minprob_values <- as.numeric(recycle_rows(minprob_values, "minprob"))
+
+  min_gain_values <- first_column("min_gain")
+  if (is.null(min_gain_values)) {
+    min_gain_values <- min_gain
+  }
+  min_gain_values <- as.numeric(recycle_rows(min_gain_values, "min_gain"))
+
+  out <- data.table::data.table(
+    minsplit = minsplit_values,
+    minbucket = minbucket_values,
+    minprob = minprob_values,
+    maxdepth = maxdepth_values,
+    min_gain = min_gain_values
+  )
+
+  mtry_values <- mtry
+  if (is.null(mtry_values)) {
+    mtry_values <- first_column("mtry")
+  }
+  if (!is.null(mtry_values)) {
+    out[["mtry"]] <- as.integer(recycle_rows(mtry_values, "mtry"))
+  }
+
+  ntree_values <- ntree
+  if (is.null(ntree_values)) {
+    ntree_values <- first_column(c("ntree", "trees"))
+  }
+  if (!is.null(ntree_values)) {
+    out[["ntree"]] <- as.integer(recycle_rows(ntree_values, "ntree"))
+  }
+
+  unique(out)
+}
+
 #' Create cross-validation folds
 #'
 #' @description
@@ -181,6 +328,117 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
   }
 }
 
+.ci_metric_choices <- c("validation_gain", "brier", "log_loss", "roc_auc")
+
+.ci_match_metrics <- function(metric, metrics = NULL) {
+  if (!is.null(metrics)) {
+    metric <- metrics
+  }
+  metric <- match.arg(metric, choices = .ci_metric_choices, several.ok = TRUE)
+  unique(metric)
+}
+
+.ci_metric_directions <- function(metrics) {
+  directions <- stats::setNames(
+    vapply(metrics, .ci_metric_direction, character(1)),
+    metrics
+  )
+  if (length(directions) == 1L) {
+    unname(directions)
+  } else {
+    directions
+  }
+}
+
+#' Control cross-validation for greedy CI model tuning
+#'
+#' @description
+#' Creates a control object for [tune_ci_tree()] and [tune_ci_forest()]. The
+#' defaults keep tuning sequential and memory-light, while optional settings can
+#' save validation predictions, fitted fold models, extraction results, and
+#' request parallel execution on platforms where forked parallelism is
+#' available.
+#'
+#' @param verbose Logical; print fold-level progress.
+#' @param allow_par Logical; allow parallel execution when `num_cores > 1`.
+#' @param parallel_over Parallelization strategy. `"resamples"` and
+#'   `"everything"` are currently accepted; both are executed over
+#'   grid/resample tasks.
+#' @param save_pred Logical; save validation predictions for
+#'   `ci_collect_predictions()`.
+#' @param save_fit Logical; save fitted fold-level models.
+#' @param extract Optional function applied to each successfully fitted
+#'   fold-level model. For forests, the function receives a list with `forest`
+#'   and `surrogate` components.
+#' @param pkgs Optional character vector of packages to load on workers. Kept
+#'   for API compatibility with parallel workflows.
+#' @param num_cores Number of worker processes to request.
+#'
+#' @return A `control_ci_tune` object.
+#'
+#' @export
+control_ci_tune <- function(verbose = FALSE,
+                            allow_par = TRUE,
+                            parallel_over = c("resamples", "everything"),
+                            save_pred = FALSE,
+                            save_fit = FALSE,
+                            extract = NULL,
+                            pkgs = NULL,
+                            num_cores = 1L) {
+  parallel_over <- match.arg(parallel_over)
+
+  scalar_logical <- c(
+    verbose = verbose,
+    allow_par = allow_par,
+    save_pred = save_pred,
+    save_fit = save_fit
+  )
+  bad_logical <- names(scalar_logical)[
+    vapply(scalar_logical, function(x) length(x) != 1L || is.na(x), logical(1))
+  ]
+  if (length(bad_logical)) {
+    stop(
+      sprintf("`%s` must be a single non-missing logical value.", bad_logical[1L]),
+      call. = FALSE
+    )
+  }
+
+  if (!is.null(extract) && !is.function(extract)) {
+    stop("`extract` must be `NULL` or a function.", call. = FALSE)
+  }
+  if (!is.null(pkgs) && !is.character(pkgs)) {
+    stop("`pkgs` must be `NULL` or a character vector.", call. = FALSE)
+  }
+
+  num_cores <- as.integer(num_cores)[1L]
+  if (is.na(num_cores) || num_cores < 1L) {
+    stop("`num_cores` must be a positive integer.", call. = FALSE)
+  }
+
+  out <- list(
+    verbose = isTRUE(verbose),
+    allow_par = isTRUE(allow_par),
+    parallel_over = parallel_over,
+    save_pred = isTRUE(save_pred),
+    save_fit = isTRUE(save_fit),
+    extract = extract,
+    pkgs = pkgs,
+    num_cores = num_cores
+  )
+  class(out) <- "control_ci_tune"
+  out
+}
+
+.ci_normalize_tune_control <- function(control, verbose = FALSE) {
+  if (is.null(control)) {
+    return(control_ci_tune(verbose = verbose))
+  }
+  if (!inherits(control, "control_ci_tune")) {
+    stop("`control` must be created by `control_ci_tune()`.", call. = FALSE)
+  }
+  control
+}
+
 #' @noRd
 .ci_control_from_grid_row <- function(row) {
   ctrl <- ci_tree_control()
@@ -228,6 +486,340 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 
   type_grid <- data.frame(type = .ci_match_type(type), stringsAsFactors = FALSE)
   unique(merge(control_grid, type_grid, by = NULL))
+}
+
+.ci_default_grid <- function(model = c("tree", "forest"), ntree = NULL) {
+  model <- match.arg(model)
+  if (identical(model, "forest")) {
+    ci_tree_control_grid(ntree = ntree)
+  } else {
+    ci_tree_control_grid()
+  }
+}
+
+.ci_check_control_grid <- function(control_grid,
+                                   type,
+                                   model = c("tree", "forest"),
+                                   ntree = NULL,
+                                   seed = NULL) {
+  model <- match.arg(model)
+
+  if (is.null(control_grid)) {
+    control_grid <- .ci_default_grid(model, ntree = ntree)
+  } else if (is.numeric(control_grid) && length(control_grid) == 1L) {
+    size <- as.integer(control_grid)
+    if (is.na(size) || size < 1L) {
+      stop("Numeric `control_grid` must be a positive integer.", call. = FALSE)
+    }
+    control_grid <- .ci_default_grid(model, ntree = ntree)
+    if (nrow(control_grid) > size) {
+      if (!is.null(seed)) {
+        set.seed(as.integer(seed)[1L])
+      }
+      control_grid <- control_grid[sort(sample.int(nrow(control_grid), size)), ]
+    }
+  } else if (!is.data.frame(control_grid)) {
+    stop(
+      "`control_grid` must be `NULL`, a positive integer, or a data frame.",
+      call. = FALSE
+    )
+  }
+
+  control_grid <- as.data.frame(control_grid)
+  allowed <- c(names(ci_tree_control()), "type", "ntree")
+  extra <- setdiff(names(control_grid), allowed)
+  if (length(extra)) {
+    stop(
+      "Unknown column(s) in `control_grid`: ",
+      paste(extra, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  before <- nrow(control_grid)
+  control_grid <- unique(control_grid)
+  if (nrow(control_grid) < before) {
+    warning("Duplicate rows in `control_grid` were removed.", call. = FALSE)
+  }
+
+  data.table::as.data.table(.ci_expand_selection_grid(control_grid, type))
+}
+
+.ci_make_resamples <- function(data,
+                               v = 5L,
+                               strata = NULL,
+                               fold_id = NULL,
+                               resamples = NULL,
+                               seed = NULL) {
+  n <- nrow(data)
+  if (!is.null(resamples)) {
+    if (!is.null(fold_id)) {
+      stop("Use only one of `resamples` or `fold_id`.", call. = FALSE)
+    }
+    if (!is.data.frame(resamples) || !"splits" %in% names(resamples)) {
+      stop("`resamples` must be an rsample rset with a `splits` column.", call. = FALSE)
+    }
+
+    out <- lapply(seq_len(nrow(resamples)), function(i) {
+      split <- resamples$splits[[i]]
+      split_list <- unclass(split)
+      train_idx <- split_list$in_id
+      test_idx <- split_list$out_id
+      if (length(test_idx) == 1L && is.na(test_idx)) {
+        test_idx <- setdiff(seq_len(nrow(split_list$data)), train_idx)
+      }
+      if (nrow(split_list$data) != n) {
+        stop("Each rsample split must refer to the supplied `data`.", call. = FALSE)
+      }
+      id_cols <- grep("^id", names(resamples), value = TRUE)
+      fold_label <- if (length(id_cols)) {
+        paste(unlist(resamples[i, id_cols, drop = FALSE]), collapse = "_")
+      } else {
+        as.character(i)
+      }
+      list(
+        fold_id = fold_label,
+        fold_position = i,
+        train_idx = as.integer(train_idx),
+        test_idx = as.integer(test_idx)
+      )
+    })
+    if (length(out) < 2L) {
+      stop("`resamples` must contain at least two splits.", call. = FALSE)
+    }
+    return(out)
+  }
+
+  if (is.null(fold_id)) {
+    strata_vec <- .ci_extract_strata(strata, data)
+    fold_id <- ci_cv_folds(n, v = v, strata = strata_vec, seed = seed)
+  } else {
+    if (length(fold_id) != n) {
+      stop("`fold_id` must have one value per row in `data`.", call. = FALSE)
+    }
+    fold_id <- as.integer(fold_id)
+  }
+
+  fold_levels <- sort(unique(fold_id))
+  if (length(fold_levels) < 2L) {
+    stop("`fold_id` must contain at least two folds.", call. = FALSE)
+  }
+
+  lapply(seq_along(fold_levels), function(i) {
+    fold <- fold_levels[i]
+    list(
+      fold_id = fold,
+      fold_position = i,
+      train_idx = which(fold_id != fold),
+      test_idx = which(fold_id == fold)
+    )
+  })
+}
+
+.ci_resample_fold_id <- function(resamples, n) {
+  fold_id <- rep(NA_character_, n)
+  for (resample in resamples) {
+    fold_id[resample$test_idx] <- as.character(resample$fold_id)
+  }
+  fold_id
+}
+
+.ci_task_grid <- function(tuning_grid, resamples, seed = NULL) {
+  tasks <- vector("list", nrow(tuning_grid) * length(resamples))
+  out_id <- 1L
+  seed_base <- if (is.null(seed)) NULL else as.integer(seed)[1L]
+
+  for (g in seq_len(nrow(tuning_grid))) {
+    for (r in seq_along(resamples)) {
+      task_seed <- if (is.null(seed_base)) {
+        NULL
+      } else {
+        seed_base + (g - 1L) * length(resamples) + r
+      }
+      tasks[[out_id]] <- list(
+        grid_id = g,
+        grid_row = tuning_grid[g, , drop = FALSE],
+        resample = resamples[[r]],
+        seed = task_seed
+      )
+      out_id <- out_id + 1L
+    }
+  }
+
+  tasks
+}
+
+.ci_lapply_tasks <- function(tasks, fn, control) {
+  use_parallel <- isTRUE(control$allow_par) &&
+    control$num_cores > 1L &&
+    length(tasks) > 1L
+
+  if (use_parallel && identical(.Platform$OS.type, "unix")) {
+    return(parallel::mclapply(tasks, fn, mc.cores = control$num_cores))
+  }
+
+  if (use_parallel && identical(.Platform$OS.type, "windows")) {
+    warning(
+      "Parallel tuning currently falls back to sequential execution on Windows.",
+      call. = FALSE
+    )
+  }
+
+  lapply(tasks, fn)
+}
+
+.ci_capture <- function(expr) {
+  warnings <- character()
+  value <- tryCatch(
+    withCallingHandlers(
+      expr,
+      warning = function(w) {
+        warnings <<- c(warnings, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    ),
+    error = function(e) e
+  )
+
+  if (inherits(value, "error")) {
+    list(ok = FALSE, value = NULL, error = conditionMessage(value), warnings = warnings)
+  } else {
+    list(ok = TRUE, value = value, error = NA_character_, warnings = warnings)
+  }
+}
+
+.ci_notes_dt <- function(grid_id,
+                         fold_id,
+                         type,
+                         metric = NA_character_,
+                         stage,
+                         messages,
+                         class = "warning") {
+  if (!length(messages) || all(is.na(messages))) {
+    return(data.table::data.table())
+  }
+  data.table::data.table(
+    grid_id = grid_id,
+    fold_id = fold_id,
+    type = type,
+    metric = metric,
+    stage = stage,
+    class = class,
+    message = as.character(messages)
+  )
+}
+
+.ci_validation_root_table <- function(data,
+                                      weights,
+                                      resamples,
+                                      rank_name,
+                                      outcome_name,
+                                      types) {
+  data.table::rbindlist(lapply(resamples, function(resample) {
+    valid <- data[resample$test_idx, , drop = FALSE]
+    wt <- weights[resample$test_idx]
+    y <- cbind(rank = valid[[rank_name]], outcome = valid[[outcome_name]])
+    data.table::rbindlist(lapply(types, function(type) {
+      data.table::data.table(
+        fold_id = resample$fold_id,
+        type = type,
+        root_impurity = ci_factory(type)(y, wt)
+      )
+    }))
+  }))
+}
+
+.ci_lookup_root_impurity <- function(root_table, fold_id, type) {
+  idx <- root_table$fold_id == fold_id & root_table$type == type
+  if (any(idx)) {
+    root_table$root_impurity[which(idx)[1L]]
+  } else {
+    NULL
+  }
+}
+
+.ci_score_validation_gain <- function(fit,
+                                      new_data,
+                                      rank_name,
+                                      outcome_name,
+                                      weights,
+                                      type,
+                                      root_impurity = NULL) {
+  ci_tree_validation_gain(
+    fit = fit,
+    new_data = new_data,
+    rank_name = rank_name,
+    outcome_name = outcome_name,
+    weights = weights,
+    type = type,
+    root_impurity = root_impurity
+  )
+}
+
+.ci_score_prediction_metric <- function(metric, outcome, pred, weights) {
+  switch(metric,
+    brier = ci_brier_score(outcome, pred, weights),
+    log_loss = ci_log_loss(outcome, pred, weights),
+    roc_auc = ci_roc_auc(outcome, pred, weights),
+    stop("Unknown prediction metric.", call. = FALSE)
+  )
+}
+
+.ci_summarize_tuning <- function(fold_results, tuning_grid, selection_metric) {
+  summary_list <- lapply(seq_len(nrow(tuning_grid)), function(g) {
+    data.table::rbindlist(lapply(unique(fold_results$metric), function(metric) {
+      idx <- fold_results$grid_id == g & fold_results$metric == metric
+      score <- fold_results$score[idx]
+      n_terminal <- fold_results$n_terminal[idx]
+
+      row <- data.table::data.table(
+        grid_id = g,
+        metric = metric,
+        mean_score = if (all(is.na(score))) NA_real_ else mean(score, na.rm = TRUE),
+        sd_score = if (sum(!is.na(score)) <= 1L) {
+          NA_real_
+        } else {
+          stats::sd(score, na.rm = TRUE)
+        },
+        mean_terminal_nodes = if (all(is.na(n_terminal))) {
+          NA_real_
+        } else {
+          mean(n_terminal, na.rm = TRUE)
+        },
+        folds_completed = sum(!is.na(score)),
+        folds_failed = sum(!is.na(fold_results$fit_error[idx]))
+      )
+
+      for (nm in names(tuning_grid)) {
+        row[[nm]] <- tuning_grid[[nm]][g]
+      }
+      row
+    }), fill = TRUE)
+  })
+
+  summary <- data.table::rbindlist(summary_list, fill = TRUE)
+  metric_order <- match(summary$metric, c(selection_metric, .ci_metric_choices))
+  metric_order[is.na(metric_order)] <- length(.ci_metric_choices) + 1L
+  direction <- .ci_metric_direction(selection_metric)
+  selection_score <- summary$mean_score
+  selection_score[summary$metric != selection_metric] <- NA_real_
+  summary_order <- if (identical(direction, "maximize")) {
+    order(metric_order, -selection_score, -summary$mean_score, na.last = TRUE)
+  } else {
+    order(metric_order, selection_score, summary$mean_score, na.last = TRUE)
+  }
+  summary[summary_order, , drop = FALSE]
+}
+
+.ci_select_best_params <- function(summary, selection_metric) {
+  metric_summary <- summary[summary$metric == selection_metric, , drop = FALSE]
+  direction <- .ci_metric_direction(selection_metric)
+  ord <- if (identical(direction, "maximize")) {
+    order(-metric_summary$mean_score, -metric_summary$folds_completed, na.last = TRUE)
+  } else {
+    order(metric_summary$mean_score, -metric_summary$folds_completed, na.last = TRUE)
+  }
+  metric_summary[ord, , drop = FALSE][1L, , drop = FALSE]
 }
 
 #' @noRd
@@ -394,6 +986,9 @@ predict_ctree_ci_terminal_mean <- function(...) {
 #'   inequality index used for validation scoring. `"L"` uses observed
 #'   socioeconomic levels in the first response column rather than fractional
 #'   ranks.
+#' @param root_impurity Optional pre-computed root impurity for the validation
+#'   sample under the selected concentration-index criterion. If `NULL`, the
+#'   root impurity is computed from `new_data`.
 #'
 #' @return A numeric validation gain.
 #'
@@ -418,7 +1013,8 @@ ci_tree_validation_gain <- function(fit,
                                     rank_name,
                                     outcome_name,
                                     weights = NULL,
-                                    type = c("CI", "CIg", "CIc", "L")) {
+                                    type = c("CI", "CIg", "CIc", "L"),
+                                    root_impurity = NULL) {
   if (!inherits(fit, "party")) {
     stop("`fit` must inherit from class `party`.", call. = FALSE)
   }
@@ -452,7 +1048,9 @@ ci_tree_validation_gain <- function(fit,
   nodes <- nodes[keep]
 
   y <- cbind(rank = rank, outcome = outcome)
-  root_impurity <- ci_fun(y, weights)
+  if (is.null(root_impurity)) {
+    root_impurity <- ci_fun(y, weights)
+  }
   total_weight <- sum(weights)
 
   node_indices <- split(seq_along(weights), nodes)
@@ -628,16 +1226,23 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #'   used for stratified fold creation.
 #' @param fold_id Optional precomputed integer fold ids. When supplied, `v`,
 #'   `strata`, and `seed` are ignored for fold creation.
+#' @param resamples Optional `rsample` rset object. When supplied, it is used
+#'   instead of creating folds from `v`, `strata`, or `fold_id`.
 #' @param seed Optional random seed for fold creation.
-#' @param metric Selection metric. `validation_gain` and `roc_auc` are
-#'   maximized; `brier` and `log_loss` are minimized.
+#' @param metric Selection metric when a single metric is requested.
+#'   `validation_gain` and `roc_auc` are maximized; `brier` and `log_loss` are
+#'   minimized.
+#' @param metrics Optional character vector of one or more metrics to compute
+#'   during tuning. When supplied, the first metric is used for final model
+#'   selection.
 #' @param refit Should the best setting be refitted on the full data?
 #' @param verbose Should fold progress be printed?
+#' @param control Optional [control_ci_tune()] object controlling saved
+#'   predictions, saved fits, extraction hooks, and parallel settings.
 #' @param na.action A function for handling missing values.
 #' @param ... Additional arguments passed to [ci_tree()].
 #'
-#' @return A list with fold-level results, grid summary, best parameters, best
-#'   concentration-index type, best control, and optionally the refitted tree.
+#' @return A `ci_tree_tuning` object.
 #'
 #' @examples
 #' toy_data <- data.frame(
@@ -674,16 +1279,25 @@ tune_ci_tree <- function(formula,
                          v = 5L,
                          strata = NULL,
                          fold_id = NULL,
+                         resamples = NULL,
                          seed = NULL,
                          metric = c(
                            "validation_gain", "brier", "log_loss", "roc_auc"
                          ),
+                         metrics = NULL,
                          refit = TRUE,
                          verbose = FALSE,
+                         control = NULL,
                          na.action = stats::na.omit,
                          ...) {
   type <- .ci_match_type(type)
-  metric <- match.arg(metric)
+  metrics <- if (is.null(metrics) && missing(metric)) {
+    "validation_gain"
+  } else {
+    .ci_match_metrics(metric, metrics)
+  }
+  selection_metric <- metrics[1L]
+  control <- .ci_normalize_tune_control(control, verbose = verbose)
 
   seed_base <- NULL
   if (!is.null(seed)) {
@@ -709,44 +1323,45 @@ tune_ci_tree <- function(formula,
 
   weights <- .ci_default_weights(weights, n)
   outcome <- .ci_outcome_numeric(data[[outcome_name]], outcome_name)
+  tuning_grid <- .ci_check_control_grid(
+    control_grid,
+    type = type,
+    model = "tree",
+    seed = seed
+  )
+  resample_index <- .ci_make_resamples(
+    data = data,
+    v = v,
+    strata = strata,
+    fold_id = fold_id,
+    resamples = resamples,
+    seed = seed
+  )
+  fold_id_out <- .ci_resample_fold_id(resample_index, n)
+  root_table <- .ci_validation_root_table(
+    data = data,
+    weights = weights,
+    resamples = resample_index,
+    rank_name = rank_name,
+    outcome_name = outcome_name,
+    types = unique(tuning_grid$type)
+  )
+  tasks <- .ci_task_grid(tuning_grid, resample_index, seed = seed)
 
-  if (is.null(control_grid)) {
-    control_grid <- ci_tree_control_grid()
-  }
-  tuning_grid <- .ci_expand_selection_grid(control_grid, type)
-
-  if (is.null(fold_id)) {
-    strata_vec <- .ci_extract_strata(strata, data)
-    fold_id <- ci_cv_folds(n, v = v, strata = strata_vec, seed = seed)
-  } else {
-    if (length(fold_id) != n) {
-      stop("`fold_id` must have one value per row in `data`.", call. = FALSE)
-    }
-    fold_id <- as.integer(fold_id)
-  }
-
-  fold_levels <- sort(unique(fold_id))
-  if (length(fold_levels) < 2L) {
-    stop("`fold_id` must contain at least two folds.", call. = FALSE)
-  }
-
-  fold_results <- vector("list", nrow(tuning_grid) * length(fold_levels))
-  out_id <- 1L
-
-  for (g in seq_len(nrow(tuning_grid))) {
-    grid_row <- tuning_grid[g, , drop = FALSE]
-    control <- .ci_control_from_grid_row(grid_row)
+  run_task <- function(task) {
+    g <- task$grid_id
+    grid_row <- task$grid_row
+    tree_control <- .ci_control_from_grid_row(grid_row)
     this_type <- as.character(grid_row$type[1L])
+    fold <- task$resample$fold_id
+    train_idx <- task$resample$train_idx
+    test_idx <- task$resample$test_idx
+    notes <- list()
 
-    for (fold in fold_levels) {
-      train_idx <- which(fold_id != fold)
-      test_idx <- which(fold_id == fold)
-      fold_position <- match(fold, fold_levels)
-
-      fit_result <- tryCatch({
-        if (!is.null(seed_base)) {
-          set.seed(seed_base + (g - 1L) * length(fold_levels) + fold_position)
-        }
+    fit_result <- .ci_capture({
+      if (!is.null(task$seed)) {
+        set.seed(task$seed)
+      }
         fit <- ci_tree(
           formula = formula,
           data = data[train_idx, , drop = FALSE],
@@ -754,114 +1369,186 @@ tune_ci_tree <- function(formula,
           outcome_name = outcome_name,
           weights = weights[train_idx],
           type = this_type,
-          control = control,
+          control = tree_control,
           na.action = na.action,
           ...
         )
-        list(ok = TRUE, fit = fit, error = NA_character_)
-      }, error = function(e) {
-        list(ok = FALSE, fit = NULL, error = conditionMessage(e))
-      })
+        fit
+    })
 
-      score <- NA_real_
-      n_terminal <- NA_integer_
+    notes[[length(notes) + 1L]] <- .ci_notes_dt(
+      g, fold, this_type, stage = "fit", messages = fit_result$warnings
+    )
+    if (!isTRUE(fit_result$ok)) {
+      notes[[length(notes) + 1L]] <- .ci_notes_dt(
+        g, fold, this_type, stage = "fit", messages = fit_result$error, class = "error"
+      )
+    }
 
-      if (isTRUE(fit_result$ok)) {
-        if (identical(metric, "validation_gain")) {
-          score <- ci_tree_validation_gain(
-            fit = fit_result$fit,
-            new_data = data[test_idx, , drop = FALSE],
-            rank_name = rank_name,
-            outcome_name = outcome_name,
-            weights = weights[test_idx],
-            type = this_type
-          )
-        } else {
-          pred <- predict_ci_tree_terminal_mean(
-            fit = fit_result$fit,
+    score_rows <- vector("list", length(metrics))
+    prediction_rows <- data.table::data.table()
+    extract_rows <- data.table::data.table()
+    fit_rows <- data.table::data.table()
+    pred <- NULL
+    n_terminal <- NA_integer_
+
+    if (isTRUE(fit_result$ok)) {
+      n_terminal <- length(partykit::nodeids(fit_result$value, terminal = TRUE))
+      needs_pred <- control$save_pred || any(metrics %in% c("brier", "log_loss", "roc_auc"))
+      if (needs_pred) {
+        pred_result <- .ci_capture({
+          predict_ci_tree_terminal_mean(
+            fit = fit_result$value,
             train_data = data[train_idx, , drop = FALSE],
             new_data = data[test_idx, , drop = FALSE],
             outcome_name = outcome_name,
             weights = weights[train_idx]
           )
-          score <- switch(metric,
-            brier = ci_brier_score(outcome[test_idx], pred, weights[test_idx]),
-            log_loss = ci_log_loss(outcome[test_idx], pred, weights[test_idx]),
-            roc_auc = ci_roc_auc(outcome[test_idx], pred, weights[test_idx])
+        })
+        notes[[length(notes) + 1L]] <- .ci_notes_dt(
+          g, fold, this_type, stage = "predict", messages = pred_result$warnings
+        )
+        if (isTRUE(pred_result$ok)) {
+          pred <- pred_result$value
+          if (isTRUE(control$save_pred)) {
+            prediction_rows <- data.table::data.table(
+              grid_id = g,
+              fold_id = fold,
+              type = this_type,
+              row_id = test_idx,
+              outcome = outcome[test_idx],
+              weight = weights[test_idx],
+              .pred = pred
+            )
+          }
+        } else {
+          notes[[length(notes) + 1L]] <- .ci_notes_dt(
+            g, fold, this_type, stage = "predict", messages = pred_result$error,
+            class = "error"
           )
         }
-
-        n_terminal <- length(partykit::nodeids(fit_result$fit, terminal = TRUE))
       }
 
-      row <- data.table::data.table(
+      if (!is.null(control$extract)) {
+        extract_result <- .ci_capture(control$extract(fit_result$value))
+        notes[[length(notes) + 1L]] <- .ci_notes_dt(
+          g, fold, this_type, stage = "extract", messages = extract_result$warnings
+        )
+        if (isTRUE(extract_result$ok)) {
+          extract_rows <- data.table::data.table(
+            grid_id = g,
+            fold_id = fold,
+            type = this_type,
+            .extracts = list(extract_result$value)
+          )
+        } else {
+          notes[[length(notes) + 1L]] <- .ci_notes_dt(
+            g, fold, this_type, stage = "extract", messages = extract_result$error,
+            class = "error"
+          )
+        }
+      }
+
+      if (isTRUE(control$save_fit)) {
+        fit_rows <- data.table::data.table(
+          grid_id = g,
+          fold_id = fold,
+          type = this_type,
+          .fit = list(fit_result$value)
+        )
+      }
+    }
+
+    for (i in seq_along(metrics)) {
+      this_metric <- metrics[i]
+      score <- NA_real_
+      if (isTRUE(fit_result$ok)) {
+        score_result <- .ci_capture({
+          if (identical(this_metric, "validation_gain")) {
+            root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
+            .ci_score_validation_gain(
+              fit = fit_result$value,
+              new_data = data[test_idx, , drop = FALSE],
+              rank_name = rank_name,
+              outcome_name = outcome_name,
+              weights = weights[test_idx],
+              type = this_type,
+              root_impurity = root_impurity
+            )
+          } else if (!is.null(pred)) {
+            .ci_score_prediction_metric(
+              this_metric,
+              outcome[test_idx],
+              pred,
+              weights[test_idx]
+            )
+          } else {
+            NA_real_
+          }
+        })
+        notes[[length(notes) + 1L]] <- .ci_notes_dt(
+          g, fold, this_type, metric = this_metric, stage = "score",
+          messages = score_result$warnings
+        )
+        if (isTRUE(score_result$ok)) {
+          score <- score_result$value
+        } else {
+          notes[[length(notes) + 1L]] <- .ci_notes_dt(
+            g, fold, this_type, metric = this_metric, stage = "score",
+            messages = score_result$error, class = "error"
+          )
+        }
+      }
+
+      score_rows[[i]] <- data.table::data.table(
         grid_id = g,
         fold_id = fold,
-        metric = metric,
+        metric = this_metric,
         score = score,
         n_terminal = n_terminal,
         fit_error = fit_result$error
       )
       for (nm in names(tuning_grid)) {
-        row[[nm]] <- grid_row[[nm]][1L]
+        score_rows[[i]][[nm]] <- grid_row[[nm]][1L]
       }
-      fold_results[[out_id]] <- row
 
-      if (isTRUE(verbose)) {
+      if (isTRUE(control$verbose)) {
         message(sprintf(
           "[grid %d/%d, fold %s, type %s] %s = %s",
           g,
           nrow(tuning_grid),
           fold,
           this_type,
-          metric,
+          this_metric,
           if (is.na(score)) "NA" else format(round(score, 5), nsmall = 5)
         ))
       }
-
-      out_id <- out_id + 1L
     }
-  }
 
-  fold_results <- data.table::rbindlist(fold_results, fill = TRUE)
-  summary_list <- lapply(seq_len(nrow(tuning_grid)), function(g) {
-    idx <- fold_results$grid_id == g
-    score <- fold_results$score[idx]
-    n_terminal <- fold_results$n_terminal[idx]
-
-    row <- data.table::data.table(
-      grid_id = g,
-      mean_score = if (all(is.na(score))) NA_real_ else mean(score, na.rm = TRUE),
-      sd_score = if (sum(!is.na(score)) <= 1L) {
-        NA_real_
-      } else {
-        stats::sd(score, na.rm = TRUE)
-      },
-      mean_terminal_nodes = if (all(is.na(n_terminal))) {
-        NA_real_
-      } else {
-        mean(n_terminal, na.rm = TRUE)
-      },
-      folds_completed = sum(!is.na(score)),
-      folds_failed = sum(!is.na(fold_results$fit_error[idx]))
+    list(
+      fold_results = data.table::rbindlist(score_rows, fill = TRUE),
+      predictions = prediction_rows,
+      extracts = extract_rows,
+      fits = fit_rows,
+      notes = data.table::rbindlist(notes, fill = TRUE)
     )
-
-    for (nm in names(tuning_grid)) {
-      row[[nm]] <- tuning_grid[[nm]][g]
-    }
-    row
-  })
-  summary <- data.table::rbindlist(summary_list, fill = TRUE)
-
-  direction <- .ci_metric_direction(metric)
-  summary_order <- if (identical(direction, "maximize")) {
-    order(-summary$mean_score, -summary$folds_completed, na.last = TRUE)
-  } else {
-    order(summary$mean_score, -summary$folds_completed, na.last = TRUE)
   }
-  summary <- summary[summary_order, , drop = FALSE]
 
-  best_params <- summary[1L, , drop = FALSE]
+  task_results <- .ci_lapply_tasks(tasks, run_task, control)
+  fold_results <- data.table::rbindlist(
+    lapply(task_results, `[[`, "fold_results"),
+    fill = TRUE
+  )
+  predictions <- data.table::rbindlist(
+    lapply(task_results, `[[`, "predictions"),
+    fill = TRUE
+  )
+  extracts <- data.table::rbindlist(lapply(task_results, `[[`, "extracts"), fill = TRUE)
+  fits <- data.table::rbindlist(lapply(task_results, `[[`, "fits"), fill = TRUE)
+  notes <- data.table::rbindlist(lapply(task_results, `[[`, "notes"), fill = TRUE)
+
+  summary <- .ci_summarize_tuning(fold_results, tuning_grid, selection_metric)
+  best_params <- .ci_select_best_params(summary, selection_metric)
   best_control <- NULL
   best_fit <- NULL
   best_type <- NA_character_
@@ -872,7 +1559,7 @@ tune_ci_tree <- function(formula,
 
     if (isTRUE(refit)) {
       if (!is.null(seed_base)) {
-        set.seed(seed_base + nrow(tuning_grid) * length(fold_levels) + 1L)
+        set.seed(seed_base + nrow(tuning_grid) * length(resample_index) + 1L)
       }
       best_fit <- ci_tree(
         formula = formula,
@@ -895,12 +1582,139 @@ tune_ci_tree <- function(formula,
     best_type = best_type,
     best_control = best_control,
     best_fit = best_fit,
-    metric = metric,
-    metric_direction = direction,
+    metric = metrics,
+    metric_direction = .ci_metric_directions(metrics),
+    selection_metric = selection_metric,
     model = "tree",
-    fold_id = fold_id,
-    control_grid = data.table::as.data.table(tuning_grid)
+    fold_id = fold_id_out,
+    resamples = resample_index,
+    control_grid = data.table::as.data.table(tuning_grid),
+    predictions = predictions,
+    extracts = extracts,
+    fits = fits,
+    notes = notes,
+    validation_roots = root_table,
+    control = control
   )
   class(out) <- c("ci_tree_tuning", class(out))
   out
+}
+
+#' @noRd
+.ci_assert_tuning <- function(x) {
+  if (!inherits(x, "ci_tree_tuning")) {
+    stop("`x` must be a tuning object returned by `tune_ci_tree()` or `tune_ci_forest()`.",
+      call. = FALSE
+    )
+  }
+}
+
+#' Collect tuning metrics
+#'
+#' @param x A tuning object returned by [tune_ci_tree()] or [tune_ci_forest()].
+#' @param summarize Logical; return grid-level summaries when `TRUE`, or
+#'   fold-level metrics when `FALSE`.
+#' @param metric Optional metric name used to filter the result.
+#' @param ... Reserved for future extensions.
+#'
+#' @return A `data.table`.
+#'
+#' @export
+ci_collect_metrics <- function(x, summarize = TRUE, metric = NULL, ...) {
+  .ci_assert_tuning(x)
+  out <- if (isTRUE(summarize)) {
+    data.table::copy(x$summary)
+  } else {
+    data.table::copy(x$fold_results)
+  }
+  if (!is.null(metric)) {
+    out <- out[out$metric %in% metric, , drop = FALSE]
+  }
+  out
+}
+
+#' Show the best tuning results
+#'
+#' @inheritParams ci_collect_metrics
+#' @param n Number of rows to return.
+#'
+#' @return A `data.table`.
+#'
+#' @export
+ci_show_best <- function(x, metric = NULL, n = 5L, ...) {
+  .ci_assert_tuning(x)
+  metric <- if (is.null(metric)) x$selection_metric else metric[1L]
+  out <- ci_collect_metrics(x, summarize = TRUE, metric = metric)
+  direction <- .ci_metric_direction(metric)
+  ord <- if (identical(direction, "maximize")) {
+    order(-out$mean_score, -out$folds_completed, na.last = TRUE)
+  } else {
+    order(out$mean_score, -out$folds_completed, na.last = TRUE)
+  }
+  out <- out[ord, , drop = FALSE]
+  utils::head(out, as.integer(n)[1L])
+}
+
+#' Select the best tuning parameters
+#'
+#' @inheritParams ci_collect_metrics
+#'
+#' @return A one-row `data.table`.
+#'
+#' @export
+ci_select_best <- function(x, metric = NULL, ...) {
+  .ci_assert_tuning(x)
+  metric <- if (is.null(metric)) x$selection_metric else metric[1L]
+  ci_show_best(x, metric = metric, n = 1L)
+}
+
+#' Collect tuning notes
+#'
+#' @inheritParams ci_collect_metrics
+#'
+#' @return A `data.table` with warnings and errors captured during tuning.
+#'
+#' @export
+ci_collect_notes <- function(x, ...) {
+  .ci_assert_tuning(x)
+  data.table::copy(x$notes)
+}
+
+#' Collect saved validation predictions
+#'
+#' @inheritParams ci_collect_metrics
+#'
+#' @return A `data.table`. Empty unless `control_ci_tune(save_pred = TRUE)` was
+#'   used.
+#'
+#' @export
+ci_collect_predictions <- function(x, ...) {
+  .ci_assert_tuning(x)
+  data.table::copy(x$predictions)
+}
+
+#' Collect saved extraction results
+#'
+#' @inheritParams ci_collect_metrics
+#'
+#' @return A `data.table`. Empty unless `control_ci_tune(extract = ...)` was
+#'   used.
+#'
+#' @export
+ci_collect_extracts <- function(x, ...) {
+  .ci_assert_tuning(x)
+  data.table::copy(x$extracts)
+}
+
+#' Collect saved fold-level fits
+#'
+#' @inheritParams ci_collect_metrics
+#'
+#' @return A `data.table`. Empty unless `control_ci_tune(save_fit = TRUE)` was
+#'   used.
+#'
+#' @export
+ci_collect_fits <- function(x, ...) {
+  .ci_assert_tuning(x)
+  data.table::copy(x$fits)
 }

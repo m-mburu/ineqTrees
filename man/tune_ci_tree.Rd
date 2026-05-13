@@ -17,10 +17,13 @@ tune_ci_tree(
   v = 5L,
   strata = NULL,
   fold_id = NULL,
+  resamples = NULL,
   seed = NULL,
   metric = c("validation_gain", "brier", "log_loss", "roc_auc"),
+  metrics = NULL,
   refit = TRUE,
   verbose = FALSE,
+  control = NULL,
   na.action = stats::na.omit,
   ...
 )
@@ -55,22 +58,32 @@ used for stratified fold creation.}
 \item{fold_id}{Optional precomputed integer fold ids. When supplied, \code{v},
 \code{strata}, and \code{seed} are ignored for fold creation.}
 
+\item{resamples}{Optional \code{rsample} rset object. When supplied, it is used
+instead of creating folds from \code{v}, \code{strata}, or \code{fold_id}.}
+
 \item{seed}{Optional random seed for fold creation.}
 
-\item{metric}{Selection metric. \code{validation_gain} and \code{roc_auc} are
-maximized; \code{brier} and \code{log_loss} are minimized.}
+\item{metric}{Selection metric when a single metric is requested.
+\code{validation_gain} and \code{roc_auc} are maximized; \code{brier} and \code{log_loss} are
+minimized.}
+
+\item{metrics}{Optional character vector of one or more metrics to compute
+during tuning. When supplied, the first metric is used for final model
+selection.}
 
 \item{refit}{Should the best setting be refitted on the full data?}
 
 \item{verbose}{Should fold progress be printed?}
+
+\item{control}{Optional \code{\link[=control_ci_tune]{control_ci_tune()}} object controlling saved
+predictions, saved fits, extraction hooks, and parallel settings.}
 
 \item{na.action}{A function for handling missing values.}
 
 \item{...}{Additional arguments passed to \code{\link[=ci_tree]{ci_tree()}}.}
 }
 \value{
-A list with fold-level results, grid summary, best parameters, best
-concentration-index type, best control, and optionally the refitted tree.
+A \code{ci_tree_tuning} object.
 
 A \code{ci_tree_tuning} object.
 }

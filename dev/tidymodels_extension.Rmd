@@ -1,0 +1,769 @@
+---
+title: "Tidymodels extension for inequality-aware trees"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r development, include=FALSE}
+library(testthat)
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+
+<!--
+ Source of truth for the tidymodels extension article.
+ This file is intentionally written as a narrative vignette, not as a function
+ reference page. Run the inflate chunk at the bottom after editing.
+-->
+
+```{r development-load}
+pkgload::load_all(export_all = FALSE)
+```
+
+# Introduction
+
+`ineqTrees` is built around an applied question: how is a health outcome
+distributed across a socioeconomic ranking, and which interpretable subgroups
+account for the remaining inequality?
+
+The package-native workflow in `ineqTrees` answers that question directly with
+`ci_tree()`, `ci_forest()`, and the package's own tuning helpers. In some
+projects, however, it is useful to fit the same models inside the tidymodels
+framework so they can move through `parsnip`, `workflows`, `rsample`, `dials`,
+and `tune`.
+
+This article follows the same Kenya child-survival example used in the core
+introductory vignette. It keeps the same substantive concepts:
+
+- the root concentration index as the baseline inequality benchmark;
+- concentration-index tree criteria such as `"CI"`, `"CIg"`, `"CIc"`, and
+  `"L"`;
+- interpretable tree plots and terminal-node summaries;
+- forest risk estimates and model-based inequality summaries.
+
+The difference is that the model specifications, resampling, and tuning are now
+handled through tidymodels.
+
+```{r setup}
+library(ineqTrees)
+library(parsnip)
+library(workflows)
+library(rsample)
+library(dials)
+library(tune)
+library(yardstick)
+library(hardhat)
+library(data.table)
+
+register_ineqtrees_parsnip()
+
+data(kenya, package = "ineqTrees")
+setDT(kenya)
+```
+
+## 1. Prepare the analysis table
+
+The ingredients are the same as in the package-native workflow: a
+socioeconomic rank, a health outcome, interpretable predictors, and case
+weights.
+
+```{r prepare-analysis-data}
+analysis_vars <- c(
+  "wealth",
+  "deadu5_num",
+  "rural",
+  "ed",
+  "reg",
+  "unskilled",
+  "sample_weight"
+)
+
+kenya_child <- kenya[
+  complete.cases(kenya[, ..analysis_vars]),
+  ..analysis_vars
+]
+
+kenya_child[
+  ,
+  .(
+    children = .N,
+    mortality = mean(deadu5_num),
+    mean_wealth = mean(wealth)
+  ),
+  by = rural
+]
+```
+
+For a fast article build we use a reproducible subset. The analysis object is
+stored as a regular data frame because that is the most natural input type for
+tidymodels workflows.
+
+```{r sample-analysis-data}
+set.seed(20260516)
+
+kenya_model <- as.data.frame(
+  kenya_child[sample.int(.N, min(800L, .N))]
+)
+
+kenya_model$case_wt <- hardhat::importance_weights(kenya_model$sample_weight)
+
+predictors <- c("rural", "ed", "reg", "unskilled")
+criterion_types <- c("CI", "CIg", "CIc", "L")
+predictor_formula <- deadu5_num ~ wealth + rural + ed + reg + unskilled
+
+plot_labels <- c(
+  rural = "Residence",
+  ed = "Mother education",
+  reg = "Province",
+  unskilled = "Mother occupation"
+)
+
+head(kenya_model[, c("wealth", "deadu5_num", "rural", "ed", "case_wt")])
+```
+
+The formula is written in the tidymodels style, with `deadu5_num` as the
+outcome and `wealth` on the right-hand side. The `ineqTrees` parsnip bridge
+uses `wealth` as `rank_name`, rebuilds the two-column concentration-index
+response internally, and removes `wealth` from the split-search predictors.
+
+## 2. Measure socioeconomic inequality at the root
+
+The root concentration index is still the benchmark before any subgrouping. It
+gives the level of whole-sample inequality that the tree or forest will try to
+explain.
+
+```{r root-concentration-index}
+root_response <- cbind(
+  rank = kenya_model$wealth,
+  outcome = kenya_model$deadu5_num
+)
+
+root_weights <- kenya_model$sample_weight
+
+whole_sample_ci <- data.table(criterion = criterion_types)[
+  ,
+  .(
+    root_ci_index = ci_factory(criterion)(root_response, root_weights)
+  ),
+  by = criterion
+]
+
+whole_sample_ci
+```
+
+Each concentration-index criterion has its own scale, so fitted models should
+always be compared with the root benchmark for the same `type`.
+
+## 3. Fit trees with different concentration indices through tidymodels
+
+The first question is the same one asked in the package-native vignette: what
+happens if the tree is fitted under different concentration-index objectives?
+
+Here the model specification is created with `decision_tree()` and
+`set_engine("ineqTrees", ...)`, but the underlying fitted object is still a
+`ci_tree`. That means the same validation and plotting methods remain
+available after fitting.
+
+```{r fit-index-specific-trees}
+fit_tree_with_type <- function(ci_type) {
+  spec <- decision_tree(
+    tree_depth = 3L,
+    min_n = 60L
+  ) |>
+    set_engine(
+      "ineqTrees",
+      rank_name = "wealth",
+      outcome_name = "deadu5_num",
+      type = ci_type,
+      minsplit = 120L,
+      minprob = 0.05,
+      min_gain = 0
+    ) |>
+    set_mode("regression")
+
+  fit(
+    spec,
+    predictor_formula,
+    data = kenya_model,
+    case_weights = kenya_model$case_wt
+  )
+}
+
+tree_by_type <- setNames(
+  lapply(criterion_types, fit_tree_with_type),
+  criterion_types
+)
+
+type_comparison <- rbindlist(lapply(names(tree_by_type), function(ci_type) {
+  fit_object <- tree_by_type[[ci_type]]$fit
+
+  data.table(
+    type = ci_type,
+    terminal_nodes = length(partykit::nodeids(fit_object, terminal = TRUE)),
+    validation_gain = ci_tree_validation_gain(
+      fit = fit_object,
+      new_data = kenya_model,
+      rank_name = "wealth",
+      outcome_name = "deadu5_num",
+      weights = kenya_model$sample_weight,
+      type = ci_type
+    )
+  )
+}))
+
+type_comparison[order(-validation_gain)]
+```
+
+This comparison is still on the inequality scale: larger validation gain means
+the terminal-node partition removes more concentration-index impurity than the
+unsplit root. In the next section we work with a single interpretable tree so
+the mechanics of the tidymodels fit are easy to see.
+
+## 4. Fit a single inequality-aware tree
+
+`decision_tree()` supplies the generic tree controls. The engine-specific
+arguments describe the inequality problem itself: which column is the rank,
+which column is the outcome, and which concentration-index criterion should be
+optimized.
+
+```{r tree-spec}
+tree_spec <- decision_tree(
+  tree_depth = 3L,
+  min_n = 60L
+) |>
+  set_engine(
+    "ineqTrees",
+    rank_name = "wealth",
+    outcome_name = "deadu5_num",
+    type = "CI",
+    minsplit = 120L,
+    minprob = 0.05,
+    min_gain = 0
+  ) |>
+  set_mode("regression")
+
+tree_spec
+```
+
+```{r fit-ci-tree}
+tree_fit <- fit(
+  tree_spec,
+  predictor_formula,
+  data = kenya_model,
+  case_weights = kenya_model$case_wt
+)
+
+tree_fit$fit
+```
+
+The fitted object inside the parsnip model fit is a `ci_tree`, so the usual
+terminal-node summary remains available.
+
+```{r terminal-summary}
+terminal_summary <- ci_tree_terminal_summary(tree_fit$fit)
+
+terminal_summary[
+  order(-outcome_percent),
+  .(node, n, depth, ci, outcome_percent, rule)
+]
+```
+
+## 5. Plot the fitted tree
+
+Because the underlying engine fit is still a `ci_tree`, the same plot method
+works after a tidymodels fit.
+
+The plain call is useful when you want a quick look at the tree structure.
+
+```{r plot-ci-tree-basic, fig.width=12, fig.height=7, fig.alt="A basic concentration-index tree fitted through the tidymodels framework."}
+plot(tree_fit$fit)
+```
+
+For reporting, the more useful plot is the enriched version with readable
+labels and terminal-node summaries.
+
+```{r plot-ci-tree, fig.width=12, fig.height=7, fig.alt="A concentration-index tree fitted through tidymodels for the Kenya under-five mortality example."}
+plot(
+  tree_fit$fit,
+  data = kenya_model,
+  var_labels = plot_labels,
+  plural_overrides = c(Province = "provinces"),
+  terminal_stats = list(
+    n = nrow,
+    mortality = function(df) mean(df$deadu5_num),
+    mean_wealth = function(df) mean(df$wealth)
+  ),
+  stat_labels = c(
+    n = "n",
+    mortality = "% death",
+    mean_wealth = "mean wealth"
+  ),
+  stat_formatters = list(
+    mortality = function(x) sprintf("%.1f%%", 100 * x),
+    mean_wealth = function(x) sprintf("%.2f", x)
+  )
+)
+```
+
+The important point is that tidymodels does not take away the interpretability
+machinery already built into `ineqTrees`; it just changes how the model is
+specified and managed.
+
+## 6. Use the fitted tree as a prediction rule
+
+The tidymodels fit returns the same kinds of predictions you would expect from
+other parsnip regression models. Numeric predictions come back as `.pred`, and
+the raw tree partition can be recovered from the same fitted object.
+
+```{r tree-predictions}
+tree_pred <- predict(tree_fit, new_data = kenya_model)
+tree_nodes <- as.integer(
+  predict(tree_fit, new_data = kenya_model, type = "raw")
+)
+
+data.table::as.data.table(kenya_model)[
+  ,
+  .(
+    observed_mortality = mean(deadu5_num),
+    mean_tree_risk = mean(tree_pred$.pred)
+  )
+]
+```
+
+That raw node partition is what lets us reconnect the tidymodels fit to the
+inequality interpretation. `ci_gain()` computes the concentration-index gain of
+the fitted partition.
+
+```{r tree-ci-gain}
+tree_scores <- data.frame(
+  truth = kenya_model$deadu5_num,
+  pred = tree_pred$.pred,
+  rank = kenya_model$wealth,
+  node = tree_nodes,
+  weight = kenya_model$sample_weight
+)
+
+ci_gain(
+  tree_scores,
+  truth = truth,
+  estimate = pred,
+  rank = rank,
+  node = node,
+  case_weights = weight,
+  type = "CI"
+)
+```
+
+## 7. Tune an inequality-aware tree with tidymodels
+
+In the package-native workflow, `tune_ci_tree()` handles concentration-index
+tree tuning directly. In tidymodels, the equivalent pieces are a tunable
+specification, a workflow, a resampling object, and a tuning grid.
+
+The resampling design is the same idea as before: keep the outcome reasonably
+balanced across folds and score candidate models on held-out data.
+
+```{r make-tree-resamples}
+set.seed(20260516)
+
+tree_folds <- vfold_cv(
+  kenya_model,
+  v = 3L,
+  strata = deadu5_num
+)
+
+tree_folds
+```
+
+```{r tunable-tree-spec}
+tree_tune_spec <- decision_tree(
+  tree_depth = tune(),
+  min_n = tune()
+) |>
+  set_engine(
+    "ineqTrees",
+    rank_name = "wealth",
+    outcome_name = "deadu5_num",
+    type = "CI",
+    minsplit = 120L,
+    minprob = 0.05,
+    min_gain = 0
+  ) |>
+  set_mode("regression")
+
+tree_wf <- workflow() |>
+  add_model(tree_tune_spec) |>
+  add_formula(predictor_formula) |>
+  add_case_weights(case_wt)
+
+tree_grid <- grid_regular(
+  tree_depth(range = c(2L, 4L)),
+  min_n(range = c(40L, 90L)),
+  levels = 2L
+)
+
+tree_grid
+```
+
+`tune_grid()` works on the prediction scale, so the simplest metrics inside the
+tuning loop are standard regression scores such as RMSE and MAE. Exact
+concentration-index gain can then be computed for the finalized tree, where the
+terminal-node partition is available.
+
+```{r tune-tree}
+set.seed(20260516)
+
+tree_tuned <- tune_grid(
+  tree_wf,
+  resamples = tree_folds,
+  grid = tree_grid,
+  metrics = metric_set(rmse, mae),
+  control = control_grid(save_pred = TRUE)
+)
+
+collect_metrics(tree_tuned)
+```
+
+```{r inspect-tree-tuning}
+show_best(tree_tuned, metric = "rmse", n = 4)
+
+best_tree <- select_best(tree_tuned, metric = "rmse")
+best_tree
+```
+
+After choosing the best settings, the workflow is finalized and refitted on the
+full analysis table. The final workflow still contains a `ci_tree` engine fit,
+so the fitted partition can again be scored with `ci_gain()`.
+
+```{r finalize-tree}
+final_tree_wf <- finalize_workflow(tree_wf, best_tree)
+final_tree_fit <- fit(final_tree_wf, data = kenya_model)
+final_tree_parsnip <- extract_fit_parsnip(final_tree_fit)
+
+final_tree_scores <- data.frame(
+  truth = kenya_model$deadu5_num,
+  pred = predict(final_tree_fit, new_data = kenya_model)$.pred,
+  rank = kenya_model$wealth,
+  node = as.integer(
+    predict(final_tree_parsnip, new_data = kenya_model, type = "raw")
+  ),
+  weight = kenya_model$sample_weight
+)
+
+ci_gain(
+  final_tree_scores,
+  truth = truth,
+  estimate = pred,
+  rank = rank,
+  node = node,
+  case_weights = weight,
+  type = "CI"
+)
+```
+
+## 8. Fit and visualize an inequality-aware forest
+
+The forest is fitted through the same bridge, but now the generic tidymodels
+arguments are `trees`, `mtry`, and `min_n`.
+
+```{r forest-spec}
+forest_spec <- rand_forest(
+  trees = 20L,
+  mtry = 2L,
+  min_n = 60L
+) |>
+  set_engine(
+    "ineqTrees",
+    rank_name = "wealth",
+    outcome_name = "deadu5_num",
+    type = "CI",
+    minsplit = 120L,
+    minprob = 0.05,
+    maxdepth = 3L,
+    perturb = list(replace = FALSE, fraction = 0.632)
+  ) |>
+  set_mode("regression")
+
+forest_spec
+```
+
+```{r fit-forest}
+set.seed(20260516)
+
+forest_fit <- fit(
+  forest_spec,
+  predictor_formula,
+  data = kenya_model,
+  case_weights = kenya_model$case_wt
+)
+
+ci_forest_summary(forest_fit$fit)
+```
+
+The forest produces fitted risks. Because an ensemble has no single terminal
+node assignment, we first keep the fitted risk table and then score a compact
+surrogate tree with `ci_gain()`.
+
+```{r forest-predictions}
+forest_pred <- predict(forest_fit, new_data = kenya_model)
+
+forest_scores <- data.frame(
+  truth = kenya_model$deadu5_num,
+  pred = forest_pred$.pred,
+  rank = kenya_model$wealth,
+  weight = kenya_model$sample_weight
+)
+
+head(forest_scores)
+```
+
+There is no single-tree object to plot for the forest itself, because the fit
+is an ensemble. The practical way to visualize the forest is to fit a small
+surrogate inequality-aware tree to the forest predictions and then plot that
+tree.
+
+```{r forest-surrogate}
+surrogate_data <- kenya_model
+surrogate_data$forest_risk <- forest_pred$.pred
+
+surrogate_spec <- decision_tree(
+  tree_depth = 3L,
+  min_n = 60L
+) |>
+  set_engine(
+    "ineqTrees",
+    rank_name = "wealth",
+    outcome_name = "forest_risk",
+    type = "CI",
+    minsplit = 120L,
+    minprob = 0.05,
+    min_gain = 0
+  ) |>
+  set_mode("regression")
+
+surrogate_fit <- fit(
+  surrogate_spec,
+  forest_risk ~ wealth + rural + ed + reg + unskilled,
+  data = surrogate_data,
+  case_weights = surrogate_data$case_wt
+)
+
+ci_tree_terminal_summary(surrogate_fit$fit)[
+  ,
+  .(node, n, ci, outcome_mean, rule)
+]
+```
+
+The surrogate tree gives the forest predictions an interpretable partition.
+That partition can be scored with the same concentration-index gain metric used
+for the single tree.
+
+```{r forest-surrogate-ci-gain}
+surrogate_nodes <- as.integer(predict(
+  surrogate_fit,
+  new_data = surrogate_data,
+  type = "raw"
+))
+
+forest_gain_scores <- data.frame(
+  truth = surrogate_data$deadu5_num,
+  pred = surrogate_data$forest_risk,
+  rank = surrogate_data$wealth,
+  node = surrogate_nodes,
+  weight = surrogate_data$sample_weight
+)
+
+ci_gain(
+  forest_gain_scores,
+  truth = truth,
+  estimate = pred,
+  rank = rank,
+  node = node,
+  case_weights = weight,
+  type = "CI"
+)
+```
+
+```{r plot-forest-surrogate, fig.width=12, fig.height=7, fig.alt="A surrogate concentration-index tree fitted to the forest predictions through tidymodels."}
+plot(
+  surrogate_fit$fit,
+  data = surrogate_data,
+  var_labels = plot_labels,
+  plural_overrides = c(Province = "provinces"),
+  terminal_stats = list(
+    n = nrow,
+    mean_risk = function(df) mean(df$forest_risk),
+    mean_wealth = function(df) mean(df$wealth)
+  ),
+  stat_labels = c(
+    n = "n",
+    mean_risk = "mean risk",
+    mean_wealth = "mean wealth"
+  ),
+  stat_formatters = list(
+    mean_risk = function(x) sprintf("%.1f%%", 100 * x),
+    mean_wealth = function(x) sprintf("%.2f", x)
+  )
+)
+```
+
+This plot should be read as a compact summary of the forest risk surface, not
+as a literal picture of the full ensemble.
+
+## 9. Tune an inequality-aware forest with tidymodels
+
+Forest tuning follows the same workflow logic as tree tuning. The difference is
+that the hyperparameter grid now spans the ensemble size, the number of
+candidate split variables, and the child-node size.
+
+```{r tunable-forest-spec}
+forest_tune_spec <- rand_forest(
+  trees = tune(),
+  mtry = tune(),
+  min_n = tune()
+) |>
+  set_engine(
+    "ineqTrees",
+    rank_name = "wealth",
+    outcome_name = "deadu5_num",
+    type = "CI",
+    minsplit = 120L,
+    minprob = 0.05,
+    maxdepth = 3L,
+    perturb = list(replace = FALSE, fraction = 0.632)
+  ) |>
+  set_mode("regression")
+
+forest_wf <- workflow() |>
+  add_model(forest_tune_spec) |>
+  add_formula(predictor_formula) |>
+  add_case_weights(case_wt)
+
+forest_grid <- grid_regular(
+  trees(range = c(8L, 16L)),
+  mtry(range = c(1L, 3L)),
+  min_n(range = c(40L, 90L)),
+  levels = 2L
+)
+
+forest_grid
+```
+
+```{r tune-forest}
+set.seed(20260516)
+
+forest_tuned <- tune_grid(
+  forest_wf,
+  resamples = tree_folds,
+  grid = forest_grid,
+  metrics = metric_set(rmse, mae),
+  control = control_grid(save_pred = TRUE)
+)
+
+collect_metrics(forest_tuned)
+```
+
+```{r inspect-forest-tuning}
+show_best(forest_tuned, metric = "rmse", n = 4)
+
+best_forest <- select_best(forest_tuned, metric = "rmse")
+best_forest
+```
+
+The finalized workflow again contains a regular `ci_forest` engine fit, so the
+package-native summary methods still work after tuning.
+
+```{r finalize-forest}
+final_forest_wf <- finalize_workflow(forest_wf, best_forest)
+final_forest_fit <- fit(final_forest_wf, data = kenya_model)
+final_forest_engine <- extract_fit_parsnip(final_forest_fit)$fit
+
+ci_forest_summary(final_forest_engine)
+```
+
+```{r tuned-forest-ci-gain}
+final_forest_pred <- predict(final_forest_fit, new_data = kenya_model)$.pred
+
+final_forest_data <- kenya_model
+final_forest_data$forest_risk <- final_forest_pred
+
+final_forest_surrogate_spec <- decision_tree(
+  tree_depth = 3L,
+  min_n = 60L
+) |>
+  set_engine(
+    "ineqTrees",
+    rank_name = "wealth",
+    outcome_name = "forest_risk",
+    type = "CI",
+    minsplit = 120L,
+    minprob = 0.05,
+    min_gain = 0
+  ) |>
+  set_mode("regression")
+
+final_forest_surrogate <- fit(
+  final_forest_surrogate_spec,
+  forest_risk ~ wealth + rural + ed + reg + unskilled,
+  data = final_forest_data,
+  case_weights = final_forest_data$case_wt
+)
+
+final_forest_nodes <- as.integer(predict(
+  final_forest_surrogate,
+  new_data = final_forest_data,
+  type = "raw"
+))
+
+final_forest_gain_scores <- data.frame(
+  truth = final_forest_data$deadu5_num,
+  pred = final_forest_pred,
+  rank = final_forest_data$wealth,
+  node = final_forest_nodes,
+  weight = final_forest_data$sample_weight
+)
+
+ci_gain(
+  final_forest_gain_scores,
+  truth = truth,
+  estimate = pred,
+  rank = rank,
+  node = node,
+  case_weights = weight,
+  type = "CI"
+)
+```
+
+## 10. Where to go next
+
+The tidymodels workflow covers the same modeling ideas as the package-native
+article, but through a different orchestration layer:
+
+- `decision_tree()` and `rand_forest()` define generic model controls;
+- `set_engine("ineqTrees", ...)` supplies the inequality-specific arguments;
+- `fit()` returns parsnip model objects whose underlying engine fits are still
+  `ci_tree` and `ci_forest` objects;
+- `plot()` and `ci_tree_terminal_summary()` still work on the extracted tree
+  fits;
+- `workflow()`, `vfold_cv()`, `grid_regular()`, and `tune_grid()` provide the
+  resampling and tuning machinery;
+- `ci_gain()` reconnects the tidymodels fit to the concentration-index
+  interpretation.
+
+If you want the most direct concentration-index tuning workflow, the package
+helpers such as `tune_ci_tree()` and `tune_ci_forest()` are still the most
+natural choice. If you want model specifications, workflows, and resampling to
+live inside tidymodels, the bridge shown here keeps that option open without
+giving up the interpretation tools already built into `ineqTrees`.
+
+```{r development-inflate, eval=FALSE}
+fusen::inflate(
+  flat_file = "dev/tidymodels_extension.Rmd",
+  vignette_name = "Tidymodels extension",
+  overwrite = "yes"
+)
+```

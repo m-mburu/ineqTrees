@@ -7,11 +7,11 @@ ci_ranking.Rmd:
   inflate:
     flat_file: dev/ci_ranking.Rmd
     vignette_name: CI ranking helpers
-    open_vignette: true
-    check: true
+    open_vignette: false
+    check: false
     document: true
-    overwrite: ask
-    clean: ask
+    overwrite: 'yes'
+    clean: 'no'
     codecov: false
 ci_split_search.Rmd:
   path: dev/ci_split_search.Rmd
@@ -22,11 +22,11 @@ ci_split_search.Rmd:
   inflate:
     flat_file: dev/ci_split_search.Rmd
     vignette_name: CI split search
-    open_vignette: true
-    check: true
+    open_vignette: false
+    check: false
     document: true
-    overwrite: ask
-    clean: ask
+    overwrite: 'yes'
+    clean: 'no'
     codecov: false
 ci_tree_builder.Rmd:
   path: dev/ci_tree_builder.Rmd
@@ -37,11 +37,11 @@ ci_tree_builder.Rmd:
   inflate:
     flat_file: dev/ci_tree_builder.Rmd
     vignette_name: CI tree builder
-    open_vignette: true
-    check: true
+    open_vignette: false
+    check: false
     document: true
     overwrite: 'yes'
-    clean: ask
+    clean: 'no'
     codecov: false
 ci_tree_models.Rmd:
   path: dev/ci_tree_models.Rmd
@@ -56,11 +56,11 @@ ci_tree_models.Rmd:
   inflate:
     flat_file: dev/ci_tree_models.Rmd
     vignette_name: CI tree models
-    open_vignette: true
-    check: true
+    open_vignette: false
+    check: false
     document: true
     overwrite: 'yes'
-    clean: ask
+    clean: 'no'
     codecov: false
 flat_partytrees.Rmd:
   path: dev/flat_partytrees.Rmd
@@ -99,11 +99,11 @@ model_selection.Rmd:
   inflate:
     flat_file: dev/model_selection.Rmd
     vignette_name: Model selection
-    open_vignette: true
-    check: true
+    open_vignette: false
+    check: false
     document: true
     overwrite: 'yes'
-    clean: ask
+    clean: 'no'
     codecov: false
 plot_tree_helpers.Rmd:
   path: dev/plot_tree_helpers.Rmd
@@ -114,11 +114,26 @@ plot_tree_helpers.Rmd:
   inflate:
     flat_file: dev/plot_tree_helpers.Rmd
     vignette_name: Plots for party trees
-    open_vignette: true
-    check: true
+    open_vignette: false
+    check: false
     document: true
-    overwrite: ask
-    clean: ask
+    overwrite: 'yes'
+    clean: 'no'
+    codecov: false
+shap_article.Rmd:
+  path: dev/shap_article.Rmd
+  state: active
+  R: []
+  tests: []
+  vignettes: vignettes/shapley-decomposition.Rmd
+  inflate:
+    flat_file: dev/shap_article.Rmd
+    vignette_name: Shapley decomposition
+    open_vignette: false
+    check: false
+    document: false
+    overwrite: 'yes'
+    clean: 'no'
     codecov: false
 shap_decomposition.Rmd:
   path: dev/shap_decomposition.Rmd
@@ -136,5 +151,50 @@ shap_decomposition.Rmd:
     check: false
     document: true
     overwrite: 'yes'
+    clean: 'no'
+    codecov: false
+tidmodels_ineqTrees.Rmd:
+  path: dev/tidmodels_ineqTrees.Rmd
+  state: active
+  R: []
+  tests: []
+  vignettes: vignettes/tidmodels_ineqtrees.Rmd
+  inflate:
+    flat_file: dev/tidmodels_ineqTrees.Rmd
+    vignette_name: tidmodels_ineqTrees
+    open_vignette: false
+    check: false
+    document: false
+    overwrite: 'yes'
+    clean: 'no'
+    codecov: false
+tidymodels_bridge.Rmd:
+  path: dev/tidymodels_bridge.Rmd
+  state: active
+  R: R/ci_parsnip_formula.R
+  tests: tests/testthat/test-ci_parsnip_formula.R
+  vignettes: vignettes/tidymodels-bridge.Rmd
+  inflate:
+    flat_file: dev/tidymodels_bridge.Rmd
+    vignette_name: Tidymodels bridge
+    open_vignette: true
+    check: true
+    document: true
+    overwrite: 'yes'
     clean: ask
+    codecov: false
+tidymodels_extension.Rmd:
+  path: dev/tidymodels_extension.Rmd
+  state: active
+  R: []
+  tests: []
+  vignettes: vignettes/tidymodels-extension.Rmd
+  inflate:
+    flat_file: dev/tidymodels_extension.Rmd
+    vignette_name: Tidymodels extension
+    open_vignette: false
+    check: false
+    document: false
+    overwrite: 'yes'
+    clean: 'no'
     codecov: false

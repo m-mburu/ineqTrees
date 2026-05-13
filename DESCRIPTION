@@ -21,19 +21,32 @@ Imports:
     grid,
     knitr,
     magrittr,
+    parallel,
+    parsnip,
     partykit,
+    rlang,
     stats,
-    utils
+    tibble,
+    utils,
+    yardstick
 Suggests: 
+    dials,
+    fastshap,
+    ggplot2,
     grDevices,
+    hardhat,
     lobstr,
     pkgload,
+    ranger,
     rmarkdown,
-    testthat
+    rsample,
+    testthat,
+    tune,
+    workflows
 VignetteBuilder: 
     knitr
 Config/fusen/version: 0.7.2
+Config/roxygen2/version: 8.0.0
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3

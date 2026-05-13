@@ -16,15 +16,23 @@ navbar:
     right: [search, github]
 
 articles:
-  - title: Tree models
+  - title: Overview
     contents:
-      - inequality-aware-party-trees
-      - ci-tree-models
-      - ci-tree-builder
-      - ci-split-search
-  - title: Model selection and interpretation
+      - "inequality-aware-party-trees"
+  - title: Tree internals
     contents:
-      - model-selection
-      - ci-ranking-helpers
-      - shap_decomposition
-      - plots-for-party-trees
+      - "ci-ranking-helpers"
+      - "ci-split-search"
+      - "ci-tree-builder"
+      - "ci-tree-models"
+      - "model-selection"
+      - "plots-for-party-trees"
+  - title: Tidymodels
+    contents:
+      - "tidymodels-extension"
+      - "tidmodels_ineqtrees"
+      - "tidymodels-bridge"
+  - title: Shapley decomposition
+    contents:
+      - "shapley-decomposition"
+      - "shap_decomposition"

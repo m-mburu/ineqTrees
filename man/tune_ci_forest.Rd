@@ -19,11 +19,15 @@ tune_ci_forest(
   v = 5L,
   strata = NULL,
   fold_id = NULL,
+  resamples = NULL,
   seed = NULL,
+  metric = c("validation_gain", "brier", "log_loss", "roc_auc"),
+  metrics = NULL,
   surrogate_control = NULL,
   prediction_name = "forest_risk",
   refit = TRUE,
   verbose = FALSE,
+  control = NULL,
   perturb = list(replace = FALSE, fraction = 0.632),
   na.action = stats::na.omit,
   ...
@@ -62,7 +66,18 @@ used for stratified fold creation.}
 \item{fold_id}{Optional precomputed integer fold ids. When supplied, \code{v},
 \code{strata}, and \code{seed} are ignored for fold creation.}
 
+\item{resamples}{Optional \code{rsample} rset object. When supplied, it is used
+instead of creating folds from \code{v}, \code{strata}, or \code{fold_id}.}
+
 \item{seed}{Optional random seed for fold creation.}
+
+\item{metric}{Selection metric when a single metric is requested.
+\code{validation_gain} and \code{roc_auc} are maximized; \code{brier} and \code{log_loss} are
+minimized.}
+
+\item{metrics}{Optional character vector of one or more metrics to compute
+during tuning. When supplied, the first metric is used for final model
+selection.}
 
 \item{surrogate_control}{Optional \code{\link[=ci_tree_control]{ci_tree_control()}} for the surrogate tree.
 By default, the selected forest controls are reused with \code{mtry = NULL} so
@@ -75,6 +90,9 @@ surrogate data.}
 
 \item{verbose}{Should fold progress be printed?}
 
+\item{control}{Optional \code{\link[=control_ci_tune]{control_ci_tune()}} object controlling saved
+predictions, saved fits, extraction hooks, and parallel settings.}
+
 \item{perturb}{Resampling controls passed to \code{\link[=ci_forest]{ci_forest()}}.}
 
 \item{na.action}{A function for handling missing values.}
@@ -82,9 +100,7 @@ surrogate data.}
 \value{
 A \code{ci_forest_tuning} object.
 
-A list with fold-level results, grid summary, best parameters, best
-concentration-index type, selected forest, selected surrogate tree, and
-surrogate data.
+A \code{ci_forest_tuning} object.
 }
 \description{
 \code{tune_cf_ci()} is kept for existing code. New code should use
@@ -94,33 +110,6 @@ Fits \code{\link[=ci_forest]{ci_forest()}} across candidate forest controls and 
 criteria. Each validation forest is summarized by a surrogate greedy
 \code{\link[=ci_tree]{ci_tree()}} fitted to the forest predictions on the training fold, then
 scored by held-out concentration-index validation gain against the observed
-outcome. This keeps forest tuning aligned with the inequality objective while
-returning both the selected forest and a readable surrogate tree.
-}
-\examples{
-toy_data <- data.frame(
-  rank = c(10, 20, 30, 40, 50, 60, 70, 80),
-  outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
-  income = c(2, 4, 6, 8, 10, 12, 14, 16)
-)
-grid <- ci_tree_control_grid(
-  minsplit = 1,
-  minbucket = 1,
-  minprob = 0,
-  maxdepth = 1,
-  mtry = 1,
-  ntree = 3
-)
-tuned <- tune_ci_forest(
-  cbind(rank, outcome) ~ income,
-  data = toy_data,
-  rank_name = "rank",
-  outcome_name = "outcome",
-  control_grid = grid,
-  type = c("CI", "CIg"),
-  v = 2,
-  seed = 1
-)
-tuned$best_type
-
+outcome. Prediction-oriented metrics can be computed from the forest
+predictions in the same tuning run.
 }
