@@ -37,6 +37,7 @@ articles:
     contents:
       - "ci-ranking-helpers"
       - "ci-split-search"
+      - "ci-split-search-with-rcpp"
       - "ci-tree-builder"
       - "ci-tree-models"
       - "model-selection"
