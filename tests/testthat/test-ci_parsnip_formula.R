@@ -150,6 +150,40 @@ test_that("rand_forest can fit ci_forest through ineqTrees engine", {
   expect_equal(nrow(nodes), nrow(toy_data))
 })
 
+test_that("rand_forest ineqTrees engine stays serial by default", {
+  skip_if_not_installed("parsnip")
+
+  register_ineqtrees_parsnip()
+
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16),
+    group = factor(c("a", "a", "b", "b", "a", "a", "b", "b"))
+  )
+
+  spec <- parsnip::rand_forest(trees = 3, mtry = 1, min_n = 1) |>
+    parsnip::set_engine(
+      "ineqTrees",
+      rank_name = "rank",
+      outcome_name = "outcome",
+      minsplit = 1,
+      minprob = 0,
+      maxdepth = 1
+    ) |>
+    parsnip::set_mode("regression")
+
+  fit <- parsnip::fit(
+    spec,
+    cbind(rank, outcome) ~ income + group,
+    data = toy_data
+  )
+
+  expect_s3_class(fit$fit, "ci_forest")
+  expect_false("parallel" %in% names(as.list(fit$fit$call)))
+  expect_false("future.seed" %in% names(as.list(fit$fit$call)))
+})
+
 test_that("ci_gain computes a yardstick-style metric", {
   toy_pred <- data.frame(
     truth = c(1, 0, 1, 0, 1, 1),

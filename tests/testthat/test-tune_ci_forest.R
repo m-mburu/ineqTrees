@@ -226,6 +226,90 @@ test_that("tune_ci_forest supports multiple metrics and saved predictions", {
   expect_gt(nrow(ci_collect_predictions(tuned)), 0L)
 })
 
+test_that("tune_ci_forest can parallelize over tuning tasks with futures", {
+  skip_if_not_installed("future")
+  skip_if_not_installed("future.apply")
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::sequential)
+
+  toy_data <- data.frame(
+    rank = seq(10, 80, 10),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = seq(2, 16, 2),
+    group = factor(c("a", "a", "b", "b", "a", "a", "b", "b"))
+  )
+  grid <- ci_tree_control_grid(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    maxdepth = 1,
+    mtry = 1,
+    ntree = 3L
+  )
+
+  tuned <- tune_ci_forest(
+    cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    type = "CI",
+    control_grid = grid,
+    v = 2,
+    seed = 8,
+    parallel_over = "tuning",
+    refit = FALSE
+  )
+
+  expect_s3_class(tuned, "ci_forest_tuning")
+  expect_equal(tuned$model, "forest")
+  expect_equal(nrow(tuned$summary), nrow(grid))
+  expect_true(is.finite(tuned$summary$mean_score[1]))
+})
+
+test_that("tune_ci_forest can parallelize inside each forest with futures", {
+  skip_if_not_installed("future")
+  skip_if_not_installed("future.apply")
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::sequential)
+
+  toy_data <- data.frame(
+    rank = seq(10, 80, 10),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = seq(2, 16, 2),
+    group = factor(c("a", "a", "b", "b", "a", "a", "b", "b"))
+  )
+  grid <- ci_tree_control_grid(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    maxdepth = 1,
+    mtry = 1,
+    ntree = 3L
+  )
+
+  tuned <- tune_ci_forest(
+    cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    type = "CI",
+    control_grid = grid,
+    v = 2,
+    seed = 9,
+    parallel_over = "forest",
+    refit = FALSE
+  )
+
+  expect_s3_class(tuned, "ci_forest_tuning")
+  expect_equal(tuned$model, "forest")
+  expect_equal(nrow(tuned$summary), nrow(grid))
+  expect_true(is.finite(tuned$summary$mean_score[1]))
+})
+
 test_that("legacy tuning names remain compatibility aliases", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60, 70, 80),

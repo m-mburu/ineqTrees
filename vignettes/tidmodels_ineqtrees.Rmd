@@ -502,7 +502,7 @@ forest_tuned <- tune_grid(
   resamples = folds,
   grid = forest_grid,
   metrics = metric_set(rmse, mae),
-  control = control_grid(save_pred = TRUE)
+  control = control_grid(save_pred = TRUE, parallel_over = "resamples")
 )
 
 collect_metrics(forest_tuned)

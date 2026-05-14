@@ -28,8 +28,47 @@ tune_ctree_ci <- function(...) {
 #' @param prediction_name Name of the forest-prediction column added to the
 #'   surrogate data.
 #' @param perturb Resampling controls passed to [ci_forest()].
+#' @param parallel_over Parallelization strategy. `"none"` runs tuning and
+#'   forest fitting serially, `"tuning"` evaluates grid/resample tasks with
+#'   [future.apply::future_lapply()], and `"forest"` keeps tuning tasks serial
+#'   while growing trees inside each [ci_forest()] call with
+#'   [future.apply::future_lapply()]. The future backend is controlled by the
+#'   user outside `tune_ci_forest()`.
+#' @param future.seed Passed to [future.apply::future_lapply()] when
+#'   `parallel_over` is `"tuning"` or `"forest"`.
 #'
 #' @return A `ci_forest_tuning` object.
+#'
+#' @examples
+#' if (requireNamespace("future", quietly = TRUE) &&
+#'     requireNamespace("future.apply", quietly = TRUE)) {
+#'   old_plan <- future::plan()
+#'   future::plan(future::multisession, workers = 2)
+#'   on.exit(future::plan(old_plan), add = TRUE)
+#'
+#'   toy_data <- data.frame(
+#'     rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+#'     outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+#'     income = c(2, 4, 6, 8, 10, 12, 14, 16)
+#'   )
+#'   grid <- ci_tree_control_grid(
+#'     minsplit = 1,
+#'     minbucket = 1,
+#'     minprob = 0,
+#'     maxdepth = 1,
+#'     ntree = 3
+#'   )
+#'   tuned <- tune_ci_forest(
+#'     cbind(rank, outcome) ~ income,
+#'     data = toy_data,
+#'     rank_name = "rank",
+#'     outcome_name = "outcome",
+#'     control_grid = grid,
+#'     v = 2,
+#'     parallel_over = "tuning",
+#'     refit = FALSE
+#'   )
+#' }
 #'
 #' @export
 tune_ci_forest <- function(formula,
@@ -53,9 +92,19 @@ tune_ci_forest <- function(formula,
                            verbose = FALSE,
                            control = NULL,
                            perturb = list(replace = FALSE, fraction = 0.632),
+                           parallel_over = c("none", "tuning", "forest"),
+                           future.seed = TRUE,
                            na.action = stats::na.omit,
                            ...) {
   type <- .ci_match_type(type)
+  parallel_over <- match.arg(parallel_over)
+  extra_args <- list(...)
+  if (any(c("parallel", "future.seed") %in% names(extra_args))) {
+    stop(
+      "Use `parallel_over` and `future.seed` to control `tune_ci_forest()` parallelism.",
+      call. = FALSE
+    )
+  }
   metrics <- if (is.null(metrics) && missing(metric)) {
     "validation_gain"
   } else {
@@ -145,6 +194,8 @@ tune_ci_forest <- function(formula,
         control = tree_control,
         ntree = this_ntree,
         perturb = perturb,
+        parallel = identical(parallel_over, "forest"),
+        future.seed = future.seed,
         na.action = na.action,
         ...
       )
@@ -320,7 +371,19 @@ tune_ci_forest <- function(formula,
     )
   }
 
-  task_results <- .ci_lapply_tasks(tasks, run_task, control)
+  evaluate_one_task <- function(i) {
+    run_task(tasks[[i]])
+  }
+
+  task_results <- if (identical(parallel_over, "tuning")) {
+    future.apply::future_lapply(
+      seq_along(tasks),
+      evaluate_one_task,
+      future.seed = future.seed
+    )
+  } else {
+    lapply(seq_along(tasks), evaluate_one_task)
+  }
   fold_results <- data.table::rbindlist(
     lapply(task_results, `[[`, "fold_results"),
     fill = TRUE
@@ -361,6 +424,8 @@ tune_ci_forest <- function(formula,
         control = best_control,
         ntree = best_ntree,
         perturb = perturb,
+        parallel = identical(parallel_over, "forest"),
+        future.seed = future.seed,
         na.action = na.action,
         ...
       )

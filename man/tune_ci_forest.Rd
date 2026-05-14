@@ -29,6 +29,8 @@ tune_ci_forest(
   verbose = FALSE,
   control = NULL,
   perturb = list(replace = FALSE, fraction = 0.632),
+  parallel_over = c("none", "tuning", "forest"),
+  future.seed = TRUE,
   na.action = stats::na.omit,
   ...
 )
@@ -95,6 +97,16 @@ predictions, saved fits, extraction hooks, and parallel settings.}
 
 \item{perturb}{Resampling controls passed to \code{\link[=ci_forest]{ci_forest()}}.}
 
+\item{parallel_over}{Parallelization strategy. \code{"none"} runs tuning and
+forest fitting serially, \code{"tuning"} evaluates grid/resample tasks with
+\code{\link[future.apply:future_lapply]{future.apply::future_lapply()}}, and \code{"forest"} keeps tuning tasks serial
+while growing trees inside each \code{\link[=ci_forest]{ci_forest()}} call with
+\code{\link[future.apply:future_lapply]{future.apply::future_lapply()}}. The future backend is controlled by the
+user outside \code{tune_ci_forest()}.}
+
+\item{future.seed}{Passed to \code{\link[future.apply:future_lapply]{future.apply::future_lapply()}} when
+\code{parallel_over} is \code{"tuning"} or \code{"forest"}.}
+
 \item{na.action}{A function for handling missing values.}
 }
 \value{
@@ -112,4 +124,36 @@ criteria. Each validation forest is summarized by a surrogate greedy
 scored by held-out concentration-index validation gain against the observed
 outcome. Prediction-oriented metrics can be computed from the forest
 predictions in the same tuning run.
+}
+\examples{
+if (requireNamespace("future", quietly = TRUE) &&
+    requireNamespace("future.apply", quietly = TRUE)) {
+  old_plan <- future::plan()
+  future::plan(future::multisession, workers = 2)
+  on.exit(future::plan(old_plan), add = TRUE)
+
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16)
+  )
+  grid <- ci_tree_control_grid(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    maxdepth = 1,
+    ntree = 3
+  )
+  tuned <- tune_ci_forest(
+    cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control_grid = grid,
+    v = 2,
+    parallel_over = "tuning",
+    refit = FALSE
+  )
+}
+
 }

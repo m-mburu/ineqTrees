@@ -188,6 +188,65 @@ fit_forest
 ci_forest_summary(fit_forest)
 ```
 
+### Parallel execution patterns
+
+`ineqTrees` uses the `future` ecosystem for optional parallel work and never
+sets the future plan inside model functions. Choose one layer at a time: direct
+forest fitting, custom tuning tasks, or tidymodels resamples.
+
+```r
+old_plan <- future::plan()
+future::plan(future::multisession, workers = 2)
+on.exit(future::plan(old_plan), add = TRUE)
+
+fit_forest <- ci_forest(
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  data = kenya,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  ntree = 50L,
+  parallel = TRUE
+)
+```
+
+```r
+old_plan <- future::plan()
+future::plan(future::multisession, workers = 2)
+on.exit(future::plan(old_plan), add = TRUE)
+
+forest_tune_grid <- ci_tree_control_grid(
+  minsplit = 100L,
+  minbucket = c(50L, 100L),
+  maxdepth = 3:4,
+  mtry = c(1L, 2L),
+  ntree = c(10L, 50L)
+)
+
+forest_tuning <- tune_ci_forest(
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  data = kenya,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  control_grid = forest_tune_grid,
+  v = 5L,
+  parallel_over = "tuning"
+)
+```
+
+```r
+old_plan <- future::plan()
+future::plan(future::multisession, workers = 2)
+on.exit(future::plan(old_plan), add = TRUE)
+
+forest_tuned <- tune::tune_grid(
+  forest_wf,
+  resamples = tree_folds,
+  grid = forest_grid,
+  metrics = yardstick::metric_set(ci_gain_tuning, yardstick::rmse),
+  control = tune::control_grid(parallel_over = "resamples")
+)
+```
+
 ### Fit surrogarete tree to forest predictions
 
 - The surrogate is a greedy concentration-index tree that approximates the predictions of the fitted forest. This is useful for interpreting the forest , since the surrogate can be refit on held-out data and scored with CI gain.
@@ -537,6 +596,7 @@ forest_tuning <- tune_ci_forest(
   strata = "deadu5_num",
   seed = 20260508,
   prediction_name = "forest_risk",
+  parallel_over = "tuning",
   refit = TRUE
 )
 
