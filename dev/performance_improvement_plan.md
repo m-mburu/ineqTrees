@@ -160,6 +160,98 @@ The profile now shows the remaining forest time mostly flowing through
 the next meaningful forest improvement should target factor split work and
 prediction aggregation, not another wrapper-level refactor.
 
+Status after dev-only Rcpp experiment:
+
+- `dev/rcpp_split_experiment.R` compiles an experimental C++ concentration-index
+  scorer and numeric split engine with `Rcpp::sourceCpp()`.
+- The prototype matched the current R implementation on the 2,500-row Kenya
+  benchmark sample: CI score absolute difference about `9.55e-15`, numeric split
+  gain absolute difference about `4.88e-15`, and identical numeric cutpoint.
+- Repeated CI scoring improved from median `0.89` seconds for 1,000 R calls to
+  `0.44` seconds for 1,000 C++ calls.
+- Numeric split search improved from median `3.21` seconds in R to `1.04`
+  seconds in the C++ engine on the same sample.
+- The experiment suggests that the best Rcpp target is an internal numeric split
+  scoring engine, with `.ci_fast_score()` as its reusable primitive. Tree and
+  forest wrapper code should remain in R because most of its work is object
+  orchestration around `partykit`, model frames, and user-facing classes.
+- This prototype is not production-ready: it is not wired into `DESCRIPTION`,
+  `NAMESPACE`, package compilation, or tests, and it returns only the C++ engine
+  result rather than a full `partysplit` candidate.
+
+Status after dev-only ordered-scoring experiment:
+
+- `dev/ordered_ci_scoring_experiment.R` tests an R-only numeric split prototype
+  that orders the SES/rank variable once per node, then filters that order for
+  each candidate left/right child instead of calling `order()` inside every
+  child CI score.
+- On the 5,000-row Kenya benchmark sample, the ordered-once prototype matched
+  the current `best_numeric_split()` result exactly: same gain, same cutpoint,
+  and same left-child membership.
+- Runtime improved from median `10.12` seconds for current
+  `best_numeric_split()` to median `7.99` seconds for the ordered-once R
+  prototype.
+- This confirms the algorithmic idea, but the speedup is smaller than the Rcpp
+  numeric split experiment because the R prototype still allocates filtered
+  child-order vectors and performs per-candidate scoring in R.
+- A production path could combine both ideas: precompute node-level orderings
+  once, then evaluate candidate gains in compiled code.
+
+Status after randomized algorithm-growth experiment:
+
+- `dev/randomized_algorithm_growth_experiment.R` compares three numeric split
+  and numeric-only forest-engine treatments on randomized Kenya samples:
+  current R implementation, ordered-once R scoring, and combined ordered C++
+  scoring.
+- For a single numeric split, median timings were:
+  - `n = 500`: current `0.33s`, ordered-once R `0.14s`, ordered C++ `0.03s`.
+  - `n = 1000`: current `0.69s`, ordered-once R `0.40s`, ordered C++ `0.14s`.
+  - `n = 2000`: current `2.41s`, ordered-once R `1.38s`, ordered C++ `0.61s`.
+  - `n = 4000`: current `8.87s`, ordered-once R `7.16s`, ordered C++ `2.42s`.
+- For a numeric-only forest engine with `ntree = 10`, median timings were:
+  - `n = 500`: current `2.21s`, ordered-once R `0.70s`, ordered C++ `0.24s`.
+  - `n = 1000`: current `7.50s`, ordered-once R `3.22s`, ordered C++ `0.95s`.
+  - `n = 2000`: current `29.17s`, ordered-once R `11.82s`, ordered C++ `4.07s`.
+- Empirical log-log growth exponents were roughly:
+  - single numeric split: current `n^1.60`, ordered-once R `n^1.88`,
+    ordered C++ `n^2.11`;
+  - numeric-only forest engine: current `n^1.86`, ordered-once R `n^2.04`,
+    ordered C++ `n^2.04`.
+- Interpretation: the combined C++ treatment greatly reduces constants, but it
+  remains approximately quadratic in node size because every candidate split
+  still scans the node-level SES order to compute child-specific weighted
+  ranks. Forest runtime then compounds that cost across trees and recursive
+  nodes, with approximately linear growth in `ntree` for fixed controls.
+- To change the algorithmic order rather than only the constant factor, the next
+  research target would need a true incremental or prefix/suffix CI scorer for
+  candidate child nodes. That is more complex because child-specific fractional
+  ranks depend on the membership and weights of each child.
+
+Status after factor split and factor-forest growing experiment:
+
+- `dev/factor_split_forest_experiment.R` compares three factor split engines on
+  randomized Kenya samples: current R factor split, an integer-code/data.table R
+  split, and an Rcpp factor split engine.
+- Correctness on `reg` matched the current implementation: integer/data.table R
+  had exactly the same gain and membership, while Rcpp differed in gain by only
+  about `2.74e-14` and had the same left-child membership.
+- Isolated `reg` split median timings were:
+  - `n = 1000`: current `0.036s`, integer/data.table R `0.032s`, Rcpp `0.007s`.
+  - `n = 3000`: current `0.100s`, integer/data.table R `0.073s`, Rcpp `0.024s`.
+  - `n = 5000`: current `0.146s`, integer/data.table R `0.116s`, Rcpp `0.050s`.
+- Factor-only forest-growing median timings with `rural`, `ed`, `reg`,
+  `unskilled`, `mtry = 2`, and `ntree = 30` were:
+  - `n = 1000`: current `1.15s`, integer/data.table R `1.75s`, Rcpp `0.17s`.
+  - `n = 3000`: current `3.20s`, integer/data.table R `4.31s`, Rcpp `0.76s`.
+  - `n = 5000`: current `4.36s`, integer/data.table R `6.61s`, Rcpp `1.33s`.
+- Interpretation: integer-code/data.table summaries help isolated `reg` split
+  search a little, but they are slower inside repeated forest growing because
+  their per-node setup overhead repeats many times. The Rcpp factor engine gives
+  the strongest forest-growing result, roughly `3.3x` faster than current at
+  `n = 5000` and `6.8x` faster at `n = 1000`.
+- For factor-heavy use cases, the production priority should move to an Rcpp
+  factor split fast path before the numeric split fast path.
+
 ## 1. Establish a baseline benchmark
 
 Before changing code, add a small benchmark script or development chunk that

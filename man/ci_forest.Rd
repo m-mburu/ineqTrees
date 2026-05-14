@@ -95,8 +95,8 @@ aggregated across trees by averaging terminal-node summaries.
 if (requireNamespace("future", quietly = TRUE) &&
     requireNamespace("future.apply", quietly = TRUE)) {
   old_plan <- future::plan()
-  future::plan(future::multisession, workers = 2)
   on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::sequential)
 
   fit <- ci_forest(
     cbind(rank, outcome) ~ income,

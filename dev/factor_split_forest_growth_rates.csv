@@ -1,0 +1,7 @@
+"benchmark","method","alpha","baseline_n","largest_n","baseline_sec","largest_sec"
+"factor_forest_engine_ntree30","cpp",1.29168481190032,1000,5000,0.170000000000016,1.33000000000001
+"factor_forest_engine_ntree30","current",0.844523691784796,1000,5000,1.15000000000001,4.36000000000001
+"factor_forest_engine_ntree30","int_dt",0.8248883576765,1000,5000,1.75,6.61
+"factor_split_reg","cpp",1.20569132047785,1000,5000,0.00700000000000003,0.05
+"factor_split_reg","current",0.87768218668391,1000,5000,0.0359999999999999,0.1455
+"factor_split_reg","int_dt",0.789061023492169,1000,5000,0.032,0.1155

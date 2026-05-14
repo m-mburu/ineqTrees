@@ -1,20 +1,29 @@
 $by.self
-         self.time self.pct total.time total.pct
-"...elt"      0.01      100       0.01       100
+                      self.time self.pct total.time total.pct
+"as.character.factor"      0.02       40       0.02        40
+"%in%"                     0.01       20       0.03        60
+"...elt"                   0.01       20       0.01        20
+"c"                        0.01       20       0.01        20
 
 $by.total
                                 total.time total.pct self.time self.pct
-"...elt"                              0.01       100      0.01      100
-".weighted_ci_gain_from_parent"       0.01       100      0.00        0
-"best_factor_split"                   0.01       100      0.00        0
-"ci_fun"                              0.01       100      0.00        0
-"eval"                                0.01       100      0.00        0
-"profile_expr"                        0.01       100      0.00        0
-"stopifnot"                           0.01       100      0.00        0
+"best_factor_split"                   0.05       100      0.00        0
+"eval"                                0.05       100      0.00        0
+"profile_expr"                        0.05       100      0.00        0
+"%in%"                                0.03        60      0.01       20
+"as.character.factor"                 0.02        40      0.02       40
+".weighted_ci_gain_from_parent"       0.02        40      0.00        0
+"as.character"                        0.02        40      0.00        0
+"ci_fun"                              0.02        40      0.00        0
+"...elt"                              0.01        20      0.01       20
+"c"                                   0.01        20      0.01       20
+".ci_fast_score"                      0.01        20      0.00        0
+"stopifnot"                           0.01        20      0.00        0
+"unique"                              0.01        20      0.00        0
 
 $sample.interval
 [1] 0.01
 
 $sampling.time
-[1] 0.01
+[1] 0.05
 

@@ -1,16 +1,14 @@
 $by.self
-          self.time self.pct total.time total.pct
-"rank_wt"      0.01      100       0.01       100
+[1] self.time  self.pct   total.time total.pct 
+<0 rows> (or 0-length row.names)
 
 $by.total
-               total.time total.pct self.time self.pct
-"rank_wt"            0.01       100      0.01      100
-"eval"               0.01       100      0.00        0
-"profile_expr"       0.01       100      0.00        0
+[1] total.time total.pct  self.time  self.pct  
+<0 rows> (or 0-length row.names)
 
 $sample.interval
 [1] 0.01
 
 $sampling.time
-[1] 0.01
+[1] 0
 

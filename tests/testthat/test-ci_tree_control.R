@@ -16,6 +16,7 @@ test_that("ci_tree_control stores greedy tree controls", {
   expect_equal(ctrl$maxdepth, 2)
   expect_equal(ctrl$min_gain, 0.01)
   expect_equal(ctrl$mtry, 1)
+  expect_equal(ctrl$split_engine, "cpp")
 })
 
 test_that(".ci_tree_normalize_control accepts shared ctree controls", {
@@ -34,4 +35,19 @@ test_that(".ci_tree_normalize_control accepts shared ctree controls", {
   expect_equal(ctrl$minprob, 0)
   expect_equal(ctrl$maxdepth, 1)
   expect_equal(ctrl$mtry, 1L)
+  expect_equal(ctrl$split_engine, "cpp")
+})
+
+test_that("ci_tree_control accepts R split engine fallback", {
+  ctrl <- ci_tree_control(split_engine = "R")
+  norm <- ineqTrees::.ci_tree_normalize_control(ctrl)
+
+  expect_equal(norm$split_engine, "R")
+})
+
+test_that(".ci_tree_normalize_control rejects unknown split engines", {
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(split_engine = "fortran")),
+    "split_engine"
+  )
 })

@@ -30,6 +30,8 @@ pkgload::load_all(export_all = TRUE)
 #' @param maxdepth Maximum tree depth, with the root at depth 0.
 #' @param min_gain Minimum concentration-index gain required to split a node.
 #' @param mtry Optional number of variables sampled as candidates at each node.
+#' @param split_engine Split-search implementation to use. `"cpp"` uses the
+#'   Rcpp-backed split search, while `"R"` uses the reference R implementation.
 #'
 #' @return A list of greedy CI tree controls.
 #'
@@ -39,14 +41,18 @@ ci_tree_control <- function(minsplit = 200L,
                             minprob = 0.01,
                             maxdepth = 4L,
                             min_gain = 0,
-                            mtry = NULL) {
+                            mtry = NULL,
+                            split_engine = c("cpp", "R")) {
+  split_engine <- match.arg(split_engine)
+
   list(
     minsplit = minsplit,
     minbucket = minbucket,
     minprob = minprob,
     maxdepth = maxdepth,
     min_gain = min_gain,
-    mtry = mtry
+    mtry = mtry,
+    split_engine = split_engine
   )
 }
 
@@ -114,6 +120,17 @@ ci_tree_control <- function(minsplit = 200L,
     ctrl$mtry <- as.integer(ceiling(ctrl$mtry))
   }
 
+  if (is.null(ctrl$split_engine)) {
+    ctrl$split_engine <- "cpp"
+  }
+  if (length(ctrl$split_engine) != 1L ||
+      is.na(ctrl$split_engine) ||
+      !ctrl$split_engine %in% c("cpp", "R")) {
+    stop('`control$split_engine` must be either "cpp" or "R".',
+      call. = FALSE
+    )
+  }
+
   ctrl
 }
 ```
@@ -135,6 +152,7 @@ test_that("ci_tree_control stores greedy tree controls", {
   expect_equal(ctrl$maxdepth, 2)
   expect_equal(ctrl$min_gain, 0.01)
   expect_equal(ctrl$mtry, 1)
+  expect_equal(ctrl$split_engine, "cpp")
 })
 
 test_that(".ci_tree_normalize_control accepts shared ctree controls", {
@@ -153,6 +171,21 @@ test_that(".ci_tree_normalize_control accepts shared ctree controls", {
   expect_equal(ctrl$minprob, 0)
   expect_equal(ctrl$maxdepth, 1)
   expect_equal(ctrl$mtry, 1L)
+  expect_equal(ctrl$split_engine, "cpp")
+})
+
+test_that("ci_tree_control accepts R split engine fallback", {
+  ctrl <- ci_tree_control(split_engine = "R")
+  norm <- ineqTrees::.ci_tree_normalize_control(ctrl)
+
+  expect_equal(norm$split_engine, "R")
+})
+
+test_that(".ci_tree_normalize_control rejects unknown split engines", {
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(split_engine = "fortran")),
+    "split_engine"
+  )
 })
 ```
 
@@ -258,12 +291,14 @@ test_that(".ci_tree_normalize_control accepts shared ctree controls", {
 #'   splitting.
 #' @param ctrl Normalized control list from `.ci_tree_normalize_control()`.
 #' @param ci_fun Concentration-index function created by `ci_factory()`.
+#' @param type Concentration-index type used when `control$split_engine` is
+#'   `"cpp"`.
 #'
 #' @return A list with `node`, the root `partykit::partynode()`, and `fitted`,
 #'   an integer vector mapping training rows to terminal node ids.
 #'
 #' @export
-.build_ci_tree <- function(data, y, wt, vars, ctrl, ci_fun) {
+.build_ci_tree <- function(data, y, wt, vars, ctrl, ci_fun, type = "CI") {
   next_id <- local({
     id <- 0L
     function() {
@@ -290,14 +325,25 @@ test_that(".ci_tree_normalize_control accepts shared ctree controls", {
 
     split <- NULL
     if (!terminal) {
-      split <- best_global_ci_split(
-        x = data_node,
-        y = y_node,
-        wt = wt_node,
-        ctrl = ctrl,
-        ci_fun = ci_fun,
-        vars = vars
-      )
+      if (identical(ctrl$split_engine, "cpp")) {
+        split <- best_global_ci_split_cpp(
+          x = data_node,
+          y = y_node,
+          wt = wt_node,
+          ctrl = ctrl,
+          type = type,
+          vars = vars
+        )
+      } else {
+        split <- best_global_ci_split(
+          x = data_node,
+          y = y_node,
+          wt = wt_node,
+          ctrl = ctrl,
+          ci_fun = ci_fun,
+          vars = vars
+        )
+      }
     }
 
     if (is.null(split)) {

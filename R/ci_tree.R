@@ -33,7 +33,8 @@
     wt = weights,
     vars = predictor_ids,
     ctrl = ctrl,
-    ci_fun = ci_fun
+    ci_fun = ci_fun,
+    type = type
   )
 
   fitted <- data.frame(

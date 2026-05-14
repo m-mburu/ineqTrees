@@ -1,0 +1,338 @@
+---
+title: "CI split search with Rcpp"
+output: github_document
+---
+
+This development file documents the Rcpp-backed split-search fast path. It is
+kept separate from `dev/ci_split_search.Rmd` so the original R implementation
+remains available as the reference implementation.
+
+Package files owned by this development note:
+
+- `R/ci_split_search_cpp.R`
+- `src/ci_split_search_cpp.cpp`
+- `R/RcppExports.R`
+- `src/RcppExports.cpp`
+- `tests/testthat/test-ci_split_search_cpp.R`
+
+The exported R-facing functions mirror the existing split-search helpers and
+add the `_cpp` suffix:
+
+- `best_numeric_split_cpp()`
+- `best_factor_split_cpp()`
+- `best_split_for_one_variable_cpp()`
+- `best_global_ci_split_cpp()`
+
+The global helper also accepts `vars`, an optional integer vector of predictor
+ids to search. When `vars` is omitted, all columns in `x` are searched.
+
+The roxygen source for the generated wrapper should document this argument as:
+
+```r
+#' @param vars Optional integer variable ids to search. Defaults to all columns
+#'   of `x`.
+```
+
+The current production tree and forest builders still call the R split-search
+helpers. The `_cpp` helpers are a parallel fast path for testing and later
+integration.
+
+```{r, function-ci_split_search_cpp_wrappers}
+#' Greedy CI split search using Rcpp engines
+#'
+#' @description
+#' Experimental Rcpp-backed versions of the greedy concentration-index split
+#' search helpers. These functions keep the same return shape as the current R
+#' split helpers, but take `type` instead of a prebuilt `ci_fun` because the
+#' concentration-index scoring is evaluated in C++.
+#'
+#' @param x A numeric predictor vector.
+#' @param x_full A factor predictor containing all original levels.
+#' @param keep A logical vector selecting the observations currently available
+#'   for splitting.
+#' @param y,y_full A two-column numeric response matrix.
+#' @param wt,wt_full Case weights.
+#' @param varid Integer identifier of the splitting variable.
+#' @param ctrl A control list created by [ci_tree_control()] or compatible.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"`.
+#' @param return Either `"split"` or `"candidate"`.
+#' @param vars Optional integer variable ids to search. Defaults to all columns
+#'   of `x`.
+#'
+#' @return A `partysplit` object, split candidate list, or `NULL`.
+#'
+#' @useDynLib ineqTrees, .registration = TRUE
+#' @importFrom Rcpp sourceCpp
+#' @name ci_split_search_cpp
+NULL
+
+#' @rdname ci_split_search_cpp
+#' @export
+best_numeric_split_cpp <- function(
+    x,
+    y,
+    wt,
+    varid,
+    ctrl,
+    type = c("CI", "CIg", "CIc", "L"),
+    return = c("split", "candidate")) {
+  type <- match.arg(type)
+  return <- match.arg(return)
+  ctrl <- .ci_tree_normalize_control(ctrl)
+
+  stopifnot(is.matrix(y), ncol(y) == 2L, length(x) == nrow(y),
+            length(wt) == nrow(y))
+
+  if (identical(type, "L")) {
+    .ci_warn_negative_l_levels(y[, 1])
+  }
+
+  out <- ci_best_numeric_split_cpp_engine(
+    x = as.numeric(x),
+    y = y,
+    wt = as.numeric(wt),
+    minbucket = ctrl$minbucket,
+    minprob = ctrl$minprob,
+    type = type
+  )
+
+  if (!is.finite(out$gain)) {
+    return(NULL)
+  }
+
+  sp <- partykit::partysplit(
+    varid = as.integer(varid),
+    breaks = out$cutpoint,
+    index = 1:2
+  )
+
+  if (identical(return, "split")) {
+    return(sp)
+  }
+
+  list(
+    gain = out$gain,
+    varid = as.integer(varid),
+    partysplit = sp,
+    split = sp,
+    left = as.logical(out$left),
+    type = "numeric",
+    cutpoint = out$cutpoint
+  )
+}
+
+#' @rdname ci_split_search_cpp
+#' @export
+best_factor_split_cpp <- function(
+    x_full,
+    keep,
+    y_full,
+    wt_full,
+    varid,
+    ctrl,
+    type = c("CI", "CIg", "CIc", "L"),
+    return = c("split", "candidate")) {
+  type <- match.arg(type)
+  return <- match.arg(return)
+  ctrl <- .ci_tree_normalize_control(ctrl)
+
+  if (!is.factor(x_full)) {
+    x_full <- factor(x_full)
+  }
+  stopifnot(is.matrix(y_full), ncol(y_full) == 2L,
+            length(x_full) == nrow(y_full), length(wt_full) == nrow(y_full),
+            length(keep) == nrow(y_full))
+
+  full_levels <- levels(x_full)
+  x <- x_full[keep]
+  y <- y_full[keep, , drop = FALSE]
+  wt <- wt_full[keep]
+
+  if (identical(type, "L")) {
+    .ci_warn_negative_l_levels(y[, 1])
+  }
+
+  code <- as.integer(x)
+  out <- ci_best_factor_split_cpp_engine(
+    code = code,
+    y = y,
+    wt = as.numeric(wt),
+    n_levels = length(full_levels),
+    minbucket = ctrl$minbucket,
+    minprob = ctrl$minprob,
+    type = type
+  )
+
+  if (!is.finite(out$gain)) {
+    return(NULL)
+  }
+
+  left_codes <- as.integer(out$left_codes)
+  present_codes <- sort(unique(code[!is.na(code)]))
+  right_codes <- setdiff(present_codes, left_codes)
+
+  index <- rep(NA_integer_, length(full_levels))
+  index[left_codes] <- 1L
+  index[right_codes] <- 2L
+
+  sp <- partykit::partysplit(
+    varid = as.integer(varid),
+    index = index
+  )
+
+  if (identical(return, "split")) {
+    return(sp)
+  }
+
+  list(
+    gain = out$gain,
+    varid = as.integer(varid),
+    partysplit = sp,
+    split = sp,
+    left = as.logical(out$left),
+    type = "factor",
+    left_levels = full_levels[left_codes],
+    right_levels = full_levels[right_codes]
+  )
+}
+
+#' @rdname ci_split_search_cpp
+#' @export
+best_split_for_one_variable_cpp <- function(
+    x,
+    y,
+    wt,
+    varid,
+    ctrl,
+    type = c("CI", "CIg", "CIc", "L")) {
+  type <- match.arg(type)
+  stopifnot(length(x) == nrow(y), length(wt) == nrow(y))
+  ctrl <- .ci_tree_normalize_control(ctrl)
+
+  keep <- stats::complete.cases(y) & !is.na(x) & !is.na(wt) & wt > 0
+  if (sum(wt[keep], na.rm = TRUE) < ctrl$minsplit) {
+    return(NULL)
+  }
+
+  candidate <- NULL
+
+  if (is.numeric(x) || is.integer(x)) {
+    candidate <- best_numeric_split_cpp(
+      x = x[keep],
+      y = y[keep, , drop = FALSE],
+      wt = wt[keep],
+      varid = varid,
+      ctrl = ctrl,
+      type = type,
+      return = "candidate"
+    )
+  } else if (is.factor(x) || is.ordered(x)) {
+    candidate <- best_factor_split_cpp(
+      x_full = x,
+      keep = keep,
+      y_full = y,
+      wt_full = wt,
+      varid = varid,
+      ctrl = ctrl,
+      type = type,
+      return = "candidate"
+    )
+  }
+
+  if (is.null(candidate)) {
+    return(NULL)
+  }
+
+  left <- rep(FALSE, length(x))
+  left[keep] <- candidate$left
+  candidate$left <- left
+  candidate
+}
+
+#' @rdname ci_split_search_cpp
+#' @export
+best_global_ci_split_cpp <- function(x,
+                                     y,
+                                     wt,
+                                     ctrl,
+                                     type = c("CI", "CIg", "CIc", "L"),
+                                     vars = seq_along(x)) {
+  type <- match.arg(type)
+  stopifnot(is.matrix(y), nrow(y) == length(wt))
+  ctrl <- .ci_tree_normalize_control(ctrl)
+
+  vars <- as.integer(vars)
+  vars <- vars[vars %in% seq_along(x)]
+
+  if (!length(vars)) {
+    return(NULL)
+  }
+
+  if (!is.null(ctrl$mtry)) {
+    vars <- sample(vars, min(ctrl$mtry, length(vars)))
+  }
+
+  best <- NULL
+
+  for (j in vars) {
+    candidate <- best_split_for_one_variable_cpp(
+      x = x[[j]],
+      y = y,
+      wt = wt,
+      varid = j,
+      ctrl = ctrl,
+      type = type
+    )
+
+    if (!is.null(candidate) &&
+        (is.null(best) || candidate$gain > best$gain)) {
+      best <- candidate
+    }
+  }
+
+  if (is.null(best) ||
+      !is.finite(best$gain) ||
+      best$gain <= ctrl$min_gain) {
+    return(NULL)
+  }
+
+  best
+}
+```
+
+```{r cpp-wrapper-example, eval=FALSE}
+best_global_ci_split_cpp(
+  x = predictors,
+  y = y,
+  wt = wt,
+  ctrl = ci_tree_control(),
+  type = "CI"
+)
+```
+
+## Design notes
+
+The C++ engine computes the same concentration-index gain as the R path:
+
+1. Compute the parent CI once.
+2. Search all admissible candidate splits.
+3. Compute child-specific weighted fractional ranks inside each candidate child.
+4. Return the best gain and child membership.
+
+The C++ functions return compact engine results. The R wrappers convert those
+results into the same user-facing objects as the R split search: `partysplit`
+objects for `return = "split"` and candidate lists for `return = "candidate"`.
+
+## Verification
+
+The tests compare the C++ path against the current R implementation for:
+
+- numeric split search,
+- factor split search with unused levels,
+- mixed-predictor global split search.
+
+Run focused tests with:
+
+```{r run-tests, eval=FALSE}
+testthat::test_file("tests/testthat/test-ci_split_search_cpp.R")
+```

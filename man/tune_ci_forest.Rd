@@ -129,8 +129,8 @@ predictions in the same tuning run.
 if (requireNamespace("future", quietly = TRUE) &&
     requireNamespace("future.apply", quietly = TRUE)) {
   old_plan <- future::plan()
-  future::plan(future::multisession, workers = 2)
   on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::sequential)
 
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60, 70, 80),
