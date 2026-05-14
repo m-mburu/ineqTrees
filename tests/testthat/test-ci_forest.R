@@ -77,6 +77,51 @@ test_that(
   }, logical(1))))
 })
 
+test_that("ci_forest parallel fitting preserves the serial object structure", {
+  skip_if_not_installed("future")
+  skip_if_not_installed("future.apply")
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  future::plan(future::sequential)
+
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12),
+    group = factor(c("low", "low", "mid", "mid", "high", "high"))
+  )
+
+  set.seed(10)
+  serial_fit <- ci_forest(
+    formula = cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 4L,
+    mtry = 1L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+  set.seed(10)
+  parallel_fit <- ci_forest(
+    formula = cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 4L,
+    mtry = 1L,
+    parallel = TRUE,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_s3_class(parallel_fit, "ci_forest")
+  expect_named(parallel_fit, names(serial_fit))
+  expect_equal(length(parallel_fit$trees), length(serial_fit$trees))
+  expect_equal(dim(parallel_fit$inbag), dim(serial_fit$inbag))
+  expect_named(parallel_fit$trees[[1]], names(serial_fit$trees[[1]]))
+  expect_s3_class(parallel_fit$trees[[1]]$fit, "ci_tree")
+})
+
 test_that("ci_forest accepts explicit weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),

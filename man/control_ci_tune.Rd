@@ -18,7 +18,8 @@ control_ci_tune(
 \arguments{
 \item{verbose}{Logical; print fold-level progress.}
 
-\item{allow_par}{Logical; allow parallel execution when \code{num_cores > 1}.}
+\item{allow_par}{Logical; allow future-based parallel execution when
+\code{num_cores > 1}.}
 
 \item{parallel_over}{Parallelization strategy. \code{"resamples"} and
 \code{"everything"} are currently accepted; both are executed over
@@ -36,7 +37,8 @@ and \code{surrogate} components.}
 \item{pkgs}{Optional character vector of packages to load on workers. Kept
 for API compatibility with parallel workflows.}
 
-\item{num_cores}{Number of worker processes to request.}
+\item{num_cores}{Compatibility gate for parallel execution. Worker counts are
+controlled by the user's active future plan.}
 }
 \value{
 A \code{control_ci_tune} object.
@@ -45,6 +47,6 @@ A \code{control_ci_tune} object.
 Creates a control object for \code{\link[=tune_ci_tree]{tune_ci_tree()}} and \code{\link[=tune_ci_forest]{tune_ci_forest()}}. The
 defaults keep tuning sequential and memory-light, while optional settings can
 save validation predictions, fitted fold models, extraction results, and
-request parallel execution on platforms where forked parallelism is
-available.
+request future-based parallel execution when the user has configured a
+future backend externally.
 }

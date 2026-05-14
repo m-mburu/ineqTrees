@@ -16,6 +16,8 @@ ci_forest(
   ntree = 500L,
   mtry = NULL,
   perturb = list(replace = FALSE, fraction = 0.632),
+  parallel = FALSE,
+  future.seed = TRUE,
   na.action = stats::na.omit,
   ...
 )
@@ -52,6 +54,13 @@ the greedy tree builder.}
 sampled with replacement and \code{fraction} controls the sample size relative
 to the complete analysis data.}
 
+\item{parallel}{Logical; grow trees with \code{\link[future.apply:future_lapply]{future.apply::future_lapply()}}.
+The future backend is controlled by the user outside \code{ci_forest()}, for
+example with \code{future::plan()}.}
+
+\item{future.seed}{Passed to \code{\link[future.apply:future_lapply]{future.apply::future_lapply()}} when
+\code{parallel = TRUE}.}
+
 \item{na.action}{A function for handling missing values.}
 
 \item{...}{Currently ignored; retained for backwards compatibility.}
@@ -59,8 +68,6 @@ to the complete analysis data.}
 \value{
 A fitted \code{ci_forest} object containing the greedy trees, in-bag
 indicators, fitted values, and forest controls.
-
-nrow(stats::fitted(fit))
 
 A fitted \code{ci_forest} object.
 }
@@ -83,6 +90,31 @@ optionally, through \code{mtry}, which restricts the number of predictors search
 at each node. Within each tree, the split rule is the same direct
 maximization of concentration-index gain used by \code{\link[=ci_tree]{ci_tree()}}. Predictions are
 aggregated across trees by averaging terminal-node summaries.
+}
+\examples{
+if (requireNamespace("future", quietly = TRUE) &&
+    requireNamespace("future.apply", quietly = TRUE)) {
+  old_plan <- future::plan()
+  future::plan(future::multisession, workers = 2)
+  on.exit(future::plan(old_plan), add = TRUE)
+
+  fit <- ci_forest(
+    cbind(rank, outcome) ~ income,
+    data = data.frame(
+      rank = c(10, 20, 30, 40, 50, 60),
+      outcome = c(1, 0, 1, 0, 1, 1),
+      income = c(2, 4, 6, 8, 10, 12)
+    ),
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 3,
+    parallel = TRUE,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  nrow(stats::fitted(fit))
+}
+
 }
 \references{
 Breiman L (2001). "Random Forests." \emph{Machine Learning}, 45, 5-32.

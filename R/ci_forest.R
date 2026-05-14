@@ -126,13 +126,40 @@
 #' @param perturb Resampling specification. `replace` controls whether rows are
 #'   sampled with replacement and `fraction` controls the sample size relative
 #'   to the complete analysis data.
+#' @param parallel Logical; grow trees with [future.apply::future_lapply()].
+#'   The future backend is controlled by the user outside `ci_forest()`, for
+#'   example with `future::plan()`.
+#' @param future.seed Passed to [future.apply::future_lapply()] when
+#'   `parallel = TRUE`.
 #' @param na.action A function for handling missing values.
 #' @param ... Currently ignored; retained for backwards compatibility.
 #'
 #' @return A fitted `ci_forest` object containing the greedy trees, in-bag
 #'   indicators, fitted values, and forest controls.
 #'
-#' nrow(stats::fitted(fit))
+#' @examples
+#' if (requireNamespace("future", quietly = TRUE) &&
+#'     requireNamespace("future.apply", quietly = TRUE)) {
+#'   old_plan <- future::plan()
+#'   future::plan(future::multisession, workers = 2)
+#'   on.exit(future::plan(old_plan), add = TRUE)
+#'
+#'   fit <- ci_forest(
+#'     cbind(rank, outcome) ~ income,
+#'     data = data.frame(
+#'       rank = c(10, 20, 30, 40, 50, 60),
+#'       outcome = c(1, 0, 1, 0, 1, 1),
+#'       income = c(2, 4, 6, 8, 10, 12)
+#'     ),
+#'     rank_name = "rank",
+#'     outcome_name = "outcome",
+#'     ntree = 3,
+#'     parallel = TRUE,
+#'     control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+#'   )
+#'
+#'   nrow(stats::fitted(fit))
+#' }
 #'
 #' @references
 #' Breiman L (2001). "Random Forests." *Machine Learning*, 45, 5-32.
@@ -156,6 +183,8 @@ ci_forest <- function(formula,
                       ntree = 500L,
                       mtry = NULL,
                       perturb = list(replace = FALSE, fraction = 0.632),
+                      parallel = FALSE,
+                      future.seed = TRUE,
                       na.action = stats::na.omit,
                       ...) {
   type <- match.arg(type)
@@ -167,6 +196,10 @@ ci_forest <- function(formula,
       call. = FALSE
     )
   }
+  if (!is.logical(parallel) || length(parallel) != 1L || is.na(parallel)) {
+    stop("`parallel` must be a single non-missing logical value.", call. = FALSE)
+  }
+  parallel <- isTRUE(parallel)
 
   data <- as.data.frame(data)
   mf <- stats::model.frame(
@@ -234,16 +267,12 @@ ci_forest <- function(formula,
     }
   }
 
-  trees <- vector("list", ntree)
-  inbag <- matrix(0L, nrow = n, ncol = ntree)
-
-  for (b in seq_len(ntree)) {
+  grow_one_tree <- function(b) {
     sample_rows <- .ci_forest_sample(n, perturb)
-    inbag[, b] <- tabulate(sample_rows, nbins = n)
     sample_weights <- weights[sample_rows]
     sample_data <- forest_data[sample_rows, , drop = FALSE]
 
-    trees[[b]] <- list(
+    list(
       fit = .fit_ci_tree_from_frame(
         mf = mf[sample_rows, , drop = FALSE],
         y_full = y_full[sample_rows, , drop = FALSE],
@@ -260,6 +289,21 @@ ci_forest <- function(formula,
       data = sample_data,
       weights = sample_weights
     )
+  }
+
+  trees <- if (parallel) {
+    future.apply::future_lapply(
+      seq_len(ntree),
+      grow_one_tree,
+      future.seed = future.seed
+    )
+  } else {
+    lapply(seq_len(ntree), grow_one_tree)
+  }
+
+  inbag <- matrix(0L, nrow = n, ncol = ntree)
+  for (b in seq_len(ntree)) {
+    inbag[, b] <- tabulate(trees[[b]]$rows, nbins = n)
   }
 
   fit <- list(

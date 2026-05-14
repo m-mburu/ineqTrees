@@ -356,11 +356,12 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 #' Creates a control object for [tune_ci_tree()] and [tune_ci_forest()]. The
 #' defaults keep tuning sequential and memory-light, while optional settings can
 #' save validation predictions, fitted fold models, extraction results, and
-#' request parallel execution on platforms where forked parallelism is
-#' available.
+#' request future-based parallel execution when the user has configured a
+#' future backend externally.
 #'
 #' @param verbose Logical; print fold-level progress.
-#' @param allow_par Logical; allow parallel execution when `num_cores > 1`.
+#' @param allow_par Logical; allow future-based parallel execution when
+#'   `num_cores > 1`.
 #' @param parallel_over Parallelization strategy. `"resamples"` and
 #'   `"everything"` are currently accepted; both are executed over
 #'   grid/resample tasks.
@@ -372,7 +373,8 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 #'   and `surrogate` components.
 #' @param pkgs Optional character vector of packages to load on workers. Kept
 #'   for API compatibility with parallel workflows.
-#' @param num_cores Number of worker processes to request.
+#' @param num_cores Compatibility gate for parallel execution. Worker counts are
+#'   controlled by the user's active future plan.
 #'
 #' @return A `control_ci_tune` object.
 #'
@@ -654,15 +656,8 @@ control_ci_tune <- function(verbose = FALSE,
     control$num_cores > 1L &&
     length(tasks) > 1L
 
-  if (use_parallel && identical(.Platform$OS.type, "unix")) {
-    return(parallel::mclapply(tasks, fn, mc.cores = control$num_cores))
-  }
-
-  if (use_parallel && identical(.Platform$OS.type, "windows")) {
-    warning(
-      "Parallel tuning currently falls back to sequential execution on Windows.",
-      call. = FALSE
-    )
+  if (use_parallel) {
+    return(future.apply::future_lapply(tasks, fn, future.seed = TRUE))
   }
 
   lapply(tasks, fn)
