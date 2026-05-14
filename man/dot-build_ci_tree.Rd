@@ -4,7 +4,7 @@
 \alias{.build_ci_tree}
 \title{Recursively build a greedy concentration-index party tree}
 \usage{
-.build_ci_tree(data, y, wt, vars, ctrl, ci_fun)
+.build_ci_tree(data, y, wt, vars, ctrl, ci_fun, type = "CI")
 }
 \arguments{
 \item{data}{Data frame of predictor variables.}
@@ -19,6 +19,9 @@ splitting.}
 \item{ctrl}{Normalized control list from \code{.ci_tree_normalize_control()}.}
 
 \item{ci_fun}{Concentration-index function created by \code{ci_factory()}.}
+
+\item{type}{Concentration-index type used when \code{control$split_engine} is
+\code{"cpp"}.}
 }
 \value{
 A list with \code{node}, the root \code{partykit::partynode()}, and \code{fitted},

@@ -10,7 +10,8 @@ ci_tree_control(
   minprob = 0.01,
   maxdepth = 4L,
   min_gain = 0,
-  mtry = NULL
+  mtry = NULL,
+  split_engine = c("cpp", "R")
 )
 }
 \arguments{
@@ -26,6 +27,9 @@ split.}
 \item{min_gain}{Minimum concentration-index gain required to split a node.}
 
 \item{mtry}{Optional number of variables sampled as candidates at each node.}
+
+\item{split_engine}{Split-search implementation to use. \code{"cpp"} uses the
+Rcpp-backed split search, while \code{"R"} uses the reference R implementation.}
 }
 \value{
 A list of greedy CI tree controls.

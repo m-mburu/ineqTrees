@@ -24,6 +24,7 @@ Imports:
     magrittr,
     parsnip,
     partykit,
+    Rcpp,
     rlang,
     stats,
     tibble,
@@ -44,6 +45,8 @@ Suggests:
     testthat,
     tune,
     workflows
+LinkingTo: 
+    Rcpp
 VignetteBuilder: 
     knitr
 Config/fusen/version: 0.7.2

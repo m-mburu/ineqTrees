@@ -9,6 +9,8 @@
 #' @param maxdepth Maximum tree depth, with the root at depth 0.
 #' @param min_gain Minimum concentration-index gain required to split a node.
 #' @param mtry Optional number of variables sampled as candidates at each node.
+#' @param split_engine Split-search implementation to use. `"cpp"` uses the
+#'   Rcpp-backed split search, while `"R"` uses the reference R implementation.
 #'
 #' @return A list of greedy CI tree controls.
 #'
@@ -18,14 +20,18 @@ ci_tree_control <- function(minsplit = 200L,
                             minprob = 0.01,
                             maxdepth = 4L,
                             min_gain = 0,
-                            mtry = NULL) {
+                            mtry = NULL,
+                            split_engine = c("cpp", "R")) {
+  split_engine <- match.arg(split_engine)
+
   list(
     minsplit = minsplit,
     minbucket = minbucket,
     minprob = minprob,
     maxdepth = maxdepth,
     min_gain = min_gain,
-    mtry = mtry
+    mtry = mtry,
+    split_engine = split_engine
   )
 }
 
@@ -91,6 +97,17 @@ ci_tree_control <- function(minsplit = 200L,
       )
     }
     ctrl$mtry <- as.integer(ceiling(ctrl$mtry))
+  }
+
+  if (is.null(ctrl$split_engine)) {
+    ctrl$split_engine <- "cpp"
+  }
+  if (length(ctrl$split_engine) != 1L ||
+      is.na(ctrl$split_engine) ||
+      !ctrl$split_engine %in% c("cpp", "R")) {
+    stop('`control$split_engine` must be either "cpp" or "R".',
+      call. = FALSE
+    )
   }
 
   ctrl
@@ -197,12 +214,14 @@ ci_tree_control <- function(minsplit = 200L,
 #'   splitting.
 #' @param ctrl Normalized control list from `.ci_tree_normalize_control()`.
 #' @param ci_fun Concentration-index function created by `ci_factory()`.
+#' @param type Concentration-index type used when `control$split_engine` is
+#'   `"cpp"`.
 #'
 #' @return A list with `node`, the root `partykit::partynode()`, and `fitted`,
 #'   an integer vector mapping training rows to terminal node ids.
 #'
 #' @export
-.build_ci_tree <- function(data, y, wt, vars, ctrl, ci_fun) {
+.build_ci_tree <- function(data, y, wt, vars, ctrl, ci_fun, type = "CI") {
   next_id <- local({
     id <- 0L
     function() {
@@ -229,14 +248,25 @@ ci_tree_control <- function(minsplit = 200L,
 
     split <- NULL
     if (!terminal) {
-      split <- best_global_ci_split(
-        x = data_node,
-        y = y_node,
-        wt = wt_node,
-        ctrl = ctrl,
-        ci_fun = ci_fun,
-        vars = vars
-      )
+      if (identical(ctrl$split_engine, "cpp")) {
+        split <- best_global_ci_split_cpp(
+          x = data_node,
+          y = y_node,
+          wt = wt_node,
+          ctrl = ctrl,
+          type = type,
+          vars = vars
+        )
+      } else {
+        split <- best_global_ci_split(
+          x = data_node,
+          y = y_node,
+          wt = wt_node,
+          ctrl = ctrl,
+          ci_fun = ci_fun,
+          vars = vars
+        )
+      }
     }
 
     if (is.null(split)) {

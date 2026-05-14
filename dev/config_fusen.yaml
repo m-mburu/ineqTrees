@@ -28,6 +28,23 @@ ci_split_search.Rmd:
     overwrite: 'yes'
     clean: 'no'
     codecov: false
+ci_split_search_cpp.Rmd:
+  path: dev/ci_split_search_cpp.Rmd
+  state: active
+  R:
+  - R/ci_split_search_cpp.R
+  - R/RcppExports.R
+  tests: tests/testthat/test-ci_split_search_cpp.R
+  vignettes: vignettes/ci-split-search-with-rcpp.Rmd
+  inflate:
+    flat_file: dev/ci_split_search_cpp.Rmd
+    vignette_name: CI split search with Rcpp
+    open_vignette: false
+    check: false
+    document: false
+    overwrite: 'no'
+    clean: 'no'
+    codecov: false
 ci_tree_builder.Rmd:
   path: dev/ci_tree_builder.Rmd
   state: active
