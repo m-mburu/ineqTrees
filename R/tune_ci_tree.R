@@ -9,6 +9,235 @@ tune_ctree_ci <- function(...) {
   tune_ci_tree(...)
 }
 
+#' Evaluate one forest tuning task
+#'
+#' @noRd
+.ci_tune_forest_task <- function(task,
+                                 formula,
+                                 data,
+                                 rank_name,
+                                 outcome_name,
+                                 weights,
+                                 outcome,
+                                 metrics,
+                                 tuning_grid,
+                                 root_table,
+                                 surrogate_control,
+                                 prediction_name,
+                                 ntree,
+                                 perturb,
+                                 parallel_over,
+                                 forest_future.seed,
+                                 na.action,
+                                 control,
+                                 extra_args = list()) {
+  g <- task$grid_id
+  grid_row <- task$grid_row
+  tree_control <- .ci_control_from_grid_row(grid_row)
+  surr_control <- .ci_surrogate_control(tree_control, surrogate_control)
+  this_ntree <- .ci_forest_ntree_from_row(grid_row, ntree)
+  this_type <- as.character(grid_row$type[1L])
+  fold <- task$resample$fold_id
+  train_idx <- task$resample$train_idx
+  test_idx <- task$resample$test_idx
+  notes <- list()
+
+  fit_result <- .ci_capture({
+    if (!is.null(task$seed)) {
+      set.seed(task$seed)
+    }
+    forest <- do.call(
+      ci_forest,
+      c(
+        list(
+          formula = formula,
+          data = data[train_idx, , drop = FALSE],
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          weights = weights[train_idx],
+          type = this_type,
+          control = tree_control,
+          ntree = this_ntree,
+          perturb = perturb,
+          parallel = identical(parallel_over, "forest"),
+          future.seed = forest_future.seed,
+          na.action = na.action
+        ),
+        extra_args
+      )
+    )
+    surrogate <- .ci_fit_forest_surrogate(
+      forest = forest,
+      data = data[train_idx, , drop = FALSE],
+      formula = formula,
+      rank_name = rank_name,
+      prediction_name = prediction_name,
+      weights = weights[train_idx],
+      type = this_type,
+      control = surr_control,
+      na.action = na.action
+    )
+    list(forest = forest, surrogate = surrogate)
+  })
+
+  notes[[length(notes) + 1L]] <- .ci_notes_dt(
+    g, fold, this_type, stage = "fit", messages = fit_result$warnings
+  )
+  if (!isTRUE(fit_result$ok)) {
+    notes[[length(notes) + 1L]] <- .ci_notes_dt(
+      g, fold, this_type, stage = "fit", messages = fit_result$error, class = "error"
+    )
+  }
+
+  score_rows <- vector("list", length(metrics))
+  prediction_rows <- data.table::data.table()
+  extract_rows <- data.table::data.table()
+  fit_rows <- data.table::data.table()
+  pred <- NULL
+  valid_data <- data[test_idx, , drop = FALSE]
+  n_terminal <- NA_integer_
+
+  if (isTRUE(fit_result$ok)) {
+    pred_result <- .ci_capture({
+      stats::predict(fit_result$value$forest, newdata = valid_data, OOB = FALSE)
+    })
+    notes[[length(notes) + 1L]] <- .ci_notes_dt(
+      g, fold, this_type, stage = "predict", messages = pred_result$warnings
+    )
+    if (isTRUE(pred_result$ok)) {
+      pred <- as.numeric(pred_result$value)
+      valid_data[[prediction_name]] <- pred
+      if (isTRUE(control$save_pred)) {
+        prediction_rows <- data.table::data.table(
+          grid_id = g,
+          fold_id = fold,
+          type = this_type,
+          row_id = test_idx,
+          outcome = outcome[test_idx],
+          weight = weights[test_idx],
+          .pred = pred
+        )
+      }
+    } else {
+      notes[[length(notes) + 1L]] <- .ci_notes_dt(
+        g, fold, this_type, stage = "predict", messages = pred_result$error,
+        class = "error"
+      )
+    }
+
+    n_terminal <- length(partykit::nodeids(
+      fit_result$value$surrogate$fit,
+      terminal = TRUE
+    ))
+
+    if (!is.null(control$extract)) {
+      extract_result <- .ci_capture(control$extract(fit_result$value))
+      notes[[length(notes) + 1L]] <- .ci_notes_dt(
+        g, fold, this_type, stage = "extract", messages = extract_result$warnings
+      )
+      if (isTRUE(extract_result$ok)) {
+        extract_rows <- data.table::data.table(
+          grid_id = g,
+          fold_id = fold,
+          type = this_type,
+          .extracts = list(extract_result$value)
+        )
+      } else {
+        notes[[length(notes) + 1L]] <- .ci_notes_dt(
+          g, fold, this_type, stage = "extract", messages = extract_result$error,
+          class = "error"
+        )
+      }
+    }
+
+    if (isTRUE(control$save_fit)) {
+      fit_rows <- data.table::data.table(
+        grid_id = g,
+        fold_id = fold,
+        type = this_type,
+        .fit = list(fit_result$value)
+      )
+    }
+  }
+
+  for (i in seq_along(metrics)) {
+    this_metric <- metrics[i]
+    score <- NA_real_
+    if (isTRUE(fit_result$ok)) {
+      score_result <- .ci_capture({
+        if (identical(this_metric, "validation_gain") && !is.null(pred)) {
+          root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
+          .ci_score_validation_gain(
+            fit = fit_result$value$surrogate$fit,
+            new_data = valid_data,
+            rank_name = rank_name,
+            outcome_name = outcome_name,
+            weights = weights[test_idx],
+            type = this_type,
+            root_impurity = root_impurity
+          )
+        } else if (!identical(this_metric, "validation_gain") && !is.null(pred)) {
+          .ci_score_prediction_metric(
+            this_metric,
+            outcome[test_idx],
+            pred,
+            weights[test_idx]
+          )
+        } else {
+          NA_real_
+        }
+      })
+      notes[[length(notes) + 1L]] <- .ci_notes_dt(
+        g, fold, this_type, metric = this_metric, stage = "score",
+        messages = score_result$warnings
+      )
+      if (isTRUE(score_result$ok)) {
+        score <- score_result$value
+      } else {
+        notes[[length(notes) + 1L]] <- .ci_notes_dt(
+          g, fold, this_type, metric = this_metric, stage = "score",
+          messages = score_result$error, class = "error"
+        )
+      }
+    }
+
+    score_rows[[i]] <- data.table::data.table(
+      grid_id = g,
+      fold_id = fold,
+      metric = this_metric,
+      score = score,
+      n_terminal = n_terminal,
+      fit_error = fit_result$error
+    )
+    for (nm in names(tuning_grid)) {
+      score_rows[[i]][[nm]] <- grid_row[[nm]][1L]
+    }
+    if (!("ntree" %in% names(score_rows[[i]]))) {
+      score_rows[[i]]$ntree <- this_ntree
+    }
+
+    if (isTRUE(control$verbose)) {
+      message(sprintf(
+        "[grid %d/%d, fold %s, type %s] %s = %s",
+        g,
+        nrow(tuning_grid),
+        fold,
+        this_type,
+        this_metric,
+        if (is.na(score)) "NA" else format(round(score, 5), nsmall = 5)
+      ))
+    }
+  }
+
+  list(
+    fold_results = data.table::rbindlist(score_rows, fill = TRUE),
+    predictions = prediction_rows,
+    extracts = extract_rows,
+    fits = fit_rows,
+    notes = data.table::rbindlist(notes, fill = TRUE)
+  )
+}
+
 #' Tune greedy concentration-index forest controls by cross-validation
 #'
 #' @description
@@ -167,222 +396,34 @@ tune_ci_forest <- function(formula,
     types = unique(tuning_grid$type)
   )
   tasks <- .ci_task_grid(tuning_grid, resample_index, seed = seed)
-
-  run_task <- function(task) {
-    g <- task$grid_id
-    grid_row <- task$grid_row
-    tree_control <- .ci_control_from_grid_row(grid_row)
-    surr_control <- .ci_surrogate_control(tree_control, surrogate_control)
-    this_ntree <- .ci_forest_ntree_from_row(grid_row, ntree)
-    this_type <- as.character(grid_row$type[1L])
-    fold <- task$resample$fold_id
-    train_idx <- task$resample$train_idx
-    test_idx <- task$resample$test_idx
-    notes <- list()
-
-    fit_result <- .ci_capture({
-      if (!is.null(task$seed)) {
-        set.seed(task$seed)
-      }
-      forest <- ci_forest(
-        formula = formula,
-        data = data[train_idx, , drop = FALSE],
-        rank_name = rank_name,
-        outcome_name = outcome_name,
-        weights = weights[train_idx],
-        type = this_type,
-        control = tree_control,
-        ntree = this_ntree,
-        perturb = perturb,
-        parallel = identical(parallel_over, "forest"),
-        future.seed = future.seed,
-        na.action = na.action,
-        ...
-      )
-      surrogate <- .ci_fit_forest_surrogate(
-        forest = forest,
-        data = data[train_idx, , drop = FALSE],
-        formula = formula,
-        rank_name = rank_name,
-        prediction_name = prediction_name,
-        weights = weights[train_idx],
-        type = this_type,
-        control = surr_control,
-        na.action = na.action
-      )
-      list(forest = forest, surrogate = surrogate)
-    })
-
-    notes[[length(notes) + 1L]] <- .ci_notes_dt(
-      g, fold, this_type, stage = "fit", messages = fit_result$warnings
-    )
-    if (!isTRUE(fit_result$ok)) {
-      notes[[length(notes) + 1L]] <- .ci_notes_dt(
-        g, fold, this_type, stage = "fit", messages = fit_result$error, class = "error"
-      )
-    }
-
-    score_rows <- vector("list", length(metrics))
-    prediction_rows <- data.table::data.table()
-    extract_rows <- data.table::data.table()
-    fit_rows <- data.table::data.table()
-    pred <- NULL
-    valid_data <- data[test_idx, , drop = FALSE]
-    n_terminal <- NA_integer_
-
-    if (isTRUE(fit_result$ok)) {
-      pred_result <- .ci_capture({
-        stats::predict(fit_result$value$forest, newdata = valid_data, OOB = FALSE)
-      })
-      notes[[length(notes) + 1L]] <- .ci_notes_dt(
-        g, fold, this_type, stage = "predict", messages = pred_result$warnings
-      )
-      if (isTRUE(pred_result$ok)) {
-        pred <- as.numeric(pred_result$value)
-        valid_data[[prediction_name]] <- pred
-        if (isTRUE(control$save_pred)) {
-          prediction_rows <- data.table::data.table(
-            grid_id = g,
-            fold_id = fold,
-            type = this_type,
-            row_id = test_idx,
-            outcome = outcome[test_idx],
-            weight = weights[test_idx],
-            .pred = pred
-          )
-        }
-      } else {
-        notes[[length(notes) + 1L]] <- .ci_notes_dt(
-          g, fold, this_type, stage = "predict", messages = pred_result$error,
-          class = "error"
-        )
-      }
-
-      n_terminal <- length(partykit::nodeids(
-        fit_result$value$surrogate$fit,
-        terminal = TRUE
-      ))
-
-      if (!is.null(control$extract)) {
-        extract_result <- .ci_capture(control$extract(fit_result$value))
-        notes[[length(notes) + 1L]] <- .ci_notes_dt(
-          g, fold, this_type, stage = "extract", messages = extract_result$warnings
-        )
-        if (isTRUE(extract_result$ok)) {
-          extract_rows <- data.table::data.table(
-            grid_id = g,
-            fold_id = fold,
-            type = this_type,
-            .extracts = list(extract_result$value)
-          )
-        } else {
-          notes[[length(notes) + 1L]] <- .ci_notes_dt(
-            g, fold, this_type, stage = "extract", messages = extract_result$error,
-            class = "error"
-          )
-        }
-      }
-
-      if (isTRUE(control$save_fit)) {
-        fit_rows <- data.table::data.table(
-          grid_id = g,
-          fold_id = fold,
-          type = this_type,
-          .fit = list(fit_result$value)
-        )
-      }
-    }
-
-    for (i in seq_along(metrics)) {
-      this_metric <- metrics[i]
-      score <- NA_real_
-      if (isTRUE(fit_result$ok)) {
-        score_result <- .ci_capture({
-          if (identical(this_metric, "validation_gain") && !is.null(pred)) {
-            root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
-            .ci_score_validation_gain(
-              fit = fit_result$value$surrogate$fit,
-              new_data = valid_data,
-              rank_name = rank_name,
-              outcome_name = outcome_name,
-              weights = weights[test_idx],
-              type = this_type,
-              root_impurity = root_impurity
-            )
-          } else if (!identical(this_metric, "validation_gain") && !is.null(pred)) {
-            .ci_score_prediction_metric(
-              this_metric,
-              outcome[test_idx],
-              pred,
-              weights[test_idx]
-            )
-          } else {
-            NA_real_
-          }
-        })
-        notes[[length(notes) + 1L]] <- .ci_notes_dt(
-          g, fold, this_type, metric = this_metric, stage = "score",
-          messages = score_result$warnings
-        )
-        if (isTRUE(score_result$ok)) {
-          score <- score_result$value
-        } else {
-          notes[[length(notes) + 1L]] <- .ci_notes_dt(
-            g, fold, this_type, metric = this_metric, stage = "score",
-            messages = score_result$error, class = "error"
-          )
-        }
-      }
-
-      score_rows[[i]] <- data.table::data.table(
-        grid_id = g,
-        fold_id = fold,
-        metric = this_metric,
-        score = score,
-        n_terminal = n_terminal,
-        fit_error = fit_result$error
-      )
-      for (nm in names(tuning_grid)) {
-        score_rows[[i]][[nm]] <- grid_row[[nm]][1L]
-      }
-      if (!("ntree" %in% names(score_rows[[i]]))) {
-        score_rows[[i]]$ntree <- this_ntree
-      }
-
-      if (isTRUE(control$verbose)) {
-        message(sprintf(
-          "[grid %d/%d, fold %s, type %s] %s = %s",
-          g,
-          nrow(tuning_grid),
-          fold,
-          this_type,
-          this_metric,
-          if (is.na(score)) "NA" else format(round(score, 5), nsmall = 5)
-        ))
-      }
-    }
-
-    list(
-      fold_results = data.table::rbindlist(score_rows, fill = TRUE),
-      predictions = prediction_rows,
-      extracts = extract_rows,
-      fits = fit_rows,
-      notes = data.table::rbindlist(notes, fill = TRUE)
-    )
-  }
-
-  evaluate_one_task <- function(i) {
-    run_task(tasks[[i]])
-  }
+  task_args <- list(
+    formula = formula,
+    data = data,
+    rank_name = rank_name,
+    outcome_name = outcome_name,
+    weights = weights,
+    outcome = outcome,
+    metrics = metrics,
+    tuning_grid = tuning_grid,
+    root_table = root_table,
+    surrogate_control = surrogate_control,
+    prediction_name = prediction_name,
+    ntree = ntree,
+    perturb = perturb,
+    parallel_over = parallel_over,
+    forest_future.seed = future.seed,
+    na.action = na.action,
+    control = control,
+    extra_args = extra_args
+  )
 
   task_results <- if (identical(parallel_over, "tuning")) {
-    future.apply::future_lapply(
-      seq_along(tasks),
-      evaluate_one_task,
-      future.seed = future.seed
+    do.call(
+      future.apply::future_lapply,
+      c(list(X = tasks, FUN = .ci_tune_forest_task, future.seed = future.seed), task_args)
     )
   } else {
-    lapply(seq_along(tasks), evaluate_one_task)
+    do.call(lapply, c(list(X = tasks, FUN = .ci_tune_forest_task), task_args))
   }
   fold_results <- data.table::rbindlist(
     lapply(task_results, `[[`, "fold_results"),
@@ -404,10 +445,12 @@ tune_ci_forest <- function(formula,
   best_surrogate_data <- NULL
   best_type <- NA_character_
 
-  if (nrow(best_params) > 0L && isTRUE(is.finite(best_params$mean_score))) {
-    best_control <- .ci_control_from_grid_row(best_params)
-    best_type <- as.character(best_params$type[1L])
-    best_ntree <- .ci_forest_ntree_from_row(best_params, ntree)
+  refit_params <- best_params[is.finite(best_params$mean_score), , drop = FALSE]
+  if (nrow(refit_params) > 0L) {
+    refit_params <- refit_params[1L, , drop = FALSE]
+    best_control <- .ci_control_from_grid_row(refit_params)
+    best_type <- as.character(refit_params$type[1L])
+    best_ntree <- .ci_forest_ntree_from_row(refit_params, ntree)
     best_surrogate_control <- .ci_surrogate_control(best_control, surrogate_control)
 
     if (isTRUE(refit)) {

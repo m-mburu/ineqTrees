@@ -11,7 +11,7 @@ ci_show_best(x, metric = NULL, n = 5L, ...)
 
 \item{metric}{Optional metric name used to filter the result.}
 
-\item{n}{Number of rows to return.}
+\item{n}{Number of rows to return per concentration-index \code{type}.}
 
 \item{...}{Reserved for future extensions.}
 }

@@ -11,6 +11,11 @@
 health outcomes with tree-based models. The package includes weighted
 rank and concentration-index utilities, inequality-aware split scoring,
 and wrappers for fitting greedy concentration-index trees and forests.
+Open the [inequality-aware party trees
+article](https://m-mburu.github.io/ineqTrees/articles/inequality-aware-party-trees.html)
+for more detail on how these trees define the two-column response,
+choose concentration-index splits, tune controls, and summarize terminal
+subgroups.
 
 ## Installation
 
@@ -35,7 +40,7 @@ if (requireNamespace("pkgload", quietly = TRUE) && file.exists("DESCRIPTION")) {
 } else {
   library(ineqTrees)
 }
-library(data.table)
+suppressPackageStartupMessages(library(data.table))
 load("data/kenya.rda")
 
 set.seed(1)
@@ -43,12 +48,11 @@ set.seed(1)
 
 ### Fit tree
 
-- This is a concentration-index tree, so the response is a two-column
-  matrix of the ranking variable and the outcome. The `rank_name` and
-  `outcome_name` arguments specify which columns of the data to use for
-  those roles. The split criterion is based on concentration-index
-  reduction, so the `control` argument specifies greedy controls rather
-  than conditional-inference test controls.
+This is a concentration-index tree, so the response is a two-column
+matrix of the ranking variable and the outcome. The `rank_name` and
+`outcome_name` arguments specify which columns of the data play those
+roles. The `control` argument uses greedy tree controls from
+`ci_tree_control()`, not conditional-inference test controls.
 
 ``` r
 fit_tree <- ci_tree(
@@ -208,12 +212,12 @@ forest_tuned <- tune::tune_grid(
 )
 ```
 
-### Fit surrogarete tree to forest predictions
+### Fit a surrogate tree to forest predictions
 
-- The surrogate is a greedy concentration-index tree that approximates
-  the predictions of the fitted forest. This is useful for interpreting
-  the forest , since the surrogate can be refit on held-out data and
-  scored with CI gain.
+The surrogate is a greedy concentration-index tree that approximates the
+predictions of the fitted forest. This is useful for interpreting the
+forest, since the surrogate can be refit on held-out data and scored
+with CI gain.
 
 ``` r
 setDT(kenya)
@@ -246,11 +250,13 @@ readme_tree_plot(
 
 ## SHAP-based decomposition
 
-- Approximate SHAP values for the fitted forest with
-  `fastshap::explain()`, using a prediction wrapper that returns the
-  predicted outcome for each observation.
-- Decompose the concentration index of those predicted risks with
-  `shap_conc_decomp()`.
+Approximate SHAP values with `fastshap::explain()`, using a prediction
+wrapper that returns the predicted outcome for each observation, then
+decompose the concentration index of those predicted risks with
+`shap_conc_decomp()`. See the [SHAP-based decomposition
+article](https://m-mburu.github.io/ineqTrees/articles/shapley-decomposition.html)
+for the full walkthrough across `ci_tree()`, `ci_forest()`,
+tidymodels-backed forests, and ordinary `ranger` models.
 
 The model does not have to be an `ineqTrees` forest.
 `shap_conc_decomp()` only needs three things: SHAP values, the
@@ -261,26 +267,6 @@ risk of under-five death.
 
 ``` r
 library(tidymodels)
-#> ── Attaching packages ────────────────────────────────────── tidymodels 1.5.0 ──
-#> ✔ broom        1.0.12     ✔ recipes      1.3.2
-#> ✔ dials        1.4.3      ✔ rsample      1.3.2
-#> ✔ dplyr        1.2.1      ✔ tailor       0.1.0
-#> ✔ ggplot2      4.0.3      ✔ tidyr        1.3.2
-#> ✔ infer        1.1.0      ✔ tune         2.1.0
-#> ✔ modeldata    1.5.1      ✔ workflows    1.3.0
-#> ✔ parsnip      1.5.0      ✔ workflowsets 1.1.1
-#> ✔ purrr        1.2.2      ✔ yardstick    1.4.0
-#> ── Conflicts ───────────────────────────────────────── tidymodels_conflicts() ──
-#> ✖ dplyr::between()   masks data.table::between()
-#> ✖ purrr::discard()   masks scales::discard()
-#> ✖ dplyr::filter()    masks stats::filter()
-#> ✖ dplyr::first()     masks data.table::first()
-#> ✖ purrr::is_null()   masks testthat::is_null()
-#> ✖ dplyr::lag()       masks stats::lag()
-#> ✖ dplyr::last()      masks data.table::last()
-#> ✖ tidyr::matches()   masks rsample::matches(), dplyr::matches(), testthat::matches()
-#> ✖ recipes::step()    masks stats::step()
-#> ✖ purrr::transpose() masks data.table::transpose()
 library(ranger)
 
 ranger_data <- as.data.frame(
@@ -512,24 +498,27 @@ ggplot(
 
 ``` r
 set.seed(20260507)
-tuning_n <- min(800L, nrow(kenya))
+tuning_n <- min(600L, nrow(kenya))
 tuning_rows <- sort(sample.int(nrow(kenya), tuning_n))
 tuning_data <- kenya[tuning_rows, , drop = FALSE]
 ```
 
 ## Tune tree hyperparameters
 
-The current model-selection workflow uses `ci_tree_control_grid()` to
+The package-native tuning workflow uses `ci_tree_control_grid()` to
 define candidate greedy controls and `tune_ci_tree()` to score them with
-cross-validation. The concentration-index variant is tuned alongside the
-tree controls by passing several values to `type`.
+cross-validation. Pass one or more concentration-index objectives
+through `type`, compute one or more metrics with `metrics`, and use
+`control_ci_tune()` when you want saved predictions, saved fits, or
+extraction hooks. The `ci_collect_*()` helpers read the result back in a
+stable shape.
 
 ``` r
 tree_tune_grid <- ci_tree_control_grid(
-  minsplit = c(100L),
+  minsplit = 100L,
   minbucket = c(50L, 100L),
-  maxdepth = c(3L:6L),
-  minprob = c(0.01, 0.1)
+  maxdepth = c(3L, 4L),
+  minprob = c(0.01, 0.05)
 )
 ```
 
@@ -539,39 +528,43 @@ tree_tuning <- tune_ci_tree(
   data = tuning_data,
   rank_name = "wealth",
   outcome_name = "deadu5_num",
-  type = c("CI", "CIg", "CIc", "L"),
+  type = c("CI", "CIg"),
   control_grid = tree_tune_grid,
-  v = 5L,
+  v = 3L,
   strata = "deadu5_num",
   seed = 20260507,
-  metric = "validation_gain",
-  refit = TRUE
+  metrics = c("validation_gain", "brier"),
+  refit = TRUE,
+  control = control_ci_tune(save_pred = TRUE)
 )
-#> Warning: `type = "L"` uses observed socioeconomic levels rather than fractional
-#> ranks. The first response column contains negative values; the
-#> Erreygers-Kessels level-dependent index is intended for meaningful ratio-scale
-#> socioeconomic levels such as income, consumption, or expenditure. Centered
-#> wealth-index scores with negative values may be inappropriate for this
-#> criterion. See https://doi.org/10.3390/ijerph14070673. This warning is shown
-#> once per R session.
 ```
 
 ``` r
+tree_tuning_best <- ci_show_best(
+  tree_tuning,
+  metric = "validation_gain",
+  n = 5L
+)
+
 tree_tuning_table <- readme_tuning_table(
-  tree_tuning$summary,
+  tree_tuning_best,
   columns = c(
+    "metric",
     "type",
     "minsplit",
     "minbucket",
+    "minprob",
     "maxdepth",
     "mean_score",
     "sd_score",
     "mean_terminal_nodes"
   ),
   labels = c(
+    "metric",
     "type",
     "minsplit",
     "minbucket",
+    "minprob",
     "maxdepth",
     "mean_validation_gain",
     "sd_validation_gain",
@@ -580,21 +573,53 @@ tree_tuning_table <- readme_tuning_table(
 )
 
 knitr::kable(
-  tree_tuning_table[1:5,],
+  tree_tuning_table,
   digits = 3,
   caption = "Cross-validated greedy tree tuning results"
 )
 ```
 
-| type | minsplit | minbucket | maxdepth | mean_validation_gain | sd_validation_gain | mean_terminal_nodes |
-|:---|---:|---:|---:|---:|---:|---:|
-| L | 100 | 100 | 3 | 3.805 | 7.516 | 4.2 |
-| L | 100 | 100 | 3 | 3.805 | 7.516 | 4.2 |
-| L | 100 | 100 | 4 | 3.805 | 7.516 | 4.2 |
-| L | 100 | 100 | 4 | 3.805 | 7.516 | 4.2 |
-| L | 100 | 100 | 5 | 3.805 | 7.516 | 4.2 |
+| metric | type | minsplit | minbucket | minprob | maxdepth | mean_validation_gain | sd_validation_gain | mean_terminal_nodes |
+|:---|:---|---:|---:|---:|---:|---:|---:|---:|
+| validation_gain | CI | 100 | 100 | 0.01 | 3 | -0.026 | 0.045 | 2.333 |
+| validation_gain | CI | 100 | 100 | 0.05 | 3 | -0.026 | 0.045 | 2.333 |
+| validation_gain | CI | 100 | 100 | 0.01 | 4 | -0.026 | 0.045 | 2.333 |
+| validation_gain | CI | 100 | 100 | 0.05 | 4 | -0.026 | 0.045 | 2.333 |
+| validation_gain | CI | 100 | 50 | 0.01 | 3 | -0.032 | 0.077 | 3.667 |
+| validation_gain | CIg | 100 | 100 | 0.01 | 3 | -0.001 | 0.001 | 2.667 |
+| validation_gain | CIg | 100 | 100 | 0.05 | 3 | -0.001 | 0.001 | 2.667 |
+| validation_gain | CIg | 100 | 100 | 0.01 | 4 | -0.001 | 0.001 | 2.667 |
+| validation_gain | CIg | 100 | 100 | 0.05 | 4 | -0.001 | 0.001 | 2.667 |
+| validation_gain | CIg | 100 | 50 | 0.01 | 3 | -0.001 | 0.003 | 4.333 |
 
 Cross-validated greedy tree tuning results
+
+``` r
+tree_fold_metrics <- ci_collect_metrics(
+  tree_tuning,
+  summarize = FALSE,
+  metric = "validation_gain"
+)
+
+tree_saved_predictions <- ci_collect_predictions(tree_tuning)
+
+knitr::kable(
+  head(tree_fold_metrics[, .(grid_id, fold_id, type, score)]),
+  digits = 3,
+  caption = "Fold-level validation-gain scores collected from tree tuning"
+)
+```
+
+| grid_id | fold_id | type |  score |
+|--------:|--------:|:-----|-------:|
+|       1 |       1 | CI   | -0.109 |
+|       1 |       2 | CI   | -0.031 |
+|       1 |       3 | CI   |  0.044 |
+|       2 |       1 | CI   | -0.079 |
+|       2 |       2 | CI   | -0.001 |
+|       2 |       3 | CI   |  0.001 |
+
+Fold-level validation-gain scores collected from tree tuning
 
 ``` r
 readme_tree_plot(
@@ -611,16 +636,19 @@ readme_tree_plot(
 For forests, `tune_ci_forest()` uses the same greedy controls and adds
 `ntree` when that column is present in the tuning grid. Each candidate
 forest is summarized by a surrogate greedy CI tree, and the grid is
-ranked by held-out CI validation gain from that surrogate.
+ranked by held-out CI validation gain from that surrogate. Use
+`parallel_over = "tuning"` to parallelize grid/fold tasks, or
+`parallel_over = "forest"` to grow trees within each forest in parallel
+after setting a `future` plan.
 
 ``` r
 forest_tune_grid <- ci_tree_control_grid(
-  minsplit = c(100L),
+  minsplit = 100L,
   minbucket = c(50L, 100L),
-  maxdepth = c(3L:6L),
+  maxdepth = c(3L, 4L),
   mtry = c(1L, 2L),
-  ntree = c(10L, 50L),
-  minprob = c(0.01, 0.1)
+  ntree = c(10L, 20L),
+  minprob = 0.01
 )
 ```
 
@@ -630,33 +658,45 @@ forest_tuning <- tune_ci_forest(
   data = tuning_data,
   rank_name = "wealth",
   outcome_name = "deadu5_num",
-  type = c("CI", "CIg", "CIc", "L"),
+  type = c("CI", "CIg"),
   control_grid = forest_tune_grid,
-  v = 5L,
+  v = 3L,
   strata = "deadu5_num",
   seed = 20260508,
+  metrics = c("validation_gain", "brier"),
   prediction_name = "forest_risk",
-  parallel_over = "tuning",
+  parallel_over = "none",
+  control = control_ci_tune(save_pred = TRUE),
   refit = TRUE
 )
 ```
 
 ``` r
+forest_tuning_best <- ci_show_best(
+  forest_tuning,
+  metric = "validation_gain",
+  n = 5L
+)
+
 forest_tuning_table <- readme_tuning_table(
-  forest_tuning$summary,
+  forest_tuning_best,
   columns = c(
+    "metric",
     "type",
     "ntree",
     "mtry",
+    "minbucket",
     "maxdepth",
     "mean_score",
     "sd_score",
     "mean_terminal_nodes"
   ),
   labels = c(
+    "metric",
     "type",
     "ntree",
     "mtry",
+    "minbucket",
     "maxdepth",
     "mean_validation_gain",
     "sd_validation_gain",
@@ -665,21 +705,48 @@ forest_tuning_table <- readme_tuning_table(
 )
 
 knitr::kable(
-  forest_tuning_table[1:5, ],
+  forest_tuning_table,
   digits = 3,
   caption = "Cross-validated greedy forest tuning results ranked by validation gain"
 )
 ```
 
-| type | ntree | mtry | maxdepth | mean_validation_gain | sd_validation_gain | mean_terminal_nodes |
-|:---|---:|---:|---:|---:|---:|---:|
-| L | 10 | 2 | 3 | 1.646 | 1.929 | 3.6 |
-| L | 50 | 1 | 4 | 1.632 | 1.860 | 4.6 |
-| L | 10 | 2 | 5 | 1.622 | 1.918 | 6.2 |
-| L | 50 | 2 | 4 | 1.620 | 1.916 | 5.0 |
-| L | 50 | 2 | 4 | 1.610 | 1.952 | 4.2 |
+| metric | type | ntree | mtry | minbucket | maxdepth | mean_validation_gain | sd_validation_gain | mean_terminal_nodes |
+|:---|:---|---:|---:|---:|---:|---:|---:|---:|
+| validation_gain | CI | 10 | 1 | 50 | 4 | 0.027 | 0.077 | 4.000 |
+| validation_gain | CI | 20 | 2 | 100 | 4 | 0.010 | 0.020 | 2.333 |
+| validation_gain | CI | 20 | 1 | 50 | 3 | 0.006 | 0.049 | 3.667 |
+| validation_gain | CI | 10 | 2 | 50 | 4 | 0.003 | 0.006 | 2.667 |
+| validation_gain | CI | 10 | 1 | 100 | 3 | -0.009 | 0.016 | 1.667 |
+| validation_gain | CIg | 10 | 1 | 50 | 4 | 0.000 | 0.003 | 4.000 |
+| validation_gain | CIg | 20 | 1 | 100 | 3 | -0.001 | 0.000 | 2.000 |
+| validation_gain | CIg | 10 | 1 | 100 | 4 | -0.001 | 0.001 | 2.000 |
+| validation_gain | CIg | 10 | 2 | 100 | 3 | -0.001 | 0.001 | 2.333 |
+| validation_gain | CIg | 10 | 2 | 100 | 4 | -0.001 | 0.002 | 1.333 |
 
 Cross-validated greedy forest tuning results ranked by validation gain
+
+``` r
+forest_saved_predictions <- ci_collect_predictions(forest_tuning)
+forest_brier <- ci_collect_metrics(forest_tuning, metric = "brier")
+
+knitr::kable(
+  head(forest_brier[, .(type, ntree, mtry, mean_score, sd_score)]),
+  digits = 3,
+  caption = "Brier scores collected from the same forest tuning run"
+)
+```
+
+| type | ntree | mtry | mean_score | sd_score |
+|:-----|------:|-----:|-----------:|---------:|
+| CI   |    10 |    2 |      0.075 |    0.004 |
+| CI   |    10 |    2 |      0.075 |    0.001 |
+| CIg  |    10 |    2 |      0.074 |    0.000 |
+| CI   |    20 |    2 |      0.074 |    0.002 |
+| CI   |    20 |    2 |      0.074 |    0.003 |
+| CIg  |    10 |    2 |      0.074 |    0.001 |
+
+Brier scores collected from the same forest tuning run
 
 ``` r
 best_tuned_forest <- forest_tuning$best_fit
