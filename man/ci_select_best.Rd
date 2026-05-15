@@ -14,7 +14,7 @@ ci_select_best(x, metric = NULL, ...)
 \item{...}{Reserved for future extensions.}
 }
 \value{
-A one-row \code{data.table}.
+A \code{data.table} with one row per concentration-index \code{type}.
 }
 \description{
 Select the best tuning parameters

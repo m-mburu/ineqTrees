@@ -1,52 +1,56 @@
 $by.self
-                  self.time self.pct total.time total.pct
-"findCenvVar"          0.04     50.0       0.05      62.5
-"h"                    0.01     12.5       0.06      75.0
-"as.list.default"      0.01     12.5       0.01      12.5
-"parent.env"           0.01     12.5       0.01      12.5
-"Rprof"                0.01     12.5       0.01      12.5
+                     self.time self.pct total.time total.pct
+"cmp"                     0.01    14.29       0.06     85.71
+"findCenvVar"             0.01    14.29       0.02     28.57
+"cb$putcode"              0.01    14.29       0.01     14.29
+"extractSrcref"           0.01    14.29       0.01     14.29
+"grep"                    0.01    14.29       0.01     14.29
+"mayCallBrowserList"      0.01    14.29       0.01     14.29
+"new.env"                 0.01    14.29       0.01     14.29
 
 $by.total
                        total.time total.pct self.time self.pct
-"profile_expr"               0.08     100.0      0.00      0.0
-".ci_fast_score"             0.07      87.5      0.00      0.0
-"ci_fun"                     0.07      87.5      0.00      0.0
-"cmpfun"                     0.07      87.5      0.00      0.0
-"compiler:::tryCmpfun"       0.07      87.5      0.00      0.0
-"doTryCatch"                 0.07      87.5      0.00      0.0
-"eval"                       0.07      87.5      0.00      0.0
-"tryCatch"                   0.07      87.5      0.00      0.0
-"tryCatchList"               0.07      87.5      0.00      0.0
-"tryCatchOne"                0.07      87.5      0.00      0.0
-"weighted_ci_gain"           0.07      87.5      0.00      0.0
-"h"                          0.06      75.0      0.01     12.5
-"cmp"                        0.06      75.0      0.00      0.0
-"cmpCall"                    0.06      75.0      0.00      0.0
-"genCode"                    0.06      75.0      0.00      0.0
-"tryInline"                  0.06      75.0      0.00      0.0
-"findCenvVar"                0.05      62.5      0.04     50.0
-"cmpBuiltinArgs"             0.03      37.5      0.00      0.0
-"cmpPrim2"                   0.03      37.5      0.00      0.0
-"cmpSymbolAssign"            0.03      37.5      0.00      0.0
-"getInlineInfo"              0.03      37.5      0.00      0.0
-"cmpSym"                     0.02      25.0      0.00      0.0
-"constantFold"               0.02      25.0      0.00      0.0
-"constantFoldCall"           0.02      25.0      0.00      0.0
-"findVar"                    0.02      25.0      0.00      0.0
-"getFoldFun"                 0.02      25.0      0.00      0.0
-"isBaseVar"                  0.02      25.0      0.00      0.0
-"as.list.default"            0.01      12.5      0.01     12.5
-"parent.env"                 0.01      12.5      0.01     12.5
-"Rprof"                      0.01      12.5      0.01     12.5
-"as.list"                    0.01      12.5      0.00      0.0
-"cmpIndices"                 0.01      12.5      0.00      0.0
-"cmpSubsetDispatch"          0.01      12.5      0.00      0.0
-"mayCallBrowser"             0.01      12.5      0.00      0.0
-"mayCallBrowserList"         0.01      12.5      0.00      0.0
+".ci_fast_score"             0.07    100.00      0.00     0.00
+"ci_fun"                     0.07    100.00      0.00     0.00
+"cmpfun"                     0.07    100.00      0.00     0.00
+"compiler:::tryCmpfun"       0.07    100.00      0.00     0.00
+"doTryCatch"                 0.07    100.00      0.00     0.00
+"eval"                       0.07    100.00      0.00     0.00
+"profile_expr"               0.07    100.00      0.00     0.00
+"tryCatch"                   0.07    100.00      0.00     0.00
+"tryCatchList"               0.07    100.00      0.00     0.00
+"tryCatchOne"                0.07    100.00      0.00     0.00
+"weighted_ci_gain"           0.07    100.00      0.00     0.00
+"cmp"                        0.06     85.71      0.01    14.29
+"cmpCall"                    0.06     85.71      0.00     0.00
+"genCode"                    0.06     85.71      0.00     0.00
+"h"                          0.06     85.71      0.00     0.00
+"tryInline"                  0.06     85.71      0.00     0.00
+"cmpSymbolAssign"            0.04     57.14      0.00     0.00
+"findCenvVar"                0.02     28.57      0.01    14.29
+"cmpBuiltinArgs"             0.02     28.57      0.00     0.00
+"cmpPrim2"                   0.02     28.57      0.00     0.00
+"cmpSym"                     0.02     28.57      0.00     0.00
+"cb$putcode"                 0.01     14.29      0.01    14.29
+"extractSrcref"              0.01     14.29      0.01    14.29
+"grep"                       0.01     14.29      0.01    14.29
+"mayCallBrowserList"         0.01     14.29      0.01    14.29
+"new.env"                    0.01     14.29      0.01    14.29
+"cb$setcurexpr"              0.01     14.29      0.00     0.00
+"cmpCallSymFun"              0.01     14.29      0.00     0.00
+"constantFold"               0.01     14.29      0.00     0.00
+"constantFoldCall"           0.01     14.29      0.00     0.00
+"findVar"                    0.01     14.29      0.00     0.00
+"getExprSrcref"              0.01     14.29      0.00     0.00
+"getFoldFun"                 0.01     14.29      0.00     0.00
+"getInlineInfo"              0.01     14.29      0.00     0.00
+"is.ddsym"                   0.01     14.29      0.00     0.00
+"isBaseVar"                  0.01     14.29      0.00     0.00
+"mayCallBrowser"             0.01     14.29      0.00     0.00
 
 $sample.interval
 [1] 0.01
 
 $sampling.time
-[1] 0.08
+[1] 0.07
 

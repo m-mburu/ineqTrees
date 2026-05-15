@@ -41,6 +41,9 @@ test_that("tune_ci_tree selects greedy tree controls and CI type", {
   expect_s3_class(tuned$best_fit, "ci_tree")
   expect_true(tuned$best_type %in% c("CI", "CIg"))
   expect_true("type" %in% names(tuned$best_params))
+  expect_equal(sort(tuned$best_params$type), c("CI", "CIg"))
+  expect_equal(sort(ci_select_best(tuned)$type), c("CI", "CIg"))
+  expect_equal(nrow(ci_show_best(tuned, n = 1L)), 2L)
   expect_false("mincriterion" %in% names(tuned$best_params))
 })
 
@@ -186,6 +189,8 @@ test_that("tune_ci_forest tunes greedy forests and returns a surrogate", {
   expect_equal(nrow(tuned$fold_results), nrow(grid) * 2L * 2L)
   expect_true("ntree" %in% names(tuned$best_params))
   expect_true("type" %in% names(tuned$best_params))
+  expect_equal(sort(tuned$best_params$type), c("CI", "CIg"))
+  expect_equal(sort(ci_select_best(tuned)$type), c("CI", "CIg"))
   expect_true("forest_risk" %in% names(tuned$best_surrogate_data))
   expect_true(tuned$best_type %in% c("CI", "CIg"))
   expect_true(is.finite(tuned$summary$mean_score[1]))

@@ -19,251 +19,188 @@ int type_to_code(std::string type) {
   stop("Unknown CI type.");
 }
 
-double ci_score_segment(
+struct TwoCiScores {
+  double left;
+  double right;
+};
+
+template <typename ChildId>
+TwoCiScores ci_score_children_ordered(
     const std::vector<double>& rank,
     const std::vector<double>& outcome,
     const std::vector<double>& wt,
-    int begin,
-    int end,
-    int type_code) {
-
-  std::vector<int> rows;
-  rows.reserve(std::max(0, end - begin));
-  double total_wt = 0.0;
-
-  for (int i = begin; i < end; ++i) {
-    if (valid_scalar(rank[i]) &&
-        valid_scalar(outcome[i]) &&
-        valid_scalar(wt[i]) &&
-        wt[i] > 0.0) {
-      rows.push_back(i);
-      total_wt += wt[i];
-    }
-  }
-
-  const int n = rows.size();
-  if (n <= 1 || !R_finite(total_wt) || total_wt <= 0.0) {
-    return 0.0;
-  }
-
-  if (type_code == 4) {
-    double mu_s = 0.0;
-    for (int idx : rows) {
-      mu_s += wt[idx] * rank[idx] / total_wt;
-    }
-    if (!R_finite(mu_s) || std::abs(mu_s) <= DBL_EPSILON) {
-      return 0.0;
-    }
-
-    double l_index = 0.0;
-    for (int idx : rows) {
-      const double p = wt[idx] / total_wt;
-      l_index += p * ((rank[idx] - mu_s) / mu_s) * outcome[idx];
-    }
-    if (!R_finite(l_index)) {
-      return 0.0;
-    }
-    return std::abs(l_index);
-  }
-
-  std::stable_sort(
-    rows.begin(),
-    rows.end(),
-    [&](int a, int b) {
-      return rank[a] < rank[b];
-    }
-  );
-
-  double cumulative_wt = 0.0;
-  double sum_wt2 = 0.0;
-  double mean_rank = 0.0;
-  double mean_outcome = 0.0;
-  double min_outcome = R_PosInf;
-  double max_outcome = R_NegInf;
-  std::vector<double> rank_w(rank.size(), 0.0);
-
-  for (int idx : rows) {
-    const double w_norm = wt[idx] / total_wt;
-    rank_w[idx] = cumulative_wt + w_norm / 2.0;
-    cumulative_wt += w_norm;
-    sum_wt2 += w_norm * w_norm;
-    mean_rank += w_norm * rank_w[idx];
-    mean_outcome += w_norm * outcome[idx];
-    min_outcome = std::min(min_outcome, outcome[idx]);
-    max_outcome = std::max(max_outcome, outcome[idx]);
-  }
-
-  const double cov_denom = 1.0 - sum_wt2;
-  if (!R_finite(cov_denom) || cov_denom <= 0.0) {
-    return 0.0;
-  }
-
-  double cov12 = 0.0;
-  for (int idx : rows) {
-    const double w_norm = wt[idx] / total_wt;
-    cov12 += w_norm * (rank_w[idx] - mean_rank) *
-      (outcome[idx] - mean_outcome);
-  }
-  cov12 /= cov_denom;
-
-  if (type_code == 1) {
-    if (!R_finite(mean_outcome) || std::abs(mean_outcome) <= DBL_EPSILON) {
-      return 0.0;
-    }
-    return std::abs(2.0 * cov12 / mean_outcome);
-  }
-
-  if (type_code == 2) {
-    return std::abs(2.0 * cov12);
-  }
-
-  const double range = max_outcome - min_outcome;
-  if (!R_finite(range) || range <= DBL_EPSILON) {
-    return 0.0;
-  }
-  return 4.0 * std::abs(2.0 * cov12) / range;
-}
-
-double ci_score_factor_side(
-    const IntegerVector& code,
-    const NumericMatrix& y,
-    const NumericVector& wt,
     const std::vector<int>& ses_ord,
-    const std::vector<unsigned char>& side,
-    bool left_child,
+    ChildId child_id,
     int type_code) {
 
-  int n_valid = 0;
-  double total_wt = 0.0;
+  int n_valid[2] = {0, 0};
+  double total_wt[2] = {0.0, 0.0};
 
   for (int idx : ses_ord) {
-    const int cd = code[idx];
-    if (cd == NA_INTEGER || cd <= 0) continue;
-    const bool in_child = static_cast<bool>(side[cd]) == left_child;
-    if (!in_child) continue;
-    if (valid_scalar(y(idx, 0)) &&
-        valid_scalar(y(idx, 1)) &&
+    const int child = child_id(idx);
+    if (child < 0) continue;
+    if (valid_scalar(rank[idx]) &&
+        valid_scalar(outcome[idx]) &&
         valid_scalar(wt[idx]) &&
         wt[idx] > 0.0) {
-      ++n_valid;
-      total_wt += wt[idx];
+      ++n_valid[child];
+      total_wt[child] += wt[idx];
     }
   }
 
-  if (n_valid <= 1 || !R_finite(total_wt) || total_wt <= 0.0) {
-    return 0.0;
-  }
+  bool usable[2] = {
+    n_valid[0] > 1 && R_finite(total_wt[0]) && total_wt[0] > 0.0,
+    n_valid[1] > 1 && R_finite(total_wt[1]) && total_wt[1] > 0.0
+  };
+
+  TwoCiScores out = {0.0, 0.0};
 
   if (type_code == 4) {
-    double mu_s = 0.0;
+    double mu_s[2] = {0.0, 0.0};
     for (int idx : ses_ord) {
-      const int cd = code[idx];
-      if (cd == NA_INTEGER || cd <= 0) continue;
-      const bool in_child = static_cast<bool>(side[cd]) == left_child;
-      if (!in_child || !valid_scalar(y(idx, 0)) ||
-          !valid_scalar(y(idx, 1)) || !valid_scalar(wt[idx]) ||
+      const int child = child_id(idx);
+      if (child < 0 || !usable[child]) continue;
+      if (!valid_scalar(rank[idx]) ||
+          !valid_scalar(outcome[idx]) ||
+          !valid_scalar(wt[idx]) ||
           wt[idx] <= 0.0) {
         continue;
       }
-      mu_s += wt[idx] * y(idx, 0) / total_wt;
-    }
-    if (!R_finite(mu_s) || std::abs(mu_s) <= DBL_EPSILON) {
-      return 0.0;
+      mu_s[child] += wt[idx] * rank[idx] / total_wt[child];
     }
 
-    double l_index = 0.0;
+    for (int child = 0; child < 2; ++child) {
+      usable[child] = usable[child] &&
+        R_finite(mu_s[child]) &&
+        std::abs(mu_s[child]) > DBL_EPSILON;
+    }
+
+    double l_index[2] = {0.0, 0.0};
     for (int idx : ses_ord) {
-      const int cd = code[idx];
-      if (cd == NA_INTEGER || cd <= 0) continue;
-      const bool in_child = static_cast<bool>(side[cd]) == left_child;
-      if (!in_child || !valid_scalar(y(idx, 0)) ||
-          !valid_scalar(y(idx, 1)) || !valid_scalar(wt[idx]) ||
+      const int child = child_id(idx);
+      if (child < 0 || !usable[child]) continue;
+      if (!valid_scalar(rank[idx]) ||
+          !valid_scalar(outcome[idx]) ||
+          !valid_scalar(wt[idx]) ||
           wt[idx] <= 0.0) {
         continue;
       }
-      const double p = wt[idx] / total_wt;
-      l_index += p * ((y(idx, 0) - mu_s) / mu_s) * y(idx, 1);
+      const double p = wt[idx] / total_wt[child];
+      l_index[child] += p * ((rank[idx] - mu_s[child]) / mu_s[child]) *
+        outcome[idx];
     }
-    if (!R_finite(l_index)) return 0.0;
-    return std::abs(l_index);
+
+    if (usable[0] && R_finite(l_index[0])) out.left = std::abs(l_index[0]);
+    if (usable[1] && R_finite(l_index[1])) out.right = std::abs(l_index[1]);
+    return out;
   }
 
-  double cumulative_wt = 0.0;
-  double sum_wt2 = 0.0;
-  double mean_rank = 0.0;
-  double mean_outcome = 0.0;
-  double min_outcome = R_PosInf;
-  double max_outcome = R_NegInf;
+  double cumulative_wt[2] = {0.0, 0.0};
+  double sum_wt2[2] = {0.0, 0.0};
+  double mean_rank[2] = {0.0, 0.0};
+  double mean_outcome[2] = {0.0, 0.0};
+  double min_outcome[2] = {R_PosInf, R_PosInf};
+  double max_outcome[2] = {R_NegInf, R_NegInf};
 
   for (int idx : ses_ord) {
-    const int cd = code[idx];
-    if (cd == NA_INTEGER || cd <= 0) continue;
-    const bool in_child = static_cast<bool>(side[cd]) == left_child;
-    if (!in_child || !valid_scalar(y(idx, 0)) ||
-        !valid_scalar(y(idx, 1)) || !valid_scalar(wt[idx]) ||
+    const int child = child_id(idx);
+    if (child < 0 || !usable[child]) continue;
+    if (!valid_scalar(rank[idx]) ||
+        !valid_scalar(outcome[idx]) ||
+        !valid_scalar(wt[idx]) ||
         wt[idx] <= 0.0) {
       continue;
     }
-    const double w_norm = wt[idx] / total_wt;
-    const double rank_w = cumulative_wt + w_norm / 2.0;
-    cumulative_wt += w_norm;
-    sum_wt2 += w_norm * w_norm;
-    mean_rank += w_norm * rank_w;
-    mean_outcome += w_norm * y(idx, 1);
-    min_outcome = std::min(min_outcome, y(idx, 1));
-    max_outcome = std::max(max_outcome, y(idx, 1));
+    const double w_norm = wt[idx] / total_wt[child];
+    const double rank_w = cumulative_wt[child] + w_norm / 2.0;
+    cumulative_wt[child] += w_norm;
+    sum_wt2[child] += w_norm * w_norm;
+    mean_rank[child] += w_norm * rank_w;
+    mean_outcome[child] += w_norm * outcome[idx];
+    min_outcome[child] = std::min(min_outcome[child], outcome[idx]);
+    max_outcome[child] = std::max(max_outcome[child], outcome[idx]);
   }
 
-  const double cov_denom = 1.0 - sum_wt2;
-  if (!R_finite(cov_denom) || cov_denom <= 0.0) {
-    return 0.0;
+  double cov_denom[2] = {
+    1.0 - sum_wt2[0],
+    1.0 - sum_wt2[1]
+  };
+  for (int child = 0; child < 2; ++child) {
+    usable[child] = usable[child] &&
+      R_finite(cov_denom[child]) &&
+      cov_denom[child] > 0.0;
   }
 
-  cumulative_wt = 0.0;
-  double cov12 = 0.0;
+  cumulative_wt[0] = 0.0;
+  cumulative_wt[1] = 0.0;
+  double cov12[2] = {0.0, 0.0};
+
   for (int idx : ses_ord) {
-    const int cd = code[idx];
-    if (cd == NA_INTEGER || cd <= 0) continue;
-    const bool in_child = static_cast<bool>(side[cd]) == left_child;
-    if (!in_child || !valid_scalar(y(idx, 0)) ||
-        !valid_scalar(y(idx, 1)) || !valid_scalar(wt[idx]) ||
+    const int child = child_id(idx);
+    if (child < 0 || !usable[child]) continue;
+    if (!valid_scalar(rank[idx]) ||
+        !valid_scalar(outcome[idx]) ||
+        !valid_scalar(wt[idx]) ||
         wt[idx] <= 0.0) {
       continue;
     }
-    const double w_norm = wt[idx] / total_wt;
-    const double rank_w = cumulative_wt + w_norm / 2.0;
-    cumulative_wt += w_norm;
-    cov12 += w_norm * (rank_w - mean_rank) *
-      (y(idx, 1) - mean_outcome);
+    const double w_norm = wt[idx] / total_wt[child];
+    const double rank_w = cumulative_wt[child] + w_norm / 2.0;
+    cumulative_wt[child] += w_norm;
+    cov12[child] += w_norm * (rank_w - mean_rank[child]) *
+      (outcome[idx] - mean_outcome[child]);
   }
-  cov12 /= cov_denom;
 
-  if (type_code == 1) {
-    if (!R_finite(mean_outcome) || std::abs(mean_outcome) <= DBL_EPSILON) {
-      return 0.0;
+  for (int child = 0; child < 2; ++child) {
+    if (!usable[child]) continue;
+    cov12[child] /= cov_denom[child];
+
+    double score = 0.0;
+    if (type_code == 1) {
+      if (!R_finite(mean_outcome[child]) ||
+          std::abs(mean_outcome[child]) <= DBL_EPSILON) {
+        score = 0.0;
+      } else {
+        score = std::abs(2.0 * cov12[child] / mean_outcome[child]);
+      }
+    } else if (type_code == 2) {
+      score = std::abs(2.0 * cov12[child]);
+    } else {
+      const double range = max_outcome[child] - min_outcome[child];
+      if (!R_finite(range) || range <= DBL_EPSILON) {
+        score = 0.0;
+      } else {
+        score = 4.0 * std::abs(2.0 * cov12[child]) / range;
+      }
     }
-    return std::abs(2.0 * cov12 / mean_outcome);
+
+    if (child == 0) {
+      out.left = score;
+    } else {
+      out.right = score;
+    }
   }
 
-  if (type_code == 2) return std::abs(2.0 * cov12);
-
-  const double range = max_outcome - min_outcome;
-  if (!R_finite(range) || range <= DBL_EPSILON) {
-    return 0.0;
-  }
-  return 4.0 * std::abs(2.0 * cov12) / range;
+  return out;
 }
 
-double ci_score_all(
-    const NumericMatrix& y,
-    const NumericVector& wt,
+double ci_score_all_ordered(
+    const std::vector<double>& rank,
+    const std::vector<double>& outcome,
+    const std::vector<double>& wt,
     const std::vector<int>& ses_ord,
     int type_code) {
 
-  IntegerVector all_code(y.nrow());
-  std::vector<unsigned char> side(2, 1);
-  for (int i = 0; i < y.nrow(); ++i) all_code[i] = 1;
-  return ci_score_factor_side(all_code, y, wt, ses_ord, side, true, type_code);
+  TwoCiScores scores = ci_score_children_ordered(
+    rank,
+    outcome,
+    wt,
+    ses_ord,
+    [](int) { return 0; },
+    type_code
+  );
+
+  return scores.left;
 }
 
 } // namespace
@@ -314,7 +251,19 @@ List ci_best_numeric_split_cpp_engine(
   }
 
   const int type_code = type_to_code(type);
-  const double ci_parent = ci_score_segment(rank, outcome, weight, 0, n, type_code);
+  std::vector<int> ses_ord(n);
+  std::iota(ses_ord.begin(), ses_ord.end(), 0);
+  std::stable_sort(ses_ord.begin(), ses_ord.end(), [&](int a, int b) {
+    return rank[a] < rank[b];
+  });
+
+  const double ci_parent = ci_score_all_ordered(
+    rank,
+    outcome,
+    weight,
+    ses_ord,
+    type_code
+  );
   double best_gain = R_NegInf;
   double best_cutpoint = NA_REAL;
   int best_pos = -1;
@@ -328,10 +277,19 @@ List ci_best_numeric_split_cpp_engine(
     if (wl < minbucket || wr < minbucket) continue;
     if ((wl / total_wt) < minprob || (wr / total_wt) < minprob) continue;
 
-    const double ci_left = ci_score_segment(rank, outcome, weight, 0, pos + 1, type_code);
-    const double ci_right = ci_score_segment(rank, outcome, weight, pos + 1, n, type_code);
+    TwoCiScores child_scores = ci_score_children_ordered(
+      rank,
+      outcome,
+      weight,
+      ses_ord,
+      [&](int idx) {
+        return idx <= pos ? 0 : 1;
+      },
+      type_code
+    );
     const double gain = ci_parent -
-      ((wl / total_wt) * ci_left + (wr / total_wt) * ci_right);
+      ((wl / total_wt) * child_scores.left +
+       (wr / total_wt) * child_scores.right);
 
     if (gain > best_gain) {
       best_gain = gain;
@@ -406,8 +364,21 @@ List ci_best_factor_split_cpp_engine(
     return y(a, 0) < y(b, 0);
   });
 
+  std::vector<double> rank(n), outcome(n), weight(n);
+  for (int i = 0; i < n; ++i) {
+    rank[i] = y(i, 0);
+    outcome[i] = y(i, 1);
+    weight[i] = wt[i];
+  }
+
   const int type_code = type_to_code(type);
-  const double ci_parent = ci_score_all(y, wt, ses_ord, type_code);
+  const double ci_parent = ci_score_all_ordered(
+    rank,
+    outcome,
+    weight,
+    ses_ord,
+    type_code
+  );
 
   std::vector<double> cum_level_w(present.size(), 0.0);
   double total_w = 0.0;
@@ -428,10 +399,21 @@ List ci_best_factor_split_cpp_engine(
     if (wl < minbucket || wr < minbucket) continue;
     if ((wl / total_w) < minprob || (wr / total_w) < minprob) continue;
 
-    const double ci_left = ci_score_factor_side(code, y, wt, ses_ord, side, true, type_code);
-    const double ci_right = ci_score_factor_side(code, y, wt, ses_ord, side, false, type_code);
+    TwoCiScores child_scores = ci_score_children_ordered(
+      rank,
+      outcome,
+      weight,
+      ses_ord,
+      [&](int idx) {
+        const int cd = code[idx];
+        if (cd == NA_INTEGER || cd <= 0 || cd > n_levels) return -1;
+        return static_cast<bool>(side[cd]) ? 0 : 1;
+      },
+      type_code
+    );
     const double gain = ci_parent -
-      ((wl / total_w) * ci_left + (wr / total_w) * ci_right);
+      ((wl / total_w) * child_scores.left +
+       (wr / total_w) * child_scores.right);
 
     if (gain > best_gain) {
       best_gain = gain;

@@ -15,3 +15,4 @@
 ^pkgdown$
 ^\.positai$
 ^\.claude$
+^\.Rhistory$

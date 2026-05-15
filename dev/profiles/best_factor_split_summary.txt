@@ -1,29 +1,40 @@
 $by.self
-                      self.time self.pct total.time total.pct
-"as.character.factor"      0.02       40       0.02        40
-"%in%"                     0.01       20       0.03        60
-"...elt"                   0.01       20       0.01        20
-"c"                        0.01       20       0.01        20
+                                self.time self.pct total.time total.pct
+".weighted_ci_gain_from_parent"      0.01       10       0.08        80
+".ci_fast_score"                     0.01       10       0.04        40
+"stopifnot"                          0.01       10       0.03        30
+"%in%"                               0.01       10       0.01        10
+"...elt"                             0.01       10       0.01        10
+"abs"                                0.01       10       0.01        10
+"anyNA"                              0.01       10       0.01        10
+"is.na"                              0.01       10       0.01        10
+"order"                              0.01       10       0.01        10
+"weighted.mean.default"              0.01       10       0.01        10
 
 $by.total
                                 total.time total.pct self.time self.pct
-"best_factor_split"                   0.05       100      0.00        0
-"eval"                                0.05       100      0.00        0
-"profile_expr"                        0.05       100      0.00        0
-"%in%"                                0.03        60      0.01       20
-"as.character.factor"                 0.02        40      0.02       40
-".weighted_ci_gain_from_parent"       0.02        40      0.00        0
-"as.character"                        0.02        40      0.00        0
-"ci_fun"                              0.02        40      0.00        0
-"...elt"                              0.01        20      0.01       20
-"c"                                   0.01        20      0.01       20
-".ci_fast_score"                      0.01        20      0.00        0
-"stopifnot"                           0.01        20      0.00        0
-"unique"                              0.01        20      0.00        0
+"best_factor_split"                   0.10       100      0.00        0
+"eval"                                0.10       100      0.00        0
+"profile_expr"                        0.10       100      0.00        0
+".weighted_ci_gain_from_parent"       0.08        80      0.01       10
+"ci_fun"                              0.06        60      0.00        0
+".ci_fast_score"                      0.04        40      0.01       10
+"stopifnot"                           0.03        30      0.01       10
+"%in%"                                0.01        10      0.01       10
+"...elt"                              0.01        10      0.01       10
+"abs"                                 0.01        10      0.01       10
+"anyNA"                               0.01        10      0.01       10
+"is.na"                               0.01        10      0.01       10
+"order"                               0.01        10      0.01       10
+"weighted.mean.default"               0.01        10      0.01       10
+"FUN"                                 0.01        10      0.00        0
+"lapply"                              0.01        10      0.00        0
+"sapply"                              0.01        10      0.00        0
+"stats::weighted.mean"                0.01        10      0.00        0
 
 $sample.interval
 [1] 0.01
 
 $sampling.time
-[1] 0.05
+[1] 0.1
 

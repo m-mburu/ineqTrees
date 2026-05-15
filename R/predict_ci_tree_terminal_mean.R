@@ -806,15 +806,45 @@ control_ci_tune <- function(verbose = FALSE,
   summary[summary_order, , drop = FALSE]
 }
 
-.ci_select_best_params <- function(summary, selection_metric) {
-  metric_summary <- summary[summary$metric == selection_metric, , drop = FALSE]
-  direction <- .ci_metric_direction(selection_metric)
-  ord <- if (identical(direction, "maximize")) {
-    order(-metric_summary$mean_score, -metric_summary$folds_completed, na.last = TRUE)
+.ci_order_tuning_rows <- function(x, metric) {
+  direction <- .ci_metric_direction(metric)
+  if (identical(direction, "maximize")) {
+    order(-x$mean_score, -x$folds_completed, na.last = TRUE)
   } else {
-    order(metric_summary$mean_score, -metric_summary$folds_completed, na.last = TRUE)
+    order(x$mean_score, -x$folds_completed, na.last = TRUE)
   }
-  metric_summary[ord, , drop = FALSE][1L, , drop = FALSE]
+}
+
+.ci_type_levels <- function(x) {
+  if (!("type" %in% names(x))) {
+    return(NULL)
+  }
+  if ("grid_id" %in% names(x)) {
+    return(unique(x$type[order(x$grid_id)]))
+  }
+  unique(x$type)
+}
+
+.ci_select_best_params <- function(summary, selection_metric) {
+  metric_summary <- data.table::as.data.table(
+    summary[summary$metric == selection_metric, , drop = FALSE]
+  )
+  if (!nrow(metric_summary)) {
+    return(metric_summary)
+  }
+
+  if (!("type" %in% names(metric_summary))) {
+    ord <- .ci_order_tuning_rows(metric_summary, selection_metric)
+    return(metric_summary[ord, , drop = FALSE][1L, , drop = FALSE])
+  }
+
+  type_levels <- .ci_type_levels(metric_summary)
+  best_by_type <- lapply(type_levels, function(this_type) {
+    type_summary <- metric_summary[metric_summary$type == this_type, , drop = FALSE]
+    ord <- .ci_order_tuning_rows(type_summary, selection_metric)
+    type_summary[ord, , drop = FALSE][1L, , drop = FALSE]
+  })
+  data.table::rbindlist(best_by_type, fill = TRUE)
 }
 
 #' @noRd
@@ -1548,9 +1578,11 @@ tune_ci_tree <- function(formula,
   best_fit <- NULL
   best_type <- NA_character_
 
-  if (nrow(best_params) > 0L && isTRUE(is.finite(best_params$mean_score))) {
-    best_control <- .ci_control_from_grid_row(best_params)
-    best_type <- as.character(best_params$type[1L])
+  refit_params <- best_params[is.finite(best_params$mean_score), , drop = FALSE]
+  if (nrow(refit_params) > 0L) {
+    refit_params <- refit_params[1L, , drop = FALSE]
+    best_control <- .ci_control_from_grid_row(refit_params)
+    best_type <- as.character(refit_params$type[1L])
 
     if (isTRUE(refit)) {
       if (!is.null(seed_base)) {
@@ -1631,7 +1663,7 @@ ci_collect_metrics <- function(x, summarize = TRUE, metric = NULL, ...) {
 #' Show the best tuning results
 #'
 #' @inheritParams ci_collect_metrics
-#' @param n Number of rows to return.
+#' @param n Number of rows to return per concentration-index `type`.
 #'
 #' @return A `data.table`.
 #'
@@ -1639,22 +1671,31 @@ ci_collect_metrics <- function(x, summarize = TRUE, metric = NULL, ...) {
 ci_show_best <- function(x, metric = NULL, n = 5L, ...) {
   .ci_assert_tuning(x)
   metric <- if (is.null(metric)) x$selection_metric else metric[1L]
-  out <- ci_collect_metrics(x, summarize = TRUE, metric = metric)
-  direction <- .ci_metric_direction(metric)
-  ord <- if (identical(direction, "maximize")) {
-    order(-out$mean_score, -out$folds_completed, na.last = TRUE)
-  } else {
-    order(out$mean_score, -out$folds_completed, na.last = TRUE)
+  out <- data.table::as.data.table(ci_collect_metrics(x, summarize = TRUE, metric = metric))
+  n <- as.integer(n)[1L]
+  if (!nrow(out) || is.na(n) || n <= 0L) {
+    return(out[0L, , drop = FALSE])
   }
-  out <- out[ord, , drop = FALSE]
-  utils::head(out, as.integer(n)[1L])
+
+  if (!("type" %in% names(out))) {
+    ord <- .ci_order_tuning_rows(out, metric)
+    return(utils::head(out[ord, , drop = FALSE], n))
+  }
+
+  type_levels <- .ci_type_levels(out)
+  out <- lapply(type_levels, function(this_type) {
+    type_summary <- out[out$type == this_type, , drop = FALSE]
+    ord <- .ci_order_tuning_rows(type_summary, metric)
+    type_summary[ord, , drop = FALSE][seq_len(min(nrow(type_summary), n)), , drop = FALSE]
+  })
+  data.table::rbindlist(out, fill = TRUE)
 }
 
 #' Select the best tuning parameters
 #'
 #' @inheritParams ci_collect_metrics
 #'
-#' @return A one-row `data.table`.
+#' @return A `data.table` with one row per concentration-index `type`.
 #'
 #' @export
 ci_select_best <- function(x, metric = NULL, ...) {
