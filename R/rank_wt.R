@@ -5,7 +5,7 @@
 #' @description
 #' Computes the same concentration-index variants as [ci_factory()], but avoids
 #' constructing temporary data frames and avoids [stats::cov.wt()]. The weighted
-#' covariance uses the same unbiased convention as `stats::cov.wt()` with
+#' covariance is the population-style descriptive covariance computed from
 #' normalized weights.
 #'
 #' @param y A two-column numeric matrix with rank variable and outcome.
@@ -72,14 +72,8 @@
 
   mean_rank <- sum(wt_norm * rank_w)
   mean_outcome <- sum(wt_norm * outcome)
-  cov_denom <- 1 - sum(wt_norm^2)
-
-  if (!is.finite(cov_denom) || cov_denom <= 0) {
-    return(0)
-  }
-
   cov12 <- sum(wt_norm * (rank_w - mean_rank) *
-    (outcome - mean_outcome)) / cov_denom
+    (outcome - mean_outcome))
 
   if (type == "CI") {
     if (!is.finite(mean_outcome) ||
@@ -316,6 +310,27 @@ weighted_ci_gain <- function(y, wt, left, ci_fun) {
     ci_fun = ci_fun,
     ci_parent = ci_parent
   )
+}
+
+#' Compute gain relative to the parent/root impurity
+#'
+#' @param gain Raw impurity reduction.
+#' @param root_impurity Parent or validation-root impurity.
+#' @param tolerance Numeric zero guard for the root impurity.
+#'
+#' @return A scalar ratio, or `NA_real_` when the denominator is degenerate.
+#'
+#' @noRd
+.ci_relative_gain <- function(gain,
+                              root_impurity,
+                              tolerance = .Machine$double.eps) {
+  if (!is.finite(gain) ||
+      !is.finite(root_impurity) ||
+      abs(root_impurity) <= tolerance) {
+    return(NA_real_)
+  }
+
+  gain / abs(root_impurity)
 }
 
 #' Compute weighted fractional ranks

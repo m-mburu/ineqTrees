@@ -22,7 +22,7 @@ of \code{x}.}
 }
 \value{
 A split candidate list, or \code{NULL} when no variable has an admissible
-gain above \code{control$min_gain}.
+gain above \code{control$min_gain} and \code{control$min_relative_gain}.
 }
 \description{
 Search across all supplied variables and their admissible split points, then

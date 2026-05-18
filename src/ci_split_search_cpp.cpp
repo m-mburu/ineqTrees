@@ -96,7 +96,6 @@ TwoCiScores ci_score_children_ordered(
   }
 
   double cumulative_wt[2] = {0.0, 0.0};
-  double sum_wt2[2] = {0.0, 0.0};
   double mean_rank[2] = {0.0, 0.0};
   double mean_outcome[2] = {0.0, 0.0};
   double min_outcome[2] = {R_PosInf, R_PosInf};
@@ -114,21 +113,10 @@ TwoCiScores ci_score_children_ordered(
     const double w_norm = wt[idx] / total_wt[child];
     const double rank_w = cumulative_wt[child] + w_norm / 2.0;
     cumulative_wt[child] += w_norm;
-    sum_wt2[child] += w_norm * w_norm;
     mean_rank[child] += w_norm * rank_w;
     mean_outcome[child] += w_norm * outcome[idx];
     min_outcome[child] = std::min(min_outcome[child], outcome[idx]);
     max_outcome[child] = std::max(max_outcome[child], outcome[idx]);
-  }
-
-  double cov_denom[2] = {
-    1.0 - sum_wt2[0],
-    1.0 - sum_wt2[1]
-  };
-  for (int child = 0; child < 2; ++child) {
-    usable[child] = usable[child] &&
-      R_finite(cov_denom[child]) &&
-      cov_denom[child] > 0.0;
   }
 
   cumulative_wt[0] = 0.0;
@@ -153,7 +141,6 @@ TwoCiScores ci_score_children_ordered(
 
   for (int child = 0; child < 2; ++child) {
     if (!usable[child]) continue;
-    cov12[child] /= cov_denom[child];
 
     double score = 0.0;
     if (type_code == 1) {

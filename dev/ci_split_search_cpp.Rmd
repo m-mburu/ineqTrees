@@ -272,6 +272,7 @@ best_global_ci_split_cpp <- function(x,
     vars <- sample(vars, min(ctrl$mtry, length(vars)))
   }
 
+  parent_impurity <- ci_factory(type)(y, wt)
   best <- NULL
 
   for (j in vars) {
@@ -296,6 +297,15 @@ best_global_ci_split_cpp <- function(x,
     return(NULL)
   }
 
+  best$parent_impurity <- parent_impurity
+  best$relative_gain <- .ci_relative_gain(best$gain, parent_impurity)
+
+  if (ctrl$min_relative_gain > 0 &&
+      (!is.finite(best$relative_gain) ||
+       best$relative_gain <= ctrl$min_relative_gain)) {
+    return(NULL)
+  }
+
   best
 }
 ```
@@ -317,7 +327,9 @@ The C++ engine computes the same concentration-index gain as the R path:
 1. Compute the parent CI once.
 2. Search all admissible candidate splits.
 3. Compute child-specific weighted fractional ranks inside each candidate child.
-4. Return the best gain and child membership.
+4. Score child nodes with the direct population-style weighted covariance,
+   without a child-specific finite-sample correction.
+5. Return the best gain and child membership.
 
 The C++ functions return compact engine results. The R wrappers convert those
 results into the same user-facing objects as the R split search: `partysplit`

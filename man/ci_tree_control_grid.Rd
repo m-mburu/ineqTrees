@@ -10,6 +10,7 @@ ci_tree_control_grid(
   minprob = c(0.01),
   maxdepth = c(2L, 3L, 4L),
   min_gain = 0,
+  min_relative_gain = 0,
   mtry = NULL,
   ntree = NULL
 )
@@ -25,6 +26,9 @@ ci_tree_control_grid(
 
 \item{min_gain}{Candidate minimum concentration-index gains required for a
 split.}
+
+\item{min_relative_gain}{Candidate minimum concentration-index gains as a
+share of parent-node impurity required for a split.}
 
 \item{mtry}{Optional candidate numbers of variables sampled at each node.
 Use \code{NULL} to search all candidate variables.}

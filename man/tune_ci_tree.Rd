@@ -19,7 +19,8 @@ tune_ci_tree(
   fold_id = NULL,
   resamples = NULL,
   seed = NULL,
-  metric = c("validation_gain", "brier", "log_loss", "roc_auc"),
+  metric = c("validation_gain", "relative_validation_gain",
+    "percent_validation_root_recovered", "brier", "log_loss", "roc_auc"),
   metrics = NULL,
   refit = TRUE,
   verbose = FALSE,
@@ -64,8 +65,9 @@ instead of creating folds from \code{v}, \code{strata}, or \code{fold_id}.}
 \item{seed}{Optional random seed for fold creation.}
 
 \item{metric}{Selection metric when a single metric is requested.
-\code{validation_gain} and \code{roc_auc} are maximized; \code{brier} and \code{log_loss} are
-minimized.}
+\code{validation_gain}, \code{relative_validation_gain},
+\code{percent_validation_root_recovered}, and \code{roc_auc} are maximized; \code{brier}
+and \code{log_loss} are minimized.}
 
 \item{metrics}{Optional character vector of one or more metrics to compute
 during tuning. When supplied, the first metric is used for final model
@@ -95,8 +97,11 @@ validation metric.
 
 The default metric is \code{validation_gain}, the held-out reduction in
 concentration-index impurity after validation observations are assigned to
-terminal nodes. Prediction-oriented metrics (\code{"brier"}, \code{"log_loss"}, and
-\code{"roc_auc"}) are also available for numeric risk or binary event outcomes.
+terminal nodes. \code{"relative_validation_gain"} and
+\code{"percent_validation_root_recovered"} divide that gain by the absolute
+validation root impurity for within-type interpretation. Prediction-oriented
+metrics (\code{"brier"}, \code{"log_loss"}, and \code{"roc_auc"}) are also available for
+numeric risk or binary event outcomes.
 }
 \examples{
 toy_data <- data.frame(

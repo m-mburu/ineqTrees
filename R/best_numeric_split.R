@@ -158,7 +158,7 @@ best_factor_split <- function(
 #'   of `x`.
 #'
 #' @return A split candidate list, or `NULL` when no variable has an admissible
-#'   gain above `control$min_gain`.
+#'   gain above `control$min_gain` and `control$min_relative_gain`.
 #'
 #' @export
 best_global_ci_split <- function(x,
@@ -181,6 +181,7 @@ best_global_ci_split <- function(x,
     vars <- sample(vars, min(ctrl$mtry, length(vars)))
   }
 
+  parent_impurity <- ci_fun(y, wt)
   best <- NULL
 
   for (j in vars) {
@@ -202,6 +203,15 @@ best_global_ci_split <- function(x,
   if (is.null(best) ||
       !is.finite(best$gain) ||
       best$gain <= ctrl$min_gain) {
+    return(NULL)
+  }
+
+  best$parent_impurity <- parent_impurity
+  best$relative_gain <- .ci_relative_gain(best$gain, parent_impurity)
+
+  if (ctrl$min_relative_gain > 0 &&
+      (!is.finite(best$relative_gain) ||
+       best$relative_gain <= ctrl$min_relative_gain)) {
     return(NULL)
   }
 

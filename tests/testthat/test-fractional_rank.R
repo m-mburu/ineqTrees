@@ -34,18 +34,18 @@ test_that("shap_conc_decomp decomposes a wide SHAP table", {
   expect_equal(out$diagnostics$n, 3)
   expect_equal(out$diagnostics$weight_sum, 3)
   expect_equal(out$diagnostics$mean_prediction, 8 / 3)
-  expect_equal(out$diagnostics$concentration_index, 1 / 8)
-  expect_equal(out$diagnostics$signed_concentration_index, -1 / 8)
+  expect_equal(out$diagnostics$concentration_index, 1 / 12)
+  expect_equal(out$diagnostics$signed_concentration_index, -1 / 12)
   expect_equal(out$diagnostics$score_direction, -1)
-  expect_equal(out$diagnostics$shap_sum, 1 / 8)
+  expect_equal(out$diagnostics$shap_sum, 1 / 12)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$centered_rank_sum, 0, tolerance = 1e-12)
   expect_equal(out$diagnostics$prediction_source, "baseline + rowSums(shap)")
 
   expect_equal(out$contributions$feature, c("education", "water"))
-  expect_equal(out$contributions$D_k_SHAP, c(1 / 4, -1 / 8))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 6, -1 / 12))
   expect_equal(out$contributions$pct_contribution, c(200, -100))
-  expect_equal(out$contributions$abs_contribution, c(1 / 4, 1 / 8))
+  expect_equal(out$contributions$abs_contribution, c(1 / 6, 1 / 12))
 })
 
 test_that("shap_conc_decomp reshapes DALEX-like SHAP tables", {
@@ -96,10 +96,10 @@ test_that("shap_conc_decomp drops incomplete rows with na_rm", {
 
   expect_equal(out$diagnostics$n, 2)
   expect_equal(out$diagnostics$prediction_source, "prediction")
-  expect_equal(out$diagnostics$concentration_index, 1 / 3)
+  expect_equal(out$diagnostics$concentration_index, 1 / 6)
   expect_equal(out$diagnostics$additivity_gap, 0, tolerance = 1e-12)
   expect_equal(out$contributions$feature, c("x1", "x2"))
-  expect_equal(out$contributions$D_k_SHAP, c(1 / 6, 1 / 6))
+  expect_equal(out$contributions$D_k_SHAP, c(1 / 12, 1 / 12))
 })
 
 test_that("shap_conc_decomp uses ci_factory scores for weighted variants", {

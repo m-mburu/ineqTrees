@@ -8,6 +8,8 @@
 #' @param minprob Minimum child-node weight proportion.
 #' @param maxdepth Maximum tree depth, with the root at depth 0.
 #' @param min_gain Minimum concentration-index gain required to split a node.
+#' @param min_relative_gain Minimum concentration-index gain as a share of the
+#'   parent-node impurity required to split a node.
 #' @param mtry Optional number of variables sampled as candidates at each node.
 #' @param split_engine Split-search implementation to use. `"cpp"` uses the
 #'   Rcpp-backed split search, while `"R"` uses the reference R implementation.
@@ -20,6 +22,7 @@ ci_tree_control <- function(minsplit = 200L,
                             minprob = 0.01,
                             maxdepth = 4L,
                             min_gain = 0,
+                            min_relative_gain = 0,
                             mtry = NULL,
                             split_engine = c("cpp", "R")) {
   split_engine <- match.arg(split_engine)
@@ -30,6 +33,7 @@ ci_tree_control <- function(minsplit = 200L,
     minprob = minprob,
     maxdepth = maxdepth,
     min_gain = min_gain,
+    min_relative_gain = min_relative_gain,
     mtry = mtry,
     split_engine = split_engine
   )
@@ -64,7 +68,10 @@ ci_tree_control <- function(minsplit = 200L,
   }
 
   ctrl <- defaults
-  scalar_names <- c("minsplit", "minbucket", "minprob", "maxdepth", "min_gain")
+  scalar_names <- c(
+    "minsplit", "minbucket", "minprob", "maxdepth", "min_gain",
+    "min_relative_gain"
+  )
 
   for (nm in scalar_names) {
     if (length(ctrl[[nm]]) != 1L || is.na(ctrl[[nm]])) {
@@ -83,6 +90,11 @@ ci_tree_control <- function(minsplit = 200L,
   }
   if (ctrl$maxdepth < 0) {
     stop("`maxdepth` must be non-negative.", call. = FALSE)
+  }
+  if (ctrl$min_gain < 0 || ctrl$min_relative_gain < 0) {
+    stop("`min_gain` and `min_relative_gain` must be non-negative.",
+      call. = FALSE
+    )
   }
 
   ctrl$minsplit <- as.integer(ceiling(ctrl$minsplit))
@@ -292,6 +304,7 @@ ci_tree_control <- function(minsplit = 200L,
     right_child <- build_node(obs[!left], depth + 1L)
 
     info$gain <- split$gain
+    info$relative_gain <- split$relative_gain
     info$varid <- split$varid
     info$varname <- names(data)[split$varid]
     info$split_type <- split$type

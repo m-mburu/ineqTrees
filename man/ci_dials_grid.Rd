@@ -11,6 +11,7 @@ ci_dials_grid(
   minprob = 0.01,
   maxdepth = NULL,
   min_gain = 0,
+  min_relative_gain = 0,
   mtry = NULL,
   ntree = NULL
 )
@@ -32,6 +33,9 @@ or dials \code{tree_depth} column is used, falling back to the
 
 \item{min_gain}{Minimum concentration-index gains required for a split.}
 
+\item{min_relative_gain}{Minimum concentration-index gains as a share of
+parent-node impurity required for a split.}
+
 \item{mtry}{Optional numbers of variables sampled at each split. If \code{NULL},
 an \code{mtry} column is used when present.}
 
@@ -49,8 +53,9 @@ dials names usable in package tuning workflows.
 
 Recognized input columns are \code{min_n} or \code{minbucket}, \code{tree_depth} or
 \code{maxdepth}, \code{mtry}, \code{trees} or \code{ntree}, \code{minsplit}, \code{minprob}, and
-\code{min_gain}. When \code{minsplit} is not supplied, it defaults to twice the child
-node size (\code{minbucket}), which is a common starting point for binary splits.
+\code{min_gain}, and \code{min_relative_gain}. When \code{minsplit} is not supplied, it
+defaults to twice the child node size (\code{minbucket}), which is a common
+starting point for binary splits.
 }
 \examples{
 if (requireNamespace("dials", quietly = TRUE)) {

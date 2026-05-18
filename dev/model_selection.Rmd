@@ -38,6 +38,8 @@ pkgload::load_all(export_all = TRUE)
 #' @param maxdepth Candidate maximum tree depths.
 #' @param min_gain Candidate minimum concentration-index gains required for a
 #'   split.
+#' @param min_relative_gain Candidate minimum concentration-index gains as a
+#'   share of parent-node impurity required for a split.
 #' @param mtry Optional candidate numbers of variables sampled at each node.
 #'   Use `NULL` to search all candidate variables.
 #' @param ntree Optional candidate numbers of trees for forest tuning.
@@ -57,6 +59,7 @@ ci_tree_control_grid <- function(minsplit = c(50L, 100L, 200L),
                                  minprob = c(0.01),
                                  maxdepth = c(2L, 3L, 4L),
                                  min_gain = 0,
+                                 min_relative_gain = 0,
                                  mtry = NULL,
                                  ntree = NULL) {
   grid <- expand.grid(
@@ -65,6 +68,7 @@ ci_tree_control_grid <- function(minsplit = c(50L, 100L, 200L),
     minprob = as.numeric(minprob),
     maxdepth = as.integer(maxdepth),
     min_gain = as.numeric(min_gain),
+    min_relative_gain = as.numeric(min_relative_gain),
     KEEP.OUT.ATTRS = FALSE,
     stringsAsFactors = FALSE
   )
@@ -101,8 +105,9 @@ ci_tree_control_grid <- function(minsplit = c(50L, 100L, 200L),
 #'
 #' Recognized input columns are `min_n` or `minbucket`, `tree_depth` or
 #' `maxdepth`, `mtry`, `trees` or `ntree`, `minsplit`, `minprob`, and
-#' `min_gain`. When `minsplit` is not supplied, it defaults to twice the child
-#' node size (`minbucket`), which is a common starting point for binary splits.
+#' `min_gain`, and `min_relative_gain`. When `minsplit` is not supplied, it
+#' defaults to twice the child node size (`minbucket`), which is a common
+#' starting point for binary splits.
 #'
 #' @param grid A data frame or tibble, typically from `dials::grid_regular()`.
 #' @param minsplit Optional parent-node sizes. If `NULL`, a `minsplit` column is
@@ -114,6 +119,8 @@ ci_tree_control_grid <- function(minsplit = c(50L, 100L, 200L),
 #'   or dials `tree_depth` column is used, falling back to the
 #'   [ci_tree_control()] default.
 #' @param min_gain Minimum concentration-index gains required for a split.
+#' @param min_relative_gain Minimum concentration-index gains as a share of
+#'   parent-node impurity required for a split.
 #' @param mtry Optional numbers of variables sampled at each split. If `NULL`,
 #'   an `mtry` column is used when present.
 #' @param ntree Optional numbers of trees for forest tuning. If `NULL`, an
@@ -140,6 +147,7 @@ ci_dials_grid <- function(grid,
                           minprob = 0.01,
                           maxdepth = NULL,
                           min_gain = 0,
+                          min_relative_gain = 0,
                           mtry = NULL,
                           ntree = NULL) {
   grid <- as.data.frame(grid)
@@ -211,12 +219,21 @@ ci_dials_grid <- function(grid,
   }
   min_gain_values <- as.numeric(recycle_rows(min_gain_values, "min_gain"))
 
+  min_relative_gain_values <- first_column("min_relative_gain")
+  if (is.null(min_relative_gain_values)) {
+    min_relative_gain_values <- min_relative_gain
+  }
+  min_relative_gain_values <- as.numeric(
+    recycle_rows(min_relative_gain_values, "min_relative_gain")
+  )
+
   out <- data.table::data.table(
     minsplit = minsplit_values,
     minbucket = minbucket_values,
     minprob = minprob_values,
     maxdepth = maxdepth_values,
-    min_gain = min_gain_values
+    min_gain = min_gain_values,
+    min_relative_gain = min_relative_gain_values
   )
 
   mtry_values <- mtry
@@ -255,7 +272,7 @@ test_that("ci_tree_control_grid creates greedy controls only", {
   expect_equal(nrow(grid), 64L)
   expect_true(all(c(
     "minsplit", "minbucket", "minprob", "maxdepth", "min_gain", "mtry",
-    "ntree"
+    "min_relative_gain", "ntree"
   ) %in% names(grid)))
   expect_false("mincriterion" %in% names(grid))
 })
@@ -277,6 +294,7 @@ test_that("ci_dials_grid converts tidymodels-style names", {
   expect_equal(grid$mtry, c(1L, 2L))
   expect_equal(grid$ntree, c(7L, 9L))
   expect_equal(grid$minprob, c(0.05, 0.05))
+  expect_equal(grid$min_relative_gain, c(0, 0))
 })
 ```
 
@@ -408,14 +426,20 @@ test_that("ci_cv_folds validates input", {
 
 #' @noRd
 .ci_metric_direction <- function(metric) {
-  if (metric %in% c("validation_gain", "roc_auc")) {
+  if (metric %in% c(
+    "validation_gain", "relative_validation_gain",
+    "percent_validation_root_recovered", "roc_auc"
+  )) {
     "maximize"
   } else {
     "minimize"
   }
 }
 
-.ci_metric_choices <- c("validation_gain", "brier", "log_loss", "roc_auc")
+.ci_metric_choices <- c(
+  "validation_gain", "relative_validation_gain",
+  "percent_validation_root_recovered", "brier", "log_loss", "roc_auc"
+)
 
 .ci_match_metrics <- function(metric, metrics = NULL) {
   if (!is.null(metrics)) {
@@ -838,6 +862,45 @@ control_ci_tune <- function(verbose = FALSE,
   )
 }
 
+.ci_score_relative_validation_gain <- function(fit,
+                                               new_data,
+                                               rank_name,
+                                               outcome_name,
+                                               weights,
+                                               type,
+                                               root_impurity = NULL) {
+  if (is.null(root_impurity)) {
+    weights <- .ci_default_weights(weights, nrow(new_data))
+    rank <- suppressWarnings(as.numeric(new_data[[rank_name]]))
+    outcome <- .ci_outcome_numeric(new_data[[outcome_name]], outcome_name)
+    keep <- stats::complete.cases(rank, outcome, weights) & weights > 0
+    if (!any(keep)) {
+      return(NA_real_)
+    }
+    root_impurity <- ci_factory(type)(
+      cbind(rank = rank[keep], outcome = outcome[keep]),
+      weights[keep]
+    )
+  }
+
+  if (!is.finite(root_impurity) ||
+      abs(root_impurity) <= .Machine$double.eps) {
+    return(NA_real_)
+  }
+
+  .ci_score_validation_gain(
+    fit = fit,
+    new_data = new_data,
+    rank_name = rank_name,
+    outcome_name = outcome_name,
+    weights = weights,
+    type = type,
+    root_impurity = root_impurity
+  ) / abs(root_impurity)
+}
+
+.ci_score_percent_validation_root_recovered <- .ci_score_relative_validation_gain
+
 .ci_score_prediction_metric <- function(metric, outcome, pred, weights) {
   switch(metric,
     brier = ci_brier_score(outcome, pred, weights),
@@ -1250,6 +1313,44 @@ test_that("ci_tree_validation_gain scores a fitted partition", {
   expect_length(score, 1L)
   expect_true(is.finite(score))
 })
+
+test_that("relative validation gain scales validation gain by root impurity", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12)
+  )
+  fit <- ci_tree(
+    cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+  weights <- rep(1, nrow(toy_data))
+  y <- as.matrix(toy_data[c("rank", "outcome")])
+  root_impurity <- ci_factory("CI")(y, weights)
+  validation_gain <- ci_tree_validation_gain(
+    fit, toy_data, "rank", "outcome",
+    weights = weights,
+    type = "CI",
+    root_impurity = root_impurity
+  )
+  relative_gain <- getFromNamespace(
+    ".ci_score_relative_validation_gain",
+    "ineqTrees"
+  )(
+    fit = fit,
+    new_data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    weights = weights,
+    type = "CI",
+    root_impurity = root_impurity
+  )
+
+  expect_equal(relative_gain, validation_gain / abs(root_impurity))
+})
 ```
 
 ```{r, function-ci_prediction_metrics}
@@ -1409,8 +1510,11 @@ test_that("ci prediction metrics score simple binary predictions", {
 #'
 #' The default metric is `validation_gain`, the held-out reduction in
 #' concentration-index impurity after validation observations are assigned to
-#' terminal nodes. Prediction-oriented metrics (`"brier"`, `"log_loss"`, and
-#' `"roc_auc"`) are also available for numeric risk or binary event outcomes.
+#' terminal nodes. `"relative_validation_gain"` and
+#' `"percent_validation_root_recovered"` divide that gain by the absolute
+#' validation root impurity for within-type interpretation. Prediction-oriented
+#' metrics (`"brier"`, `"log_loss"`, and `"roc_auc"`) are also available for
+#' numeric risk or binary event outcomes.
 #'
 #' @param formula A model formula, typically with a two-column response such as
 #'   `cbind(rank, outcome) ~ x1 + x2`.
@@ -1433,8 +1537,9 @@ test_that("ci prediction metrics score simple binary predictions", {
 #'   instead of creating folds from `v`, `strata`, or `fold_id`.
 #' @param seed Optional random seed for fold creation.
 #' @param metric Selection metric when a single metric is requested.
-#'   `validation_gain` and `roc_auc` are maximized; `brier` and `log_loss` are
-#'   minimized.
+#'   `validation_gain`, `relative_validation_gain`,
+#'   `percent_validation_root_recovered`, and `roc_auc` are maximized; `brier`
+#'   and `log_loss` are minimized.
 #' @param metrics Optional character vector of one or more metrics to compute
 #'   during tuning. When supplied, the first metric is used for final model
 #'   selection.
@@ -1485,7 +1590,9 @@ tune_ci_tree <- function(formula,
                          resamples = NULL,
                          seed = NULL,
                          metric = c(
-                           "validation_gain", "brier", "log_loss", "roc_auc"
+                           "validation_gain", "relative_validation_gain",
+                           "percent_validation_root_recovered", "brier",
+                           "log_loss", "roc_auc"
                          ),
                          metrics = NULL,
                          refit = TRUE,
@@ -1678,7 +1785,24 @@ tune_ci_tree <- function(formula,
               type = this_type,
               root_impurity = root_impurity
             )
-          } else if (!is.null(pred)) {
+          } else if (this_metric %in% c(
+            "relative_validation_gain", "percent_validation_root_recovered"
+          )) {
+            root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
+            .ci_score_relative_validation_gain(
+              fit = fit_result$value,
+              new_data = data[test_idx, , drop = FALSE],
+              rank_name = rank_name,
+              outcome_name = outcome_name,
+              weights = weights[test_idx],
+              type = this_type,
+              root_impurity = root_impurity
+            )
+          } else if (!this_metric %in% c(
+            "validation_gain", "relative_validation_gain",
+            "percent_validation_root_recovered"
+          ) &&
+                     !is.null(pred)) {
             .ci_score_prediction_metric(
               this_metric,
               outcome[test_idx],
@@ -2115,7 +2239,24 @@ tune_ctree_ci <- function(...) {
             type = this_type,
             root_impurity = root_impurity
           )
-        } else if (!identical(this_metric, "validation_gain") && !is.null(pred)) {
+        } else if (this_metric %in% c(
+          "relative_validation_gain", "percent_validation_root_recovered"
+        ) && !is.null(pred)) {
+          root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
+          .ci_score_relative_validation_gain(
+            fit = fit_result$value$surrogate$fit,
+            new_data = valid_data,
+            rank_name = rank_name,
+            outcome_name = outcome_name,
+            weights = weights[test_idx],
+            type = this_type,
+            root_impurity = root_impurity
+          )
+        } else if (!this_metric %in% c(
+          "validation_gain", "relative_validation_gain",
+          "percent_validation_root_recovered"
+        ) &&
+                   !is.null(pred)) {
           .ci_score_prediction_metric(
             this_metric,
             outcome[test_idx],
@@ -2252,7 +2393,11 @@ tune_ci_forest <- function(formula,
                            fold_id = NULL,
                            resamples = NULL,
                            seed = NULL,
-                           metric = c("validation_gain", "brier", "log_loss", "roc_auc"),
+                           metric = c(
+                             "validation_gain", "relative_validation_gain",
+                             "percent_validation_root_recovered", "brier",
+                             "log_loss", "roc_auc"
+                           ),
                            metrics = NULL,
                            surrogate_control = NULL,
                            prediction_name = "forest_risk",
@@ -2593,6 +2738,38 @@ test_that("tune_ci_tree supports multiple metrics, controls, and collectors", {
   expect_gt(nrow(ci_collect_fits(tuned)), 0L)
   expect_gt(nrow(ci_collect_extracts(tuned)), 0L)
   expect_s3_class(ci_collect_notes(tuned), "data.table")
+})
+
+test_that("tune_ci_tree supports percent validation root recovered", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16)
+  )
+  grid <- ci_tree_control_grid(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    maxdepth = 1
+  )
+
+  tuned <- tune_ci_tree(
+    cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    type = "CI",
+    control_grid = grid,
+    v = 2,
+    seed = 8,
+    metrics = c("percent_validation_root_recovered"),
+    refit = FALSE
+  )
+
+  expect_equal(tuned$selection_metric, "percent_validation_root_recovered")
+  expect_equal(tuned$metric_direction, "maximize")
+  expect_true(all(tuned$summary$metric == "percent_validation_root_recovered"))
+  expect_true(all(is.finite(tuned$summary$mean_score)))
 })
 
 test_that("tune_ci_tree accepts rsample resamples when available", {

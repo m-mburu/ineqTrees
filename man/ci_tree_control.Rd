@@ -10,6 +10,7 @@ ci_tree_control(
   minprob = 0.01,
   maxdepth = 4L,
   min_gain = 0,
+  min_relative_gain = 0,
   mtry = NULL,
   split_engine = c("cpp", "R")
 )
@@ -25,6 +26,9 @@ split.}
 \item{maxdepth}{Maximum tree depth, with the root at depth 0.}
 
 \item{min_gain}{Minimum concentration-index gain required to split a node.}
+
+\item{min_relative_gain}{Minimum concentration-index gain as a share of the
+parent-node impurity required to split a node.}
 
 \item{mtry}{Optional number of variables sampled as candidates at each node.}
 
