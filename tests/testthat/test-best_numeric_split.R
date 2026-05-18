@@ -247,3 +247,43 @@ test_that("best_global_ci_split respects min_gain", {
 
   expect_null(split)
 })
+
+test_that("best_global_ci_split respects min_relative_gain", {
+  toy_data <- data.frame(
+    rank = c(20, 10, 40, 30, 70, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 0, 1),
+    x = c(1, 2, 3, 4, 5, 6, 7)
+  )
+  y <- as.matrix(toy_data[c("rank", "outcome")])
+  wt <- c(1, 3, 2, 4, 1, 2, 5)
+  ci_fun <- ci_factory("CIg")
+
+  ctrl <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    min_relative_gain = 0
+  )
+
+  split <- best_global_ci_split(
+    x = toy_data,
+    y = y,
+    wt = wt,
+    ctrl = ctrl,
+    ci_fun = ci_fun,
+    vars = 3
+  )
+
+  expect_true(is.finite(split$relative_gain))
+  expect_equal(split$relative_gain, split$gain / abs(ci_fun(y, wt)))
+
+  ctrl$min_relative_gain <- split$relative_gain + 1e-8
+  expect_null(best_global_ci_split(
+    x = toy_data,
+    y = y,
+    wt = wt,
+    ctrl = ctrl,
+    ci_fun = ci_fun,
+    vars = 3
+  ))
+})

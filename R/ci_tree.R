@@ -307,6 +307,8 @@ ci_splitfun <- function(rank_name,
 #' splits are admissible only when both child nodes satisfy `minbucket` and
 #' `minprob`. Third, after all admissible splits are scored, the best split is
 #' accepted only when its gain is finite and greater than `min_gain`.
+#' If `min_relative_gain` is positive, the split must also recover at least
+#' that share of the parent-node impurity.
 #'
 #' @param formula A model formula, typically with a two-column response such as
 #'   `cbind(rank, outcome) ~ x1 + x2`.

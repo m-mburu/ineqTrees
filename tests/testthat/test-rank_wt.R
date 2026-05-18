@@ -35,7 +35,7 @@ test_that("ci_factory returns scoring functions and validates type", {
   expect_error(ci_factory("bad"))
 })
 
-test_that("ci_factory computes expected CI variants on a simple example", {
+test_that("ci_factory computes direct CI variants on a simple example", {
   y <- cbind(c(10, 20, 30), c(1, 0, 1))
   wt <- c(1, 1, 2)
 
@@ -43,12 +43,12 @@ test_that("ci_factory computes expected CI variants on a simple example", {
   cig <- ci_factory("CIg")
   cic <- ci_factory("CIc")
 
-  expect_equal(ci(y, wt), 2 / 15)
-  expect_equal(cig(y, wt), 0.1)
-  expect_equal(cic(y, wt), 0.4)
+  expect_equal(ci(y, wt), 1 / 12)
+  expect_equal(cig(y, wt), 0.0625)
+  expect_equal(cic(y, wt), 0.25)
 })
 
-test_that("ci_factory matches cov.wt reference calculations", {
+test_that("ci_factory matches direct weighted-covariance reference calculations", {
   y <- cbind(
     rank = c(4, 1, 3, 2, 5),
     outcome = c(0, 1, 3, 2, 5)
@@ -60,13 +60,13 @@ test_that("ci_factory matches cov.wt reference calculations", {
     y <- y[ok, , drop = FALSE]
     wt <- wt[ok]
     y[, 1] <- rank_wt(y[, 1], wt)
-    cov12 <- stats::cov.wt(
-      x = as.matrix(data.frame(y1 = y[, 1], y2 = y[, 2])),
-      wt = wt
-    )$cov[1, 2]
+    wt_norm <- wt / sum(wt)
+    mean_rank <- sum(wt_norm * y[, 1])
+    mean_outcome <- sum(wt_norm * y[, 2])
+    cov12 <- sum(wt_norm * (y[, 1] - mean_rank) * (y[, 2] - mean_outcome))
 
     if (type == "CI") {
-      return(abs(2 * cov12 / stats::weighted.mean(y[, 2], wt)))
+      return(abs(2 * cov12 / mean_outcome))
     }
     if (type == "CIg") {
       return(abs(2 * cov12))

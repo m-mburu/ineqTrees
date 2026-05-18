@@ -7,6 +7,7 @@ test_that("ci_tree_control stores greedy tree controls", {
     minprob = 0.1,
     maxdepth = 2,
     min_gain = 0.01,
+    min_relative_gain = 0.05,
     mtry = 1
   )
 
@@ -15,6 +16,7 @@ test_that("ci_tree_control stores greedy tree controls", {
   expect_equal(ctrl$minprob, 0.1)
   expect_equal(ctrl$maxdepth, 2)
   expect_equal(ctrl$min_gain, 0.01)
+  expect_equal(ctrl$min_relative_gain, 0.05)
   expect_equal(ctrl$mtry, 1)
   expect_equal(ctrl$split_engine, "cpp")
 })

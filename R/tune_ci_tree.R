@@ -176,7 +176,24 @@ tune_ctree_ci <- function(...) {
             type = this_type,
             root_impurity = root_impurity
           )
-        } else if (!identical(this_metric, "validation_gain") && !is.null(pred)) {
+        } else if (this_metric %in% c(
+          "relative_validation_gain", "percent_validation_root_recovered"
+        ) && !is.null(pred)) {
+          root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
+          .ci_score_relative_validation_gain(
+            fit = fit_result$value$surrogate$fit,
+            new_data = valid_data,
+            rank_name = rank_name,
+            outcome_name = outcome_name,
+            weights = weights[test_idx],
+            type = this_type,
+            root_impurity = root_impurity
+          )
+        } else if (!this_metric %in% c(
+          "validation_gain", "relative_validation_gain",
+          "percent_validation_root_recovered"
+        ) &&
+                   !is.null(pred)) {
           .ci_score_prediction_metric(
             this_metric,
             outcome[test_idx],
@@ -313,7 +330,11 @@ tune_ci_forest <- function(formula,
                            fold_id = NULL,
                            resamples = NULL,
                            seed = NULL,
-                           metric = c("validation_gain", "brier", "log_loss", "roc_auc"),
+                           metric = c(
+                             "validation_gain", "relative_validation_gain",
+                             "percent_validation_root_recovered", "brier",
+                             "log_loss", "roc_auc"
+                           ),
                            metrics = NULL,
                            surrogate_control = NULL,
                            prediction_name = "forest_risk",

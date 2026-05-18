@@ -84,6 +84,8 @@ it satisfies \code{minsplit} and has not reached \code{maxdepth}. Second, candid
 splits are admissible only when both child nodes satisfy \code{minbucket} and
 \code{minprob}. Third, after all admissible splits are scored, the best split is
 accepted only when its gain is finite and greater than \code{min_gain}.
+If \code{min_relative_gain} is positive, the split must also recover at least
+that share of the parent-node impurity.
 }
 \examples{
 data(kenya, package = "ineqTrees")

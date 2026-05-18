@@ -15,7 +15,7 @@ test_that("ci_tree_control_grid creates greedy controls only", {
   expect_equal(nrow(grid), 64L)
   expect_true(all(c(
     "minsplit", "minbucket", "minprob", "maxdepth", "min_gain", "mtry",
-    "ntree"
+    "min_relative_gain", "ntree"
   ) %in% names(grid)))
   expect_false("mincriterion" %in% names(grid))
 })
@@ -37,6 +37,7 @@ test_that("ci_dials_grid converts tidymodels-style names", {
   expect_equal(grid$mtry, c(1L, 2L))
   expect_equal(grid$ntree, c(7L, 9L))
   expect_equal(grid$minprob, c(0.05, 0.05))
+  expect_equal(grid$min_relative_gain, c(0, 0))
 })
 
 test_that("ci_cv_folds creates reproducible folds", {
@@ -113,6 +114,44 @@ test_that("ci_tree_validation_gain scores a fitted partition", {
   expect_type(score, "double")
   expect_length(score, 1L)
   expect_true(is.finite(score))
+})
+
+test_that("relative validation gain scales validation gain by root impurity", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12)
+  )
+  fit <- ci_tree(
+    cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+  weights <- rep(1, nrow(toy_data))
+  y <- as.matrix(toy_data[c("rank", "outcome")])
+  root_impurity <- ci_factory("CI")(y, weights)
+  validation_gain <- ci_tree_validation_gain(
+    fit, toy_data, "rank", "outcome",
+    weights = weights,
+    type = "CI",
+    root_impurity = root_impurity
+  )
+  relative_gain <- getFromNamespace(
+    ".ci_score_relative_validation_gain",
+    "ineqTrees"
+  )(
+    fit = fit,
+    new_data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    weights = weights,
+    type = "CI",
+    root_impurity = root_impurity
+  )
+
+  expect_equal(relative_gain, validation_gain / abs(root_impurity))
 })
 
 test_that("ci prediction metrics score simple binary predictions", {

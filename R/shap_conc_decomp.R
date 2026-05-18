@@ -224,14 +224,10 @@ shap_conc_decomp <- function(
     rank_fraction <- rank_wt(rank_vector, weight_vector)
     mean_rank <- sum(weight_prob * rank_fraction)
     index_weight <- rank_fraction - mean_rank
-    cov_denom <- 1 - sum(weight_prob^2)
 
     weighted_cov_with_rank <- function(values) {
-      if (!is.finite(cov_denom) || cov_denom <= tolerance) {
-        return(0)
-      }
       mean_value <- sum(weight_prob * values)
-      sum(weight_prob * index_weight * (values - mean_value)) / cov_denom
+      sum(weight_prob * index_weight * (values - mean_value))
     }
 
     if (type == "CI" && abs(mu_hat) <= tolerance) {

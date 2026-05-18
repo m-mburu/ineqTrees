@@ -234,6 +234,7 @@ best_global_ci_split_cpp <- function(x,
     vars <- sample(vars, min(ctrl$mtry, length(vars)))
   }
 
+  parent_impurity <- ci_factory(type)(y, wt)
   best <- NULL
 
   for (j in vars) {
@@ -255,6 +256,15 @@ best_global_ci_split_cpp <- function(x,
   if (is.null(best) ||
       !is.finite(best$gain) ||
       best$gain <= ctrl$min_gain) {
+    return(NULL)
+  }
+
+  best$parent_impurity <- parent_impurity
+  best$relative_gain <- .ci_relative_gain(best$gain, parent_impurity)
+
+  if (ctrl$min_relative_gain > 0 &&
+      (!is.finite(best$relative_gain) ||
+       best$relative_gain <= ctrl$min_relative_gain)) {
     return(NULL)
   }
 

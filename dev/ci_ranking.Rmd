@@ -110,7 +110,7 @@ test_that("rank_wt handles edge cases", {
 #' @description
 #' Computes the same concentration-index variants as [ci_factory()], but avoids
 #' constructing temporary data frames and avoids [stats::cov.wt()]. The weighted
-#' covariance uses the same unbiased convention as `stats::cov.wt()` with
+#' covariance is the population-style descriptive covariance computed from
 #' normalized weights.
 #'
 #' @param y A two-column numeric matrix with rank variable and outcome.
@@ -167,14 +167,8 @@ test_that("rank_wt handles edge cases", {
 
   mean_rank <- sum(wt_norm * rank_w)
   mean_outcome <- sum(wt_norm * outcome)
-  cov_denom <- 1 - sum(wt_norm^2)
-
-  if (!is.finite(cov_denom) || cov_denom <= 0) {
-    return(0)
-  }
-
   cov12 <- sum(wt_norm * (rank_w - mean_rank) *
-    (outcome - mean_outcome)) / cov_denom
+    (outcome - mean_outcome))
 
   if (type == "CI") {
     if (!is.finite(mean_outcome) ||
@@ -342,7 +336,7 @@ test_that("ci_factory returns scoring functions and validates type", {
   expect_error(ci_factory("bad"))
 })
 
-test_that("ci_factory computes expected CI variants on a simple example", {
+test_that("ci_factory computes direct CI variants on a simple example", {
   y <- cbind(c(10, 20, 30), c(1, 0, 1))
   wt <- c(1, 1, 2)
 
@@ -350,12 +344,12 @@ test_that("ci_factory computes expected CI variants on a simple example", {
   cig <- ci_factory("CIg")
   cic <- ci_factory("CIc")
 
-  expect_equal(ci(y, wt), 2 / 15)
-  expect_equal(cig(y, wt), 0.1)
-  expect_equal(cic(y, wt), 0.4)
+  expect_equal(ci(y, wt), 1 / 12)
+  expect_equal(cig(y, wt), 0.0625)
+  expect_equal(cic(y, wt), 0.25)
 })
 
-test_that("ci_factory matches cov.wt reference calculations", {
+test_that("ci_factory matches direct weighted-covariance reference calculations", {
   y <- cbind(
     rank = c(4, 1, 3, 2, 5),
     outcome = c(0, 1, 3, 2, 5)
@@ -367,13 +361,13 @@ test_that("ci_factory matches cov.wt reference calculations", {
     y <- y[ok, , drop = FALSE]
     wt <- wt[ok]
     y[, 1] <- rank_wt(y[, 1], wt)
-    cov12 <- stats::cov.wt(
-      x = as.matrix(data.frame(y1 = y[, 1], y2 = y[, 2])),
-      wt = wt
-    )$cov[1, 2]
+    wt_norm <- wt / sum(wt)
+    mean_rank <- sum(wt_norm * y[, 1])
+    mean_outcome <- sum(wt_norm * y[, 2])
+    cov12 <- sum(wt_norm * (y[, 1] - mean_rank) * (y[, 2] - mean_outcome))
 
     if (type == "CI") {
-      return(abs(2 * cov12 / stats::weighted.mean(y[, 2], wt)))
+      return(abs(2 * cov12 / mean_outcome))
     }
     if (type == "CIg") {
       return(abs(2 * cov12))
@@ -574,6 +568,27 @@ weighted_ci_gain <- function(y, wt, left, ci_fun) {
     ci_fun = ci_fun,
     ci_parent = ci_parent
   )
+}
+
+#' Compute gain relative to the parent/root impurity
+#'
+#' @param gain Raw impurity reduction.
+#' @param root_impurity Parent or validation-root impurity.
+#' @param tolerance Numeric zero guard for the root impurity.
+#'
+#' @return A scalar ratio, or `NA_real_` when the denominator is degenerate.
+#'
+#' @noRd
+.ci_relative_gain <- function(gain,
+                              root_impurity,
+                              tolerance = .Machine$double.eps) {
+  if (!is.finite(gain) ||
+      !is.finite(root_impurity) ||
+      abs(root_impurity) <= tolerance) {
+    return(NA_real_)
+  }
+
+  gain / abs(root_impurity)
 }
 ```
 

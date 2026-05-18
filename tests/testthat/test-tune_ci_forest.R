@@ -123,6 +123,38 @@ test_that("tune_ci_tree supports multiple metrics, controls, and collectors", {
   expect_s3_class(ci_collect_notes(tuned), "data.table")
 })
 
+test_that("tune_ci_tree supports percent validation root recovered", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16)
+  )
+  grid <- ci_tree_control_grid(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    maxdepth = 1
+  )
+
+  tuned <- tune_ci_tree(
+    cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    type = "CI",
+    control_grid = grid,
+    v = 2,
+    seed = 8,
+    metrics = c("percent_validation_root_recovered"),
+    refit = FALSE
+  )
+
+  expect_equal(tuned$selection_metric, "percent_validation_root_recovered")
+  expect_equal(tuned$metric_direction, "maximize")
+  expect_true(all(tuned$summary$metric == "percent_validation_root_recovered"))
+  expect_true(all(is.finite(tuned$summary$mean_score)))
+})
+
 test_that("tune_ci_tree accepts rsample resamples when available", {
   skip_if_not_installed("rsample")
 

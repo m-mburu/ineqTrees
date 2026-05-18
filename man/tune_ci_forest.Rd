@@ -21,7 +21,8 @@ tune_ci_forest(
   fold_id = NULL,
   resamples = NULL,
   seed = NULL,
-  metric = c("validation_gain", "brier", "log_loss", "roc_auc"),
+  metric = c("validation_gain", "relative_validation_gain",
+    "percent_validation_root_recovered", "brier", "log_loss", "roc_auc"),
   metrics = NULL,
   surrogate_control = NULL,
   prediction_name = "forest_risk",
@@ -74,8 +75,9 @@ instead of creating folds from \code{v}, \code{strata}, or \code{fold_id}.}
 \item{seed}{Optional random seed for fold creation.}
 
 \item{metric}{Selection metric when a single metric is requested.
-\code{validation_gain} and \code{roc_auc} are maximized; \code{brier} and \code{log_loss} are
-minimized.}
+\code{validation_gain}, \code{relative_validation_gain},
+\code{percent_validation_root_recovered}, and \code{roc_auc} are maximized; \code{brier}
+and \code{log_loss} are minimized.}
 
 \item{metrics}{Optional character vector of one or more metrics to compute
 during tuning. When supplied, the first metric is used for final model
