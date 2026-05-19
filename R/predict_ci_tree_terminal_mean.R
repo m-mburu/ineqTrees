@@ -736,15 +736,38 @@ control_ci_tune <- function(verbose = FALSE,
   data.table::rbindlist(lapply(resamples, function(resample) {
     valid <- data[resample$test_idx, , drop = FALSE]
     wt <- weights[resample$test_idx]
-    y <- cbind(rank = valid[[rank_name]], outcome = valid[[outcome_name]])
     data.table::rbindlist(lapply(types, function(type) {
       data.table::data.table(
         fold_id = resample$fold_id,
         type = type,
-        root_impurity = ci_factory(type)(y, wt)
+        root_impurity = .ci_data_root_impurity(
+          data = valid,
+          weights = wt,
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          type = type
+        )
       )
     }))
   }))
+}
+
+.ci_data_root_impurity <- function(data,
+                                   weights,
+                                   rank_name,
+                                   outcome_name,
+                                   type) {
+  weights <- .ci_default_weights(weights, nrow(data))
+  rank <- suppressWarnings(as.numeric(data[[rank_name]]))
+  outcome <- .ci_outcome_numeric(data[[outcome_name]], outcome_name)
+  keep <- stats::complete.cases(rank, outcome, weights) & weights > 0
+  if (!any(keep)) {
+    return(NA_real_)
+  }
+  ci_factory(type)(
+    cbind(rank = rank[keep], outcome = outcome[keep]),
+    weights[keep]
+  )
 }
 
 .ci_lookup_root_impurity <- function(root_table, fold_id, type) {
@@ -795,7 +818,9 @@ control_ci_tune <- function(verbose = FALSE,
     )
   }
 
-  if (!is.finite(root_impurity) ||
+  if (length(root_impurity) != 1L ||
+      is.na(root_impurity) ||
+      !is.finite(root_impurity) ||
       abs(root_impurity) <= .Machine$double.eps) {
     return(NA_real_)
   }

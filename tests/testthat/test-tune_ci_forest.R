@@ -226,6 +226,23 @@ test_that("tune_ci_forest tunes greedy forests and returns a surrogate", {
   expect_true("forest_risk" %in% names(tuned$best_surrogate_data))
   expect_true(tuned$best_type %in% c("CI", "CIg"))
   expect_true(is.finite(tuned$summary$mean_score[1]))
+
+  diagnostic_cols <- c(
+    "train_gain",
+    "fold_validation_gain",
+    "train_relative_gain",
+    "fold_validation_relative_gain",
+    "relative_generalization_gap",
+    "train_root_impurity",
+    "validation_root_impurity"
+  )
+  expect_true(all(diagnostic_cols %in% names(tuned$fold_results)))
+  diagnostics <- tuned$fold_results[, diagnostic_cols, with = FALSE]
+  expect_true(all(vapply(
+    diagnostics,
+    function(x) all(is.finite(x) | is.na(x)),
+    logical(1)
+  )))
 })
 
 test_that("tune_ci_forest supports multiple metrics and saved predictions", {
