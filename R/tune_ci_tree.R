@@ -96,6 +96,13 @@ tune_ctree_ci <- function(...) {
   pred <- NULL
   valid_data <- data[test_idx, , drop = FALSE]
   n_terminal <- NA_integer_
+  train_gain <- NA_real_
+  fold_validation_gain <- NA_real_
+  train_relative_gain <- NA_real_
+  fold_validation_relative_gain <- NA_real_
+  relative_generalization_gap <- NA_real_
+  train_root_impurity <- NA_real_
+  validation_root_impurity <- NA_real_
 
   if (isTRUE(fit_result$ok)) {
     pred_result <- .ci_capture({
@@ -129,6 +136,105 @@ tune_ctree_ci <- function(...) {
       fit_result$value$surrogate$fit,
       terminal = TRUE
     ))
+
+    diagnostic_result <- .ci_capture({
+      train_data <- fit_result$value$surrogate$data
+      train_root_impurity <- .ci_data_root_impurity(
+        data = train_data,
+        weights = weights[train_idx],
+        rank_name = rank_name,
+        outcome_name = outcome_name,
+        type = this_type
+      )
+      validation_root_impurity <- .ci_lookup_root_impurity(
+        root_table,
+        fold,
+        this_type
+      )
+      if (is.null(validation_root_impurity)) {
+        validation_root_impurity <- .ci_data_root_impurity(
+          data = valid_data,
+          weights = weights[test_idx],
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          type = this_type
+        )
+      }
+
+      train_gain <- .ci_score_validation_gain(
+        fit = fit_result$value$surrogate$fit,
+        new_data = train_data,
+        rank_name = rank_name,
+        outcome_name = outcome_name,
+        weights = weights[train_idx],
+        type = this_type,
+        root_impurity = train_root_impurity
+      )
+      train_relative_gain <- .ci_score_relative_validation_gain(
+        fit = fit_result$value$surrogate$fit,
+        new_data = train_data,
+        rank_name = rank_name,
+        outcome_name = outcome_name,
+        weights = weights[train_idx],
+        type = this_type,
+        root_impurity = train_root_impurity
+      )
+
+      if (!is.null(pred)) {
+        fold_validation_gain <- .ci_score_validation_gain(
+          fit = fit_result$value$surrogate$fit,
+          new_data = valid_data,
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          weights = weights[test_idx],
+          type = this_type,
+          root_impurity = validation_root_impurity
+        )
+        fold_validation_relative_gain <- .ci_score_relative_validation_gain(
+          fit = fit_result$value$surrogate$fit,
+          new_data = valid_data,
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          weights = weights[test_idx],
+          type = this_type,
+          root_impurity = validation_root_impurity
+        )
+      } else {
+        fold_validation_gain <- NA_real_
+        fold_validation_relative_gain <- NA_real_
+      }
+
+      list(
+        train_gain = train_gain,
+        fold_validation_gain = fold_validation_gain,
+        train_relative_gain = train_relative_gain,
+        fold_validation_relative_gain = fold_validation_relative_gain,
+        relative_generalization_gap =
+          train_relative_gain - fold_validation_relative_gain,
+        train_root_impurity = train_root_impurity,
+        validation_root_impurity = validation_root_impurity
+      )
+    })
+    notes[[length(notes) + 1L]] <- .ci_notes_dt(
+      g, fold, this_type, stage = "diagnostic",
+      messages = diagnostic_result$warnings
+    )
+    if (isTRUE(diagnostic_result$ok)) {
+      train_gain <- diagnostic_result$value$train_gain
+      fold_validation_gain <- diagnostic_result$value$fold_validation_gain
+      train_relative_gain <- diagnostic_result$value$train_relative_gain
+      fold_validation_relative_gain <-
+        diagnostic_result$value$fold_validation_relative_gain
+      relative_generalization_gap <-
+        diagnostic_result$value$relative_generalization_gap
+      train_root_impurity <- diagnostic_result$value$train_root_impurity
+      validation_root_impurity <- diagnostic_result$value$validation_root_impurity
+    } else {
+      notes[[length(notes) + 1L]] <- .ci_notes_dt(
+        g, fold, this_type, stage = "diagnostic",
+        messages = diagnostic_result$error, class = "error"
+      )
+    }
 
     if (!is.null(control$extract)) {
       extract_result <- .ci_capture(control$extract(fit_result$value))
@@ -166,29 +272,11 @@ tune_ctree_ci <- function(...) {
     if (isTRUE(fit_result$ok)) {
       score_result <- .ci_capture({
         if (identical(this_metric, "validation_gain") && !is.null(pred)) {
-          root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
-          .ci_score_validation_gain(
-            fit = fit_result$value$surrogate$fit,
-            new_data = valid_data,
-            rank_name = rank_name,
-            outcome_name = outcome_name,
-            weights = weights[test_idx],
-            type = this_type,
-            root_impurity = root_impurity
-          )
+          fold_validation_gain
         } else if (this_metric %in% c(
           "relative_validation_gain", "percent_validation_root_recovered"
         ) && !is.null(pred)) {
-          root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
-          .ci_score_relative_validation_gain(
-            fit = fit_result$value$surrogate$fit,
-            new_data = valid_data,
-            rank_name = rank_name,
-            outcome_name = outcome_name,
-            weights = weights[test_idx],
-            type = this_type,
-            root_impurity = root_impurity
-          )
+          fold_validation_relative_gain
         } else if (!this_metric %in% c(
           "validation_gain", "relative_validation_gain",
           "percent_validation_root_recovered"
@@ -224,6 +312,13 @@ tune_ctree_ci <- function(...) {
       metric = this_metric,
       score = score,
       n_terminal = n_terminal,
+      train_gain = train_gain,
+      fold_validation_gain = fold_validation_gain,
+      train_relative_gain = train_relative_gain,
+      fold_validation_relative_gain = fold_validation_relative_gain,
+      relative_generalization_gap = relative_generalization_gap,
+      train_root_impurity = train_root_impurity,
+      validation_root_impurity = validation_root_impurity,
       fit_error = fit_result$error
     )
     for (nm in names(tuning_grid)) {
