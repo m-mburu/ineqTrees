@@ -27,6 +27,30 @@ test_that("rank_wt handles edge cases", {
   expect_error(rank_wt(1:2, 1))
 })
 
+test_that("rank_wt assigns one weighted midpoint to tied rank blocks", {
+  expect_equal(
+    rank_wt(c(10, 20, 20, 40), rep(1, 4)),
+    c(0.125, 0.5, 0.5, 0.875)
+  )
+  expect_equal(
+    rank_wt(c(10, 20, 20, 40), c(1, 2, 3, 4)),
+    c(0.05, 0.35, 0.35, 0.8)
+  )
+})
+
+test_that("rank_wt tied ranks are stable under row reordering", {
+  expected <- c(0.35, 0.8, 0.35, 0.05)
+
+  expect_equal(
+    rank_wt(c(20, 40, 20, 10), c(3, 4, 2, 1)),
+    expected
+  )
+  expect_equal(
+    rank_wt(c(20, 40, 20, 10), c(2, 4, 3, 1)),
+    expected
+  )
+})
+
 test_that("ci_factory returns scoring functions and validates type", {
   expect_true(is.function(ci_factory("CI")))
   expect_true(is.function(ci_factory("CIg")))
@@ -118,6 +142,23 @@ test_that("ci_factory is invariant to rescaling weights", {
   ci <- ci_factory("CI")
 
   expect_equal(ci(y, c(1, 1, 2)), ci(y, c(10, 10, 20)))
+})
+
+test_that("ci_factory rank-dependent scores are stable within tied ranks", {
+  y <- cbind(
+    rank = c(10, 20, 20, 40, 40, 50),
+    outcome = c(0, 1, 0, 1, 0, 1)
+  )
+  wt <- c(1, 2, 4, 3, 1, 2)
+  permutation <- c(1, 3, 2, 5, 4, 6)
+
+  for (type in c("CI", "CIg", "CIc")) {
+    ci <- ci_factory(type)
+    expect_equal(
+      ci(y, wt),
+      ci(y[permutation, , drop = FALSE], wt[permutation])
+    )
+  }
 })
 
 test_that("ci_factory L computes level-dependent bivariate index", {

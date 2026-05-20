@@ -101,42 +101,102 @@ TwoCiScores ci_score_children_ordered(
   double min_outcome[2] = {R_PosInf, R_PosInf};
   double max_outcome[2] = {R_NegInf, R_NegInf};
 
-  for (int idx : ses_ord) {
-    const int child = child_id(idx);
-    if (child < 0 || !usable[child]) continue;
-    if (!valid_scalar(rank[idx]) ||
-        !valid_scalar(outcome[idx]) ||
-        !valid_scalar(wt[idx]) ||
-        wt[idx] <= 0.0) {
-      continue;
+  for (size_t start = 0; start < ses_ord.size();) {
+    const int first_idx = ses_ord[start];
+    size_t end = start + 1;
+    while (end < ses_ord.size() && rank[ses_ord[end]] == rank[first_idx]) {
+      ++end;
     }
-    const double w_norm = wt[idx] / total_wt[child];
-    const double rank_w = cumulative_wt[child] + w_norm / 2.0;
-    cumulative_wt[child] += w_norm;
-    mean_rank[child] += w_norm * rank_w;
-    mean_outcome[child] += w_norm * outcome[idx];
-    min_outcome[child] = std::min(min_outcome[child], outcome[idx]);
-    max_outcome[child] = std::max(max_outcome[child], outcome[idx]);
+
+    double block_w_norm[2] = {0.0, 0.0};
+    for (size_t pos = start; pos < end; ++pos) {
+      const int idx = ses_ord[pos];
+      const int child = child_id(idx);
+      if (child < 0 || !usable[child]) continue;
+      if (!valid_scalar(rank[idx]) ||
+          !valid_scalar(outcome[idx]) ||
+          !valid_scalar(wt[idx]) ||
+          wt[idx] <= 0.0) {
+        continue;
+      }
+      block_w_norm[child] += wt[idx] / total_wt[child];
+    }
+
+    double block_rank[2] = {0.0, 0.0};
+    for (int child = 0; child < 2; ++child) {
+      block_rank[child] = cumulative_wt[child] + block_w_norm[child] / 2.0;
+      mean_rank[child] += block_w_norm[child] * block_rank[child];
+    }
+
+    for (size_t pos = start; pos < end; ++pos) {
+      const int idx = ses_ord[pos];
+      const int child = child_id(idx);
+      if (child < 0 || !usable[child]) continue;
+      if (!valid_scalar(rank[idx]) ||
+          !valid_scalar(outcome[idx]) ||
+          !valid_scalar(wt[idx]) ||
+          wt[idx] <= 0.0) {
+        continue;
+      }
+      const double w_norm = wt[idx] / total_wt[child];
+      mean_outcome[child] += w_norm * outcome[idx];
+      min_outcome[child] = std::min(min_outcome[child], outcome[idx]);
+      max_outcome[child] = std::max(max_outcome[child], outcome[idx]);
+    }
+
+    cumulative_wt[0] += block_w_norm[0];
+    cumulative_wt[1] += block_w_norm[1];
+    start = end;
   }
 
   cumulative_wt[0] = 0.0;
   cumulative_wt[1] = 0.0;
   double cov12[2] = {0.0, 0.0};
 
-  for (int idx : ses_ord) {
-    const int child = child_id(idx);
-    if (child < 0 || !usable[child]) continue;
-    if (!valid_scalar(rank[idx]) ||
-        !valid_scalar(outcome[idx]) ||
-        !valid_scalar(wt[idx]) ||
-        wt[idx] <= 0.0) {
-      continue;
+  for (size_t start = 0; start < ses_ord.size();) {
+    const int first_idx = ses_ord[start];
+    size_t end = start + 1;
+    while (end < ses_ord.size() && rank[ses_ord[end]] == rank[first_idx]) {
+      ++end;
     }
-    const double w_norm = wt[idx] / total_wt[child];
-    const double rank_w = cumulative_wt[child] + w_norm / 2.0;
-    cumulative_wt[child] += w_norm;
-    cov12[child] += w_norm * (rank_w - mean_rank[child]) *
-      (outcome[idx] - mean_outcome[child]);
+
+    double block_w_norm[2] = {0.0, 0.0};
+    for (size_t pos = start; pos < end; ++pos) {
+      const int idx = ses_ord[pos];
+      const int child = child_id(idx);
+      if (child < 0 || !usable[child]) continue;
+      if (!valid_scalar(rank[idx]) ||
+          !valid_scalar(outcome[idx]) ||
+          !valid_scalar(wt[idx]) ||
+          wt[idx] <= 0.0) {
+        continue;
+      }
+      block_w_norm[child] += wt[idx] / total_wt[child];
+    }
+
+    double block_rank[2] = {0.0, 0.0};
+    for (int child = 0; child < 2; ++child) {
+      block_rank[child] = cumulative_wt[child] + block_w_norm[child] / 2.0;
+    }
+
+    for (size_t pos = start; pos < end; ++pos) {
+      const int idx = ses_ord[pos];
+      const int child = child_id(idx);
+      if (child < 0 || !usable[child]) continue;
+      if (!valid_scalar(rank[idx]) ||
+          !valid_scalar(outcome[idx]) ||
+          !valid_scalar(wt[idx]) ||
+          wt[idx] <= 0.0) {
+        continue;
+      }
+      const double w_norm = wt[idx] / total_wt[child];
+      cov12[child] += w_norm * (block_rank[child] - mean_rank[child]) *
+        (outcome[idx] - mean_outcome[child]);
+    }
+
+    cumulative_wt[0] += block_w_norm[0];
+    cumulative_wt[1] += block_w_norm[1];
+    start = end;
   }
 
   for (int child = 0; child < 2; ++child) {
