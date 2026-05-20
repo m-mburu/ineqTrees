@@ -25,10 +25,45 @@ pkgload::load_all(export_all = TRUE)
 ```
   
 ```{r function-rank_wt}
+#' Compute weighted midpoint ranks from retained observations
+#'
+#' @param x A numeric vector without missing values.
+#' @param wt A positive numeric weight vector with the same length as `x`.
+#'
+#' @return Weighted fractional ranks in the original order of `x`.
+#'
+#' @noRd
+.rank_wt_retained <- function(x, wt) {
+  n <- length(x)
+  if (!n) {
+    return(numeric(0))
+  }
+
+  o <- order(x)
+  x_ord <- x[o]
+  wt_ord <- wt[o] / sum(wt)
+
+  tie_blocks <- rle(x_ord)
+  block_end <- cumsum(tie_blocks$lengths)
+  block_start <- block_end - tie_blocks$lengths + 1L
+  cumulative_wt <- c(0, cumsum(wt_ord))
+  block_wt <- cumulative_wt[block_end + 1L] -
+    cumulative_wt[block_start]
+  rank_ord <- rep(
+    cumulative_wt[block_start] + block_wt / 2,
+    tie_blocks$lengths
+  )
+
+  out <- numeric(n)
+  out[o] <- rank_ord
+  out
+}
+
 #' Compute weighted fractional ranks
 #'
 #' Compute midpoint fractional ranks after sorting `x` in ascending order and
-#' normalizing positive weights to sum to one.
+#' normalizing positive weights to sum to one. Observations with the same `x`
+#' value share the weighted midpoint rank of their combined tied block.
 #'
 #' Observations with missing `x`, missing `wt`, or non-positive `wt` are
 #' removed before ranking. The resulting ranks are useful as a low-level
@@ -53,20 +88,7 @@ rank_wt <- function(x, wt) {
     return(numeric(0))
   }
 
-  o <- order(x)
-  x <- x[o]
-  wt <- wt[o] / sum(wt)
-
-  r <- numeric(length(x))
-  if (length(x) == 1L) {
-    r[1L] <- 0.5
-  } else {
-    r <- c(0, cumsum(wt[-length(wt)])) + wt / 2
-  }
-
-  out <- numeric(sum(ok))
-  out[o] <- r
-  out
+  .rank_wt_retained(x, wt)
 }
 ```
   
@@ -101,6 +123,30 @@ test_that("rank_wt handles edge cases", {
   expect_equal(rank_wt(5, 2), 0.5)
   expect_equal(rank_wt(c(1, 2), c(0, NA)), numeric(0))
   expect_error(rank_wt(1:2, 1))
+})
+
+test_that("rank_wt assigns one weighted midpoint to tied rank blocks", {
+  expect_equal(
+    rank_wt(c(10, 20, 20, 40), rep(1, 4)),
+    c(0.125, 0.5, 0.5, 0.875)
+  )
+  expect_equal(
+    rank_wt(c(10, 20, 20, 40), c(1, 2, 3, 4)),
+    c(0.05, 0.35, 0.35, 0.8)
+  )
+})
+
+test_that("rank_wt tied ranks are stable under row reordering", {
+  expected <- c(0.35, 0.8, 0.35, 0.05)
+
+  expect_equal(
+    rank_wt(c(20, 40, 20, 10), c(3, 4, 2, 1)),
+    expected
+  )
+  expect_equal(
+    rank_wt(c(20, 40, 20, 10), c(2, 4, 3, 1)),
+    expected
+  )
 })
 ```
 
@@ -150,20 +196,8 @@ test_that("rank_wt handles edge cases", {
     return(abs(l_index))
   }
 
-  n <- length(wt)
-  ord <- order(rank)
   wt_norm <- wt / total_wt
-  wt_ord <- wt_norm[ord]
-
-  rank_ord <- numeric(n)
-  if (n == 1L) {
-    rank_ord[1L] <- 0.5
-  } else {
-    rank_ord <- c(0, cumsum(wt_ord[-n])) + wt_ord / 2
-  }
-
-  rank_w <- numeric(n)
-  rank_w[ord] <- rank_ord
+  rank_w <- .rank_wt_retained(rank, wt)
 
   mean_rank <- sum(wt_norm * rank_w)
   mean_outcome <- sum(wt_norm * outcome)
@@ -419,6 +453,23 @@ test_that("ci_factory is invariant to rescaling weights", {
   ci <- ci_factory("CI")
 
   expect_equal(ci(y, c(1, 1, 2)), ci(y, c(10, 10, 20)))
+})
+
+test_that("ci_factory rank-dependent scores are stable within tied ranks", {
+  y <- cbind(
+    rank = c(10, 20, 20, 40, 40, 50),
+    outcome = c(0, 1, 0, 1, 0, 1)
+  )
+  wt <- c(1, 2, 4, 3, 1, 2)
+  permutation <- c(1, 3, 2, 5, 4, 6)
+
+  for (type in c("CI", "CIg", "CIc")) {
+    ci <- ci_factory(type)
+    expect_equal(
+      ci(y, wt),
+      ci(y[permutation, , drop = FALSE], wt[permutation])
+    )
+  }
 })
 
 test_that("ci_factory L computes level-dependent bivariate index", {

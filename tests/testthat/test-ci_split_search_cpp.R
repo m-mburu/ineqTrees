@@ -146,6 +146,38 @@ test_that("best_global_ci_split_cpp matches R global split search on mixed predi
   expect_equal(cpp$left, current$left)
 })
 
+test_that("best_global_ci_split_cpp matches R scoring with tied ranks", {
+  predictors <- data.frame(
+    z = c(1, 2, 3, 4, 5, 6, 7, 8),
+    group = factor(c("a", "a", "b", "b", "c", "c", "d", "d"))
+  )
+  y <- cbind(
+    rank = c(10, 20, 20, 40, 40, 60, 60, 80),
+    outcome = c(0, 0, 1, 1, 4, 4, 5, 5)
+  )
+  wt <- c(1, 3, 2, 1, 4, 2, 5, 1)
+  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
+
+  current <- best_global_ci_split(
+    x = predictors,
+    y = y,
+    wt = wt,
+    ctrl = ctrl,
+    ci_fun = ci_factory("CIg")
+  )
+  cpp <- best_global_ci_split_cpp(
+    x = predictors,
+    y = y,
+    wt = wt,
+    ctrl = ctrl,
+    type = "CIg"
+  )
+
+  expect_equal(cpp$gain, current$gain, tolerance = 1e-12)
+  expect_equal(cpp$varid, current$varid)
+  expect_equal(cpp$left, current$left)
+})
+
 test_that("best_global_ci_split_cpp respects min_relative_gain", {
   predictors <- data.frame(
     x = c(1, 2, 3, 4, 5, 6, 7)
