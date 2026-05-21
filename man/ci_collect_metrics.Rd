@@ -4,17 +4,40 @@
 \alias{ci_collect_metrics}
 \title{Collect tuning metrics}
 \usage{
-ci_collect_metrics(x, summarize = TRUE, metric = NULL, ...)
+ci_collect_metrics(
+  x,
+  summarize = TRUE,
+  metric = NULL,
+  ...,
+  selected = NULL,
+  format = c("default", "tidy", "wide"),
+  include_train = TRUE
+)
 }
 \arguments{
 \item{x}{A tuning object returned by \code{\link[=tune_ci_tree]{tune_ci_tree()}} or \code{\link[=tune_ci_forest]{tune_ci_forest()}}.}
 
 \item{summarize}{Logical; return grid-level summaries when \code{TRUE}, or
-fold-level metrics when \code{FALSE}.}
+fold-level metrics when \code{FALSE}. Ignored when \code{format = "tidy"}.}
 
 \item{metric}{Optional metric name used to filter the result.}
 
 \item{...}{Reserved for future extensions.}
+
+\item{selected}{Optional tuning summary rows, typically from
+\code{\link[=ci_select_best]{ci_select_best()}}, used to filter the returned metrics to selected
+\code{type}/\code{grid_id} combinations.}
+
+\item{format}{Output format. \code{"default"} preserves the package's original
+summary or fold-level table. \code{"tidy"} returns a tidymodels-like table with
+grid columns followed by \code{.metric}, \code{.estimator}, \code{mean}, \code{n}, \code{std_err},
+\code{.dataset}, and \code{.config}. \code{"wide"} returns one row per tuning setting
+with metric columns such as \code{mean_validation_gain} and
+\code{std_err_train_gain}.}
+
+\item{include_train}{Logical; for \code{format = "tidy"} or \code{"wide"}, include
+training diagnostic rows when the tuning object contains training
+diagnostics.}
 }
 \value{
 A \code{data.table}.

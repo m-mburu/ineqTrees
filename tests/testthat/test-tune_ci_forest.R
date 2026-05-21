@@ -45,6 +45,26 @@ test_that("tune_ci_tree selects greedy tree controls and CI type", {
   expect_equal(sort(ci_select_best(tuned)$type), c("CI", "CIg"))
   expect_equal(nrow(ci_show_best(tuned, n = 1L)), 2L)
   expect_false("mincriterion" %in% names(tuned$best_params))
+  selected_control <- ci_control_from_row(ci_select_best(tuned))
+  expect_type(selected_control, "list")
+  expect_equal(selected_control$maxdepth, 1L)
+
+  diagnostic_cols <- c(
+    "train_gain",
+    "fold_validation_gain",
+    "train_relative_gain",
+    "fold_validation_relative_gain",
+    "relative_generalization_gap",
+    "train_root_impurity",
+    "validation_root_impurity"
+  )
+  expect_true(all(diagnostic_cols %in% names(tuned$fold_results)))
+  diagnostics <- tuned$fold_results[, diagnostic_cols, with = FALSE]
+  expect_true(all(vapply(
+    diagnostics,
+    function(x) all(is.finite(x) | is.na(x)),
+    logical(1)
+  )))
 })
 
 test_that("tune_ci_tree can minimize Brier score", {
@@ -115,12 +135,63 @@ test_that("tune_ci_tree supports multiple metrics, controls, and collectors", {
   expect_true(all(c("validation_gain", "brier") %in% tuned$summary$metric))
   expect_s3_class(ci_collect_metrics(tuned), "data.table")
   expect_s3_class(ci_collect_metrics(tuned, summarize = FALSE), "data.table")
+  tidy_metrics <- ci_collect_metrics(tuned, format = "tidy")
+  expect_s3_class(tidy_metrics, "data.table")
+  expect_true(all(c(
+    "grid_id", "type", "minsplit", "minbucket", "maxdepth",
+    ".metric", ".estimator", "mean", "n", "std_err", ".dataset", ".config"
+  ) %in% names(tidy_metrics)))
+  expect_true(all(c("validation_gain", "brier", "train_gain") %in% tidy_metrics$.metric))
+  expect_true(all(c("validation", "training") %in% tidy_metrics$.dataset))
+  wide_metrics <- ci_collect_metrics(tuned, format = "wide")
+  expect_s3_class(wide_metrics, "data.table")
+  expect_true(all(c(
+    "mean_validation_gain",
+    "std_err_validation_gain",
+    "mean_train_gain",
+    "std_err_train_gain"
+  ) %in% names(wide_metrics)))
+  selected_summary <- ci_fit_summary_table(tuned)
+  expect_s3_class(selected_summary, "data.table")
+  expect_true(all(c(
+    "mean_root_objective",
+    "mean_validation_gain",
+    "mean_train_gain",
+    "mean_percent_validation_gain"
+  ) %in% names(selected_summary)))
+  expect_equal(
+    nrow(ci_collect_metrics(tuned, selected = ci_select_best(tuned), format = "tidy")),
+    length(unique(tuned$summary$metric)) + 2L
+  )
   expect_equal(nrow(ci_show_best(tuned, n = 1L)), 1L)
   expect_equal(nrow(ci_select_best(tuned)), 1L)
   expect_gt(nrow(ci_collect_predictions(tuned)), 0L)
   expect_gt(nrow(ci_collect_fits(tuned)), 0L)
   expect_gt(nrow(ci_collect_extracts(tuned)), 0L)
   expect_s3_class(ci_collect_notes(tuned), "data.table")
+})
+
+test_that("ci_root_impurity matches the factory score", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40),
+    outcome = c(1, 0, 1, 0),
+    weight = c(1, 2, 1, 2)
+  )
+  expected <- ci_factory("CI")(
+    cbind(rank = toy_data$rank, outcome = toy_data$outcome),
+    toy_data$weight
+  )
+
+  expect_equal(
+    ci_root_impurity(
+      toy_data,
+      rank_name = "rank",
+      outcome_name = "outcome",
+      weights = toy_data$weight,
+      type = "CI"
+    ),
+    expected
+  )
 })
 
 test_that("tune_ci_tree supports percent validation root recovered", {
@@ -277,7 +348,44 @@ test_that("tune_ci_forest supports multiple metrics and saved predictions", {
 
   expect_s3_class(tuned, "ci_forest_tuning")
   expect_true(all(c("validation_gain", "brier") %in% tuned$summary$metric))
+  tidy_metrics <- ci_collect_metrics(tuned, format = "tidy")
+  expect_true(all(c("ntree", "mtry", ".metric", "mean", "std_err", ".dataset") %in% names(tidy_metrics)))
+  expect_true(all(c("validation_gain", "brier", "train_gain") %in% tidy_metrics$.metric))
+  expect_true(all(c("validation", "training") %in% tidy_metrics$.dataset))
+  wide_metrics <- ci_collect_metrics(tuned, format = "wide")
+  expect_true(all(c("mean_validation_gain", "mean_train_gain") %in% names(wide_metrics)))
   expect_gt(nrow(ci_collect_predictions(tuned)), 0L)
+})
+
+test_that("ci_forest_surrogate fits a public surrogate tree", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16),
+    group = factor(c("a", "a", "b", "b", "a", "a", "b", "b")),
+    weight = rep(1, 8)
+  )
+  forest_fit <- ci_forest(
+    cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    weights = toy_data$weight,
+    type = "CI",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1),
+    ntree = 3L,
+    perturb = list(replace = FALSE, fraction = 0.75)
+  )
+
+  surrogate <- ci_forest_surrogate(
+    forest_fit,
+    prediction_name = "forest_risk",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_s3_class(surrogate$fit, "ci_tree")
+  expect_true("forest_risk" %in% names(surrogate$data))
+  expect_equal(surrogate$prediction_name, "forest_risk")
 })
 
 test_that("legacy tuning names remain compatibility aliases", {

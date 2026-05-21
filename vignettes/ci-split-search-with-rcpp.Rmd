@@ -89,7 +89,8 @@ The tests compare the C++ path against the current R implementation for:
 
 - numeric split search,
 - factor split search with unused levels,
-- mixed-predictor global split search.
+- mixed-predictor global split search,
+- tied socioeconomic rank values.
 
 Run focused tests with:
 ```{r run-tests}

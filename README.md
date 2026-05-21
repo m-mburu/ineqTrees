@@ -11,11 +11,13 @@
 health outcomes with tree-based models. The package includes weighted
 rank and concentration-index utilities, inequality-aware split scoring,
 and wrappers for fitting greedy concentration-index trees and forests.
-Open the [inequality-aware party trees
+Start with the [inequality-aware party trees
 article](https://m-mburu.github.io/ineqTrees/articles/inequality-aware-party-trees.html)
-for more detail on how these trees define the two-column response,
-choose concentration-index splits, tune controls, and summarize terminal
-subgroups.
+for the main workflow, then see the [tuning
+tutorial](https://m-mburu.github.io/ineqTrees/articles/tuning-tutorial.html)
+for cross-validating trees and forests and the [plotting
+tutorial](https://m-mburu.github.io/ineqTrees/articles/plotting-tutorial.html)
+for customizing tree plots, node statistics, and labels.
 
 ## Installation
 
@@ -42,6 +44,7 @@ if (requireNamespace("pkgload", quietly = TRUE) && file.exists("DESCRIPTION")) {
 }
 suppressPackageStartupMessages(library(data.table))
 load("data/kenya.rda")
+setDT(kenya)
 
 set.seed(1)
 ```
@@ -69,22 +72,22 @@ fit_tree <- ci_tree(
 ci_tree_terminal_summary(fit_tree)
 #>      node     n weight depth         ci outcome_mean outcome_percent
 #>     <int> <int>  <num> <int>      <num>        <num>           <num>
-#>  1:     5  1389   1389     4 0.11450528   0.01079914        1.079914
-#>  2:     6   761    761     4 0.18736842   0.03285151        3.285151
+#>  1:     5  1389   1389     4 0.11442285   0.01079914        1.079914
+#>  2:     6   761    761     4 0.18712221   0.03285151        3.285151
 #>  3:     8   116    116     4 0.00000000   0.00000000        0.000000
-#>  4:     9   450    450     4 0.15549706   0.04888889        4.888889
-#>  5:    12  1030   1030     4 0.16732407   0.03300971        3.300971
-#>  6:    13   553    553     4 0.15962158   0.06509946        6.509946
-#>  7:    15   314    314     4 0.11443509   0.07006369        7.006369
-#>  8:    16   153    153     4 0.21052632   0.16339869       16.339869
-#>  9:    20  4281   4281     4 0.27940894   0.04321420        4.321420
-#> 10:    21  5564   5564     4 0.17041553   0.07494608        7.494608
-#> 11:    23  1082   1082     4 0.06787428   0.07948244        7.948244
-#> 12:    24  1661   1661     4 0.10506129   0.13786875       13.786875
-#> 13:    27   420    420     4 0.08035004   0.09285714        9.285714
-#> 14:    28  1244   1244     4 0.10034731   0.13183280       13.183280
-#> 15:    30   568    568     4 0.20736281   0.15316901       15.316901
-#> 16:    31   457    457     4 0.11702333   0.19912473       19.912473
+#>  4:     9   450    450     4 0.15515152   0.04888889        4.888889
+#>  5:    12  1030   1030     4 0.16716162   0.03300971        3.300971
+#>  6:    13   553    553     4 0.15933293   0.06509946        6.509946
+#>  7:    15   314    314     4 0.11407064   0.07006369        7.006369
+#>  8:    16   153    153     4 0.20915033   0.16339869       16.339869
+#>  9:    20  4281   4281     4 0.27934367   0.04321420        4.321420
+#> 10:    21  5564   5564     4 0.17038490   0.07494608        7.494608
+#> 11:    23  1082   1082     4 0.06781155   0.07948244        7.948244
+#> 12:    24  1661   1661     4 0.10499804   0.13786875       13.786875
+#> 13:    27   420    420     4 0.08015873   0.09285714        9.285714
+#> 14:    28  1244   1244     4 0.10026665   0.13183280       13.183280
+#> 15:    30   568    568     4 0.20699773   0.15316901       15.316901
+#> 16:    31   457    457     4 0.11676726   0.19912473       19.912473
 #>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                rule
 #>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              <char>
 #>  1:                                                                                                                                                                                           rural in {Urban} & reg in {Mombasa, Taita Taveta, Isiolo, Meru, Makueni, Nyeri, Kirinyaga, Kiambu, Trans Nzoia, Uasin Gishu, Nandi, Laikipia, Nakuru, Kajiado, Kericho, Bomet, Kakamega, Vihiga, Busia, Homa Bay, Migori, Kisii, Nairobi} & ed in {a education} & reg in {Mombasa, Taita Taveta, Meru, Kirinyaga, Kiambu, Trans Nzoia, Uasin Gishu, Nandi, Laikipia, Kajiado, Kericho, Bomet, Vihiga, Kisii, Nairobi}
@@ -138,7 +141,7 @@ fit_forest
 
 | ntree | mtry | type | n | mean_outcome | mean_prediction | outcome_ci | prediction_ci | mean_terminal_nodes | mean_max_depth |
 |---:|---:|:---|---:|---:|---:|---:|---:|---:|---:|
-| 10 | 1 | CI | 20043 | 0.074 | 0.074 | 0.312 | 0.108 | 6.8 | 3.5 |
+| 10 | 1 | CI | 20043 | 0.074 | 0.074 | 0.311 | 0.108 | 6.8 | 3.5 |
 
 Forest summary
 
@@ -146,10 +149,10 @@ Forest summary
 ci_forest_summary(fit_forest)
 #>    ntree  mtry   type     n mean_outcome mean_prediction outcome_ci
 #>    <int> <int> <char> <int>        <num>           <num>      <num>
-#> 1:    10     1     CI 20043   0.07369156       0.0736521  0.3115051
+#> 1:    10     1     CI 20043   0.07369156       0.0736521  0.3114896
 #>    prediction_ci mean_terminal_nodes mean_max_depth
 #>            <num>               <num>          <num>
-#> 1:     0.1079965                 6.8            3.5
+#> 1:     0.1079911                 6.8            3.5
 ```
 
 ### Parallel execution patterns
@@ -215,23 +218,22 @@ forest_tuned <- tune::tune_grid(
 ### Fit a surrogate tree to forest predictions
 
 The surrogate is a greedy concentration-index tree that approximates the
-predictions of the fitted forest. This is useful for interpreting the
-forest, since the surrogate can be refit on held-out data and scored
-with CI gain.
+predictions of the fitted forest. `ci_forest_surrogate()` adds the
+forest predictions to the analysis data and fits the surrogate with the
+same rank and predictor variables.
 
 ``` r
-setDT(kenya)
-kenya[, forest_risk := readme_forest_predict(
-   fit_forest, .SD
-), .SDcols = readme_predictors]
-
-surrogate_tree <- ci_tree(
-  formula = cbind(wealth, forest_risk) ~ rural + ed + reg + unskilled,
+forest_surrogate <- ci_forest_surrogate(
+  fit_forest,
   data = kenya,
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   rank_name = "wealth",
-  outcome_name = "forest_risk",
+  prediction_name = "forest_risk",
   control = ci_tree_control(maxdepth = 4L)
 )
+
+surrogate_tree <- forest_surrogate$fit
+surrogate_data <- forest_surrogate$data
 #surrogate_tree
 ```
 
@@ -240,7 +242,7 @@ surrogate_tree <- ci_tree(
 ``` r
 readme_tree_plot(
   surrogate_tree,
-  kenya,
+  surrogate_data,
   outcome_name = "forest_risk",
   outcome_label = "Predicted risk"
 )
@@ -357,7 +359,7 @@ knitr::kable(
 
 | n | weight_sum | type | mean_prediction | concentration_index | signed_concentration_index | score_direction | shap_sum | additivity_gap | centered_rank_sum | prediction_source |
 |---:|---:|:---|---:|---:|---:|---:|---:|---:|---:|:---|
-| 400 | 400 | CI | 0.073 | 0.156 | -0.156 | -1 | 0.156 | 0 | 0 | prediction |
+| 400 | 400 | CI | 0.073 | 0.155 | -0.155 | -1 | 0.155 | 0 | 0 | prediction |
 
 Ranger SHAP decomposition diagnostics
 
@@ -533,42 +535,50 @@ tree_tuning <- tune_ci_tree(
   v = 3L,
   strata = "deadu5_num",
   seed = 20260507,
-  metrics = c("validation_gain", "brier"),
+  metrics = c("validation_gain", "relative_validation_gain", "brier"),
   refit = TRUE,
   control = control_ci_tune(save_pred = TRUE)
 )
 ```
 
 ``` r
-tree_tuning_best <- ci_show_best(
+tree_tuning_best <- ci_select_best(
   tree_tuning,
-  metric = "validation_gain",
-  n = 5L
+  metric = "validation_gain"
 )
 
 tree_tuning_table <- readme_tuning_table(
-  tree_tuning_best,
+  ci_fit_summary_table(
+    tree_tuning,
+    selected = tree_tuning_best,
+    metrics = c(
+      "train_gain",
+      "validation_gain",
+      "train_relative_gain",
+      "relative_validation_gain"
+    )
+  ),
   columns = c(
-    "metric",
     "type",
     "minsplit",
     "minbucket",
     "minprob",
     "maxdepth",
-    "mean_score",
-    "sd_score",
-    "mean_terminal_nodes"
+    "mean_root_objective",
+    "mean_train_gain",
+    "mean_validation_gain",
+    "mean_validation_relative_gain"
   ),
   labels = c(
-    "metric",
     "type",
     "minsplit",
     "minbucket",
     "minprob",
     "maxdepth",
+    "mean_root_objective",
+    "mean_train_gain",
     "mean_validation_gain",
-    "sd_validation_gain",
-    "mean_terminal_nodes"
+    "mean_relative_validation_gain"
   )
 )
 
@@ -579,47 +589,46 @@ knitr::kable(
 )
 ```
 
-| metric | type | minsplit | minbucket | minprob | maxdepth | mean_validation_gain | sd_validation_gain | mean_terminal_nodes |
-|:---|:---|---:|---:|---:|---:|---:|---:|---:|
-| validation_gain | CI | 100 | 100 | 0.01 | 3 | -0.026 | 0.045 | 2.333 |
-| validation_gain | CI | 100 | 100 | 0.05 | 3 | -0.026 | 0.045 | 2.333 |
-| validation_gain | CI | 100 | 100 | 0.01 | 4 | -0.026 | 0.045 | 2.333 |
-| validation_gain | CI | 100 | 100 | 0.05 | 4 | -0.026 | 0.045 | 2.333 |
-| validation_gain | CI | 100 | 50 | 0.01 | 3 | -0.032 | 0.077 | 3.667 |
-| validation_gain | CIg | 100 | 100 | 0.01 | 3 | -0.001 | 0.001 | 2.667 |
-| validation_gain | CIg | 100 | 100 | 0.05 | 3 | -0.001 | 0.001 | 2.667 |
-| validation_gain | CIg | 100 | 100 | 0.01 | 4 | -0.001 | 0.001 | 2.667 |
-| validation_gain | CIg | 100 | 100 | 0.05 | 4 | -0.001 | 0.001 | 2.667 |
-| validation_gain | CIg | 100 | 50 | 0.01 | 3 | -0.001 | 0.003 | 4.333 |
+| type | minsplit | minbucket | minprob | maxdepth | mean_root_objective | mean_train_gain | mean_validation_gain | mean_relative_validation_gain |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|
+| CI | 100 | 50 | 0.01 | 3 | 0.403 | 0.247 | -0.025 | -0.127 |
+| CIg | 100 | 50 | 0.05 | 4 | 0.032 | 0.010 | 0.000 | -0.043 |
 
 Cross-validated greedy tree tuning results
 
 ``` r
-tree_fold_metrics <- ci_collect_metrics(
+tree_wide_metrics <- ci_collect_metrics(
   tree_tuning,
-  summarize = FALSE,
-  metric = "validation_gain"
+  metric = c("train_gain", "validation_gain"),
+  format = "wide"
 )
 
 tree_saved_predictions <- ci_collect_predictions(tree_tuning)
 
 knitr::kable(
-  head(tree_fold_metrics[, .(grid_id, fold_id, type, score)]),
+  head(tree_wide_metrics[, .(
+    grid_id,
+    type,
+    mean_train_gain,
+    mean_validation_gain,
+    std_err_validation_gain
+  )]),
   digits = 3,
-  caption = "Fold-level validation-gain scores collected from tree tuning"
+  caption = "Wide-format training and validation gain metrics collected from tree tuning"
 )
 ```
 
-| grid_id | fold_id | type |  score |
-|--------:|--------:|:-----|-------:|
-|       1 |       1 | CI   | -0.109 |
-|       1 |       2 | CI   | -0.031 |
-|       1 |       3 | CI   |  0.044 |
-|       2 |       1 | CI   | -0.079 |
-|       2 |       2 | CI   | -0.001 |
-|       2 |       3 | CI   |  0.001 |
+| grid_id | type | mean_train_gain | mean_validation_gain | std_err_validation_gain |
+|--------:|:-----|----------------:|---------------------:|------------------------:|
+|       1 | CI   |           0.247 |               -0.025 |                   0.046 |
+|       2 | CI   |           0.232 |               -0.024 |                   0.026 |
+|       3 | CI   |           0.247 |               -0.025 |                   0.046 |
+|       4 | CI   |           0.232 |               -0.024 |                   0.026 |
+|       5 | CI   |           0.247 |               -0.025 |                   0.046 |
+|       6 | CI   |           0.232 |               -0.024 |                   0.026 |
 
-Fold-level validation-gain scores collected from tree tuning
+Wide-format training and validation gain metrics collected from tree
+tuning
 
 ``` r
 readme_tree_plot(
@@ -663,7 +672,7 @@ forest_tuning <- tune_ci_forest(
   v = 3L,
   strata = "deadu5_num",
   seed = 20260508,
-  metrics = c("validation_gain", "brier"),
+  metrics = c("validation_gain", "relative_validation_gain", "brier"),
   prediction_name = "forest_risk",
   parallel_over = "none",
   control = control_ci_tune(save_pred = TRUE),
@@ -672,35 +681,43 @@ forest_tuning <- tune_ci_forest(
 ```
 
 ``` r
-forest_tuning_best <- ci_show_best(
+forest_tuning_best <- ci_select_best(
   forest_tuning,
-  metric = "validation_gain",
-  n = 5L
+  metric = "validation_gain"
 )
 
 forest_tuning_table <- readme_tuning_table(
-  forest_tuning_best,
+  ci_fit_summary_table(
+    forest_tuning,
+    selected = forest_tuning_best,
+    metrics = c(
+      "train_gain",
+      "validation_gain",
+      "train_relative_gain",
+      "relative_validation_gain"
+    )
+  ),
   columns = c(
-    "metric",
     "type",
     "ntree",
     "mtry",
     "minbucket",
     "maxdepth",
-    "mean_score",
-    "sd_score",
-    "mean_terminal_nodes"
+    "mean_root_objective",
+    "mean_train_gain",
+    "mean_validation_gain",
+    "mean_percent_validation_gain"
   ),
   labels = c(
-    "metric",
     "type",
     "ntree",
     "mtry",
     "minbucket",
     "maxdepth",
+    "mean_root_objective",
+    "mean_train_gain",
     "mean_validation_gain",
-    "sd_validation_gain",
-    "mean_terminal_nodes"
+    "percent_validation_gain"
   )
 )
 
@@ -711,40 +728,36 @@ knitr::kable(
 )
 ```
 
-| metric | type | ntree | mtry | minbucket | maxdepth | mean_validation_gain | sd_validation_gain | mean_terminal_nodes |
-|:---|:---|---:|---:|---:|---:|---:|---:|---:|
-| validation_gain | CI | 10 | 1 | 50 | 4 | 0.027 | 0.077 | 4.000 |
-| validation_gain | CI | 20 | 2 | 100 | 4 | 0.010 | 0.020 | 2.333 |
-| validation_gain | CI | 20 | 1 | 50 | 3 | 0.006 | 0.049 | 3.667 |
-| validation_gain | CI | 10 | 2 | 50 | 4 | 0.003 | 0.006 | 2.667 |
-| validation_gain | CI | 10 | 1 | 100 | 3 | -0.009 | 0.016 | 1.667 |
-| validation_gain | CIg | 10 | 1 | 50 | 4 | 0.000 | 0.003 | 4.000 |
-| validation_gain | CIg | 20 | 1 | 100 | 3 | -0.001 | 0.000 | 2.000 |
-| validation_gain | CIg | 10 | 1 | 100 | 4 | -0.001 | 0.001 | 2.000 |
-| validation_gain | CIg | 10 | 2 | 100 | 3 | -0.001 | 0.001 | 2.333 |
-| validation_gain | CIg | 10 | 2 | 100 | 4 | -0.001 | 0.002 | 1.333 |
+| type | ntree | mtry | minbucket | maxdepth | mean_root_objective | mean_train_gain | mean_validation_gain | percent_validation_gain |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|
+| CI | 10 | 2 | 100 | 4 | 0.403 | 0.079 | -0.012 | -2.968 |
+| CIg | 10 | 2 | 50 | 4 | 0.032 | 0.010 | -0.002 | -7.400 |
 
 Cross-validated greedy forest tuning results ranked by validation gain
 
 ``` r
 forest_saved_predictions <- ci_collect_predictions(forest_tuning)
-forest_brier <- ci_collect_metrics(forest_tuning, metric = "brier")
+forest_brier <- ci_collect_metrics(
+  forest_tuning,
+  metric = "brier",
+  format = "wide"
+)
 
 knitr::kable(
-  head(forest_brier[, .(type, ntree, mtry, mean_score, sd_score)]),
+  head(forest_brier[, .(type, ntree, mtry, mean_brier, std_err_brier)]),
   digits = 3,
   caption = "Brier scores collected from the same forest tuning run"
 )
 ```
 
-| type | ntree | mtry | mean_score | sd_score |
-|:-----|------:|-----:|-----------:|---------:|
-| CI   |    10 |    2 |      0.075 |    0.004 |
-| CI   |    10 |    2 |      0.075 |    0.001 |
-| CIg  |    10 |    2 |      0.074 |    0.000 |
-| CI   |    20 |    2 |      0.074 |    0.002 |
-| CI   |    20 |    2 |      0.074 |    0.003 |
-| CIg  |    10 |    2 |      0.074 |    0.001 |
+| type | ntree | mtry | mean_brier | std_err_brier |
+|:-----|------:|-----:|-----------:|--------------:|
+| CI   |    10 |    1 |      0.072 |         0.001 |
+| CI   |    10 |    1 |      0.073 |         0.002 |
+| CI   |    10 |    1 |      0.073 |         0.001 |
+| CI   |    10 |    1 |      0.073 |         0.002 |
+| CI   |    10 |    2 |      0.074 |         0.002 |
+| CI   |    10 |    2 |      0.074 |         0.001 |
 
 Brier scores collected from the same forest tuning run
 

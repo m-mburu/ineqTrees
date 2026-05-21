@@ -1,8 +1,12 @@
 ci_ranking.Rmd:
   path: dev/ci_ranking.Rmd
   state: active
-  R: R/rank_wt.R
-  tests: tests/testthat/test-rank_wt.R
+  R:
+  - R/rank_wt_retained.R
+  - R/rank_wt.R
+  tests:
+  - tests/testthat/test-rank_wt_retained.R
+  - tests/testthat/test-rank_wt.R
   vignettes: vignettes/ci-ranking-helpers.Rmd
   inflate:
     flat_file: dev/ci_ranking.Rmd
@@ -34,7 +38,9 @@ ci_split_search_cpp.Rmd:
   R:
   - R/ci_split_search_cpp.R
   - R/RcppExports.R
-  tests: tests/testthat/test-ci_split_search_cpp.R
+  tests:
+  - tests/testthat/test-verification.R
+  - tests/testthat/test-ci_split_search_cpp.R
   vignettes: vignettes/ci-split-search-with-rcpp.Rmd
   inflate:
     flat_file: dev/ci_split_search_cpp.Rmd
@@ -137,6 +143,21 @@ plot_tree_helpers.Rmd:
     overwrite: 'yes'
     clean: 'no'
     codecov: false
+plotting_tutorial.Rmd:
+  path: dev/plotting_tutorial.Rmd
+  state: active
+  R: []
+  tests: []
+  vignettes: vignettes/plotting-tutorial.Rmd
+  inflate:
+    flat_file: dev/plotting_tutorial.Rmd
+    vignette_name: Plotting tutorial
+    open_vignette: false
+    check: false
+    document: false
+    overwrite: 'yes'
+    clean: 'no'
+    codecov: false
 shap_article.Rmd:
   path: dev/shap_article.Rmd
   state: active
@@ -209,6 +230,21 @@ tidymodels_extension.Rmd:
   inflate:
     flat_file: dev/tidymodels_extension.Rmd
     vignette_name: Tidymodels extension
+    open_vignette: false
+    check: false
+    document: false
+    overwrite: 'yes'
+    clean: 'no'
+    codecov: false
+tuning_tutorial.Rmd:
+  path: dev/tuning_tutorial.Rmd
+  state: active
+  R: []
+  tests: []
+  vignettes: vignettes/tuning-tutorial.Rmd
+  inflate:
+    flat_file: dev/tuning_tutorial.Rmd
+    vignette_name: Tuning tutorial
     open_vignette: false
     check: false
     document: false
