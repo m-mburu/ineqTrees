@@ -11,6 +11,9 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.width = 12,
   fig.height = 7,
+  fig.bg = "white",
+  dev.args = list(bg = "white"),
+  dpi = 200,
   out.width = "100%"
 )
 ```
@@ -46,6 +49,17 @@ useful for concentration-index trees:
 
 This tutorial starts with the generic plot and then builds up the controls used
 most often in reports.
+
+```{r plotting-options, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width = 12,
+  fig.height = 7,
+  fig.bg = "white",
+  dev.args = list(bg = "white"),
+  dpi = 200,
+  out.width = "100%"
+)
+```
 
 ```{r setup}
 library(ineqTrees)
@@ -425,7 +439,8 @@ grDevices::png(
   filename = "ci-tree-plot.png",
   width = 2400,
   height = 1600,
-  res = 200
+  res = 200,
+  bg = "white"
 )
 
 plot(
@@ -456,7 +471,9 @@ grDevices::dev.off()
 ```
 
 For pkgdown or R Markdown documents, prefer chunk options such as `fig.width`,
-`fig.height`, and `fig.alt`, as shown throughout this tutorial.
+`fig.height`, `fig.bg`, and `fig.alt`, as shown throughout this tutorial. An
+opaque figure background keeps transparent PNGs from inheriting GitHub's dark
+mode background.
 
 ## Practical Defaults
 

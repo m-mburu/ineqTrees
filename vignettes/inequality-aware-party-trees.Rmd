@@ -592,8 +592,9 @@ ci_forest_summary(forest_fit)
 
 
 `ci_forest_surrogate()` fits an interpretable greedy tree to the fitted forest
-predictions. This is the same surrogate idea used internally when forest tuning
-scores validation gain.
+predictions. Forest tuning still returns a surrogate for interpretation, while
+the forest validation-gain metric itself is computed from the forest's stored
+member trees.
 ```{r forest-surrogate}
 forest_surrogate <- ci_forest_surrogate(
   forest_fit,
@@ -618,10 +619,13 @@ ci_tree_terminal_summary(forest_surrogate$fit)[
 
 
 The same cross-validation idea applies to forests. `tune_ci_forest()` tunes
-forest controls and returns validation gain from an interpretable surrogate
-tree fitted to the forest predictions. The grid below uses `dials` to create
-a regular search over familiar tidymodels parameters, then converts the result
-with `ci_dials_grid()`. For a larger applied analysis, you could use
+forest controls and computes validation gain by averaging the held-out
+concentration-index gain across the forest's internal tree partitions.
+Prediction metrics are computed from the averaged forest predictions, and the
+selected refit still includes an interpretable surrogate tree. The grid below
+uses `dials` to create a regular search over familiar tidymodels parameters,
+then converts the result with `ci_dials_grid()`. For a larger applied analysis,
+you could use
 `levels = 3L` or add `dials::tree_depth()` and `dials::trees()` to the grid.
 ```{r tune-forest}
 forest_dials_grid <- dials::grid_regular(

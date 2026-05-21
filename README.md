@@ -643,9 +643,10 @@ readme_tree_plot(
 ## Tune forest hyperparameters
 
 For forests, `tune_ci_forest()` uses the same greedy controls and adds
-`ntree` when that column is present in the tuning grid. Each candidate
-forest is summarized by a surrogate greedy CI tree, and the grid is
-ranked by held-out CI validation gain from that surrogate. Use
+`ntree` when that column is present in the tuning grid. Forest
+validation gain is computed by averaging held-out CI gain across each
+candidate forest’s internal tree partitions, while prediction metrics
+such as Brier score use the averaged forest predictions. Use
 `parallel_over = "tuning"` to parallelize grid/fold tasks, or
 `parallel_over = "forest"` to grow trees within each forest in parallel
 after setting a `future` plan.
@@ -730,8 +731,8 @@ knitr::kable(
 
 | type | ntree | mtry | minbucket | maxdepth | mean_root_objective | mean_train_gain | mean_validation_gain | percent_validation_gain |
 |:---|---:|---:|---:|---:|---:|---:|---:|---:|
-| CI | 10 | 2 | 100 | 4 | 0.403 | 0.079 | -0.012 | -2.968 |
-| CIg | 10 | 2 | 50 | 4 | 0.032 | 0.010 | -0.002 | -7.400 |
+| CI | 10 | 2 | 100 | 4 | 0.403 | -0.034 | -0.003 | -0.860 |
+| CIg | 10 | 2 | 50 | 4 | 0.032 | 0.006 | 0.001 | 1.756 |
 
 Cross-validated greedy forest tuning results ranked by validation gain
 

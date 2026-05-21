@@ -121,11 +121,12 @@ A \code{ci_forest_tuning} object.
 \code{\link[=tune_ci_forest]{tune_ci_forest()}}.
 
 Fits \code{\link[=ci_forest]{ci_forest()}} across candidate forest controls and concentration-index
-criteria. Each validation forest is summarized by a surrogate greedy
-\code{\link[=ci_tree]{ci_tree()}} fitted to the forest predictions on the training fold, then
-scored by held-out concentration-index validation gain against the observed
-outcome. Prediction-oriented metrics can be computed from the forest
-predictions in the same tuning run.
+criteria. Concentration-index validation gain is computed directly from the
+forest's internal trees by averaging held-out validation gain across member
+tree partitions. Prediction-oriented metrics are computed from the averaged
+forest predictions in the same tuning run. When \code{refit = TRUE}, the selected
+forest is also summarized by a surrogate greedy \code{\link[=ci_tree]{ci_tree()}} for
+interpretation.
 }
 \examples{
 if (requireNamespace("future", quietly = TRUE) &&

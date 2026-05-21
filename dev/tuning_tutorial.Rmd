@@ -244,9 +244,12 @@ forest_grid <- ci_tree_control_grid(
 forest_grid
 ```
 
-`tune_ci_forest()` scores each forest through a surrogate CI tree fitted to the
-forest predictions on the validation fold. That is why forest tuning can still
-report concentration-index validation gain.
+`tune_ci_forest()` scores concentration-index validation gain from the forest's
+internal trees. Each member tree supplies a validation-fold partition, the
+tree-level validation gains are averaged, and prediction metrics such as Brier
+score are computed from the averaged forest predictions. When `refit = TRUE`,
+the selected forest is still accompanied by a surrogate tree for
+interpretation.
 
 ```{r tune-forest}
 forest_tuning <- tune_ci_forest(

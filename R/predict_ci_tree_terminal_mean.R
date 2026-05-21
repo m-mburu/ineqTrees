@@ -899,6 +899,77 @@ ci_root_impurity <- function(data,
 
 .ci_score_percent_validation_root_recovered <- .ci_score_relative_validation_gain
 
+.ci_score_forest_validation_gain <- function(fit,
+                                             new_data,
+                                             rank_name,
+                                             outcome_name,
+                                             weights,
+                                             type,
+                                             root_impurity = NULL) {
+  ci_forest_validation_gain(
+    fit = fit,
+    new_data = new_data,
+    rank_name = rank_name,
+    outcome_name = outcome_name,
+    weights = weights,
+    type = type,
+    root_impurity = root_impurity
+  )
+}
+
+.ci_score_forest_relative_validation_gain <- function(fit,
+                                                      new_data,
+                                                      rank_name,
+                                                      outcome_name,
+                                                      weights,
+                                                      type,
+                                                      root_impurity = NULL) {
+  if (is.null(root_impurity)) {
+    weights <- .ci_default_weights(weights, nrow(new_data))
+    rank <- suppressWarnings(as.numeric(new_data[[rank_name]]))
+    outcome <- .ci_outcome_numeric(new_data[[outcome_name]], outcome_name)
+    keep <- stats::complete.cases(rank, outcome, weights) & weights > 0
+    if (!any(keep)) {
+      return(NA_real_)
+    }
+    root_impurity <- ci_factory(type)(
+      cbind(rank = rank[keep], outcome = outcome[keep]),
+      weights[keep]
+    )
+  }
+
+  if (length(root_impurity) != 1L ||
+      is.na(root_impurity) ||
+      !is.finite(root_impurity) ||
+      abs(root_impurity) <= .Machine$double.eps) {
+    return(NA_real_)
+  }
+
+  .ci_score_forest_validation_gain(
+    fit = fit,
+    new_data = new_data,
+    rank_name = rank_name,
+    outcome_name = outcome_name,
+    weights = weights,
+    type = type,
+    root_impurity = root_impurity
+  ) / abs(root_impurity)
+}
+
+.ci_forest_mean_terminal_nodes <- function(fit) {
+  if (!inherits(fit, "ci_forest") || !length(fit$trees)) {
+    return(NA_real_)
+  }
+  terminal_nodes <- vapply(
+    fit$trees,
+    function(tree) {
+      length(partykit::nodeids(tree$fit, terminal = TRUE))
+    },
+    numeric(1)
+  )
+  mean(terminal_nodes, na.rm = TRUE)
+}
+
 .ci_score_prediction_metric <- function(metric, outcome, pred, weights) {
   switch(metric,
     brier = ci_brier_score(outcome, pred, weights),
@@ -1322,6 +1393,75 @@ ci_tree_validation_gain <- function(fit,
   ))
 
   as.numeric(root_impurity - child_impurity)
+}
+
+#' Compute held-out concentration-index validation gain for a CI forest
+#'
+#' @description
+#' Applies each member tree in a fitted [ci_forest()] to validation data,
+#' computes [ci_tree_validation_gain()] for each internal tree partition, and
+#' returns the average gain across trees. This is a forest-native partition
+#' diagnostic: it measures the average concentration-index impurity reduction
+#' from the forest's stored trees, not from a surrogate tree and not from the
+#' averaged prediction surface.
+#'
+#' @param fit A fitted `ci_forest` object.
+#' @inheritParams ci_tree_validation_gain
+#'
+#' @return A single numeric validation gain.
+#'
+#' @examples
+#' toy_data <- data.frame(
+#'   rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+#'   outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+#'   income = c(2, 4, 6, 8, 10, 12, 14, 16)
+#' )
+#' forest <- ci_forest(
+#'   cbind(rank, outcome) ~ income,
+#'   data = toy_data,
+#'   rank_name = "rank",
+#'   outcome_name = "outcome",
+#'   ntree = 3,
+#'   control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+#' )
+#' ci_forest_validation_gain(forest, toy_data, "rank", "outcome")
+#'
+#' @export
+ci_forest_validation_gain <- function(fit,
+                                      new_data,
+                                      rank_name = fit$rank_name,
+                                      outcome_name = fit$outcome_name,
+                                      weights = NULL,
+                                      type = fit$type,
+                                      root_impurity = NULL) {
+  if (!inherits(fit, "ci_forest")) {
+    stop("`fit` must be a fitted `ci_forest` object.", call. = FALSE)
+  }
+  if (length(fit$trees) == 0L) {
+    return(NA_real_)
+  }
+
+  type <- match.arg(type, choices = c("CI", "CIg", "CIc", "L"))
+  gains <- vapply(
+    fit$trees,
+    function(tree) {
+      ci_tree_validation_gain(
+        fit = tree$fit,
+        new_data = new_data,
+        rank_name = rank_name,
+        outcome_name = outcome_name,
+        weights = weights,
+        type = type,
+        root_impurity = root_impurity
+      )
+    },
+    numeric(1)
+  )
+
+  if (all(is.na(gains))) {
+    return(NA_real_)
+  }
+  mean(gains, na.rm = TRUE)
 }
 
 #' Compute weighted Brier score

@@ -629,11 +629,12 @@ readme_tree_plot(
 ## Tune forest hyperparameters
 
 For forests, `tune_ci_forest()` uses the same greedy controls and adds `ntree`
-when that column is present in the tuning grid. Each candidate forest is
-summarized by a surrogate greedy CI tree, and the grid is ranked by held-out CI
-validation gain from that surrogate. Use `parallel_over = "tuning"` to
-parallelize grid/fold tasks, or `parallel_over = "forest"` to grow trees within
-each forest in parallel after setting a `future` plan.
+when that column is present in the tuning grid. Forest validation gain is
+computed by averaging held-out CI gain across each candidate forest's internal
+tree partitions, while prediction metrics such as Brier score use the averaged
+forest predictions. Use `parallel_over = "tuning"` to parallelize grid/fold
+tasks, or `parallel_over = "forest"` to grow trees within each forest in
+parallel after setting a `future` plan.
 
 ```{r forest-tuning-grid}
 forest_tune_grid <- ci_tree_control_grid(

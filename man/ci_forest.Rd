@@ -89,7 +89,9 @@ conditional-inference forest. Randomness enters through row perturbation and,
 optionally, through \code{mtry}, which restricts the number of predictors searched
 at each node. Within each tree, the split rule is the same direct
 maximization of concentration-index gain used by \code{\link[=ci_tree]{ci_tree()}}. Predictions are
-aggregated across trees by averaging terminal-node summaries.
+aggregated across trees by averaging terminal-node summaries. The fitted
+object retains the member trees in \code{object$trees}; model-selection helpers
+use those internal tree partitions to compute forest-native validation gain.
 }
 \examples{
 if (requireNamespace("future", quietly = TRUE) &&
