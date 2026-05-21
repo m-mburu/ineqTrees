@@ -1,0 +1,408 @@
+---
+title: "Cross-validating CI trees and forests"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r development, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+<!--
+ Source of truth for the tuning tutorial pkgdown article.
+ This file is intentionally a short narrative vignette. It does not define
+ package functions. Run the inflate chunk at the bottom after editing.
+-->
+
+```{r development-load}
+pkgload::load_all(export_all = FALSE)
+```
+
+# Introduction
+
+This short tutorial shows the current cross-validation API for greedy
+concentration-index trees and concentration-index forests. The core workflow is
+the same for both model classes:
+
+1. Build a small control grid.
+2. Run cross-validation with `tune_ci_tree()` or `tune_ci_forest()`.
+3. Select settings with `ci_select_best()`.
+4. Collect metrics with `ci_collect_metrics()`.
+5. Build a report-ready table with `ci_fit_summary_table()`.
+
+The examples use the simulated Kenya child-survival data included with
+`ineqTrees`.
+
+```{r setup}
+library(ineqTrees)
+library(data.table)
+library(knitr)
+
+data(kenya, package = "ineqTrees")
+setDT(kenya)
+
+tuning_vars <- c(
+  "wealth",
+  "deadu5_num",
+  "rural",
+  "ed",
+  "reg",
+  "unskilled",
+  "sample_weight"
+)
+
+tuning_data <- kenya[
+  complete.cases(kenya[, ..tuning_vars]),
+  ..tuning_vars
+]
+
+set.seed(20260521)
+tuning_data <- tuning_data[
+  sample.int(.N, min(700L, .N))
+]
+
+ci_formula <- cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled
+criterion_types <- c("CI", "CIg")
+tuning_metrics <- c(
+  "validation_gain",
+  "relative_validation_gain",
+  "brier"
+)
+```
+
+`validation_gain` is the reduction in validation-fold concentration-index
+impurity after observations are assigned to terminal nodes. The relative metric
+scales that gain by the absolute validation root impurity:
+
+```r
+relative_validation_gain = validation_gain / abs(root_impurity)
+```
+
+The raw gain is useful for selecting within a criterion. The relative gain and
+the percentage gain columns are useful for interpreting how much validation
+root impurity the model recovers.
+
+## Cross-Validate Trees
+
+Start with a grid of greedy tree controls. These are split-search controls, not
+conditional-inference test controls.
+
+```{r tree-grid}
+tree_grid <- ci_tree_control_grid(
+  minsplit = c(120L, 180L),
+  minbucket = 60L,
+  minprob = 0.05,
+  maxdepth = 2:3
+)
+
+tree_grid
+```
+
+Run cross-validation with `tune_ci_tree()`. The first metric is the selection
+metric used for `tree_tuning$best_fit` when `refit = TRUE`.
+
+```{r tune-tree}
+tree_tuning <- tune_ci_tree(
+  formula = ci_formula,
+  data = tuning_data,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  weights = tuning_data$sample_weight,
+  type = criterion_types,
+  control_grid = tree_grid,
+  v = 3L,
+  strata = "deadu5_num",
+  seed = 20260521,
+  metrics = tuning_metrics,
+  control = control_ci_tune(save_pred = TRUE),
+  refit = TRUE
+)
+```
+
+Use `ci_collect_metrics(format = "wide")` when you want one row per setting
+with metric columns.
+
+```{r tree-wide-metrics}
+tree_metrics_wide <- ci_collect_metrics(
+  tree_tuning,
+  metric = tuning_metrics,
+  format = "wide"
+)
+
+knitr::kable(
+  tree_metrics_wide[
+    order(-mean_validation_gain),
+    .(
+      type,
+      minsplit,
+      minbucket,
+      maxdepth,
+      mean_validation_gain,
+      std_err_validation_gain,
+      mean_validation_relative_gain,
+      mean_brier
+    )
+  ],
+  digits = 4,
+  caption = "Cross-validated tree metrics"
+)
+```
+
+Use `ci_select_best()` to keep the best setting within each criterion type.
+
+```{r tree-select-best}
+tree_best <- ci_select_best(
+  tree_tuning,
+  metric = "validation_gain"
+)
+
+knitr::kable(
+  tree_best[
+    ,
+    .(type, minsplit, minbucket, minprob, maxdepth)
+  ],
+  digits = 4,
+  caption = "Selected tree controls"
+)
+```
+
+For reports, `ci_fit_summary_table()` combines selected settings, validation
+metrics, training diagnostics, and root-objective summaries.
+
+```{r tree-fit-summary}
+tree_fit_summary <- ci_fit_summary_table(
+  tree_tuning,
+  selected = tree_best,
+  metrics = c(
+    "train_gain",
+    "validation_gain",
+    "train_relative_gain",
+    "relative_validation_gain"
+  ),
+  include_percent = TRUE
+)
+
+knitr::kable(
+  tree_fit_summary[
+    ,
+    .(
+      type,
+      mean_root_objective,
+      mean_train_gain,
+      mean_percent_train_gain,
+      mean_validation_gain,
+      mean_percent_validation_gain,
+      std_err_validation_gain
+    )
+  ],
+  digits = 4,
+  caption = "Selected tree fit summary"
+)
+```
+
+Saved validation predictions are available when `save_pred = TRUE`.
+
+```{r tree-predictions}
+head(
+  ci_collect_predictions(tree_tuning)[
+    ,
+    .(grid_id, fold_id, type, row_id, outcome, .pred)
+  ]
+)
+```
+
+The selected refit is stored on the tuning object.
+
+```{r selected-tree-summary}
+ci_tree_terminal_summary(tree_tuning$best_fit)[
+  ,
+  .(node, n, depth, ci, outcome_percent, rule)
+]
+```
+
+## Cross-Validate Forests
+
+Forest tuning uses the same metric and collector API. The forest grid also
+includes `ntree` and `mtry`.
+
+```{r forest-grid}
+forest_grid <- ci_tree_control_grid(
+  minsplit = 120L,
+  minbucket = 60L,
+  minprob = 0.05,
+  maxdepth = 2L,
+  mtry = c(1L, 2L),
+  ntree = c(6L, 10L)
+)
+
+forest_grid
+```
+
+`tune_ci_forest()` scores each forest through a surrogate CI tree fitted to the
+forest predictions on the validation fold. That is why forest tuning can still
+report concentration-index validation gain.
+
+```{r tune-forest}
+forest_tuning <- tune_ci_forest(
+  formula = ci_formula,
+  data = tuning_data,
+  rank_name = "wealth",
+  outcome_name = "deadu5_num",
+  weights = tuning_data$sample_weight,
+  type = criterion_types,
+  control_grid = forest_grid,
+  v = 3L,
+  strata = "deadu5_num",
+  seed = 20260522,
+  metrics = tuning_metrics,
+  prediction_name = "forest_risk",
+  parallel_over = "none",
+  control = control_ci_tune(save_pred = TRUE),
+  refit = TRUE
+)
+```
+
+```{r forest-wide-metrics}
+forest_metrics_wide <- ci_collect_metrics(
+  forest_tuning,
+  metric = tuning_metrics,
+  format = "wide"
+)
+
+knitr::kable(
+  forest_metrics_wide[
+    order(-mean_validation_gain),
+    .(
+      type,
+      ntree,
+      mtry,
+      minbucket,
+      mean_validation_gain,
+      std_err_validation_gain,
+      mean_validation_relative_gain,
+      mean_brier
+    )
+  ],
+  digits = 4,
+  caption = "Cross-validated forest metrics"
+)
+```
+
+```{r forest-select-best}
+forest_best <- ci_select_best(
+  forest_tuning,
+  metric = "validation_gain"
+)
+
+knitr::kable(
+  forest_best[
+    ,
+    .(type, ntree, mtry, minsplit, minbucket, maxdepth)
+  ],
+  digits = 4,
+  caption = "Selected forest controls"
+)
+```
+
+```{r forest-fit-summary}
+forest_fit_summary <- ci_fit_summary_table(
+  forest_tuning,
+  selected = forest_best,
+  metrics = c(
+    "train_gain",
+    "validation_gain",
+    "train_relative_gain",
+    "relative_validation_gain"
+  ),
+  include_percent = TRUE
+)
+
+knitr::kable(
+  forest_fit_summary[
+    ,
+    .(
+      type,
+      mean_root_objective,
+      mean_train_gain,
+      mean_percent_train_gain,
+      mean_validation_gain,
+      mean_percent_validation_gain,
+      std_err_validation_gain
+    )
+  ],
+  digits = 4,
+  caption = "Selected forest fit summary"
+)
+```
+
+With `refit = TRUE`, the final fitted forest and its surrogate tree are stored
+on the tuning object.
+
+```{r selected-forest-objects}
+ci_forest_summary(forest_tuning$best_fit)
+
+ci_tree_terminal_summary(forest_tuning$best_surrogate)[
+  ,
+  .(node, n, depth, outcome_percent, rule)
+]
+```
+
+## Minimal Template
+
+For most analyses, the tuning pattern is:
+
+```{r minimal-template, eval=FALSE}
+grid <- ci_tree_control_grid(
+  minsplit = c(100L, 200L),
+  minbucket = c(50L, 100L),
+  maxdepth = 2:4
+)
+
+tuned <- tune_ci_tree(
+  formula = cbind(rank, outcome) ~ x1 + x2 + x3,
+  data = analysis_data,
+  rank_name = "rank",
+  outcome_name = "outcome",
+  weights = analysis_data$weights,
+  type = c("CI", "CIg"),
+  control_grid = grid,
+  v = 5L,
+  strata = "outcome",
+  metrics = c("validation_gain", "relative_validation_gain"),
+  control = control_ci_tune(save_pred = TRUE),
+  refit = TRUE
+)
+
+selected <- ci_select_best(tuned, metric = "validation_gain")
+
+ci_fit_summary_table(
+  tuned,
+  selected = selected,
+  metrics = c(
+    "train_gain",
+    "validation_gain",
+    "train_relative_gain",
+    "relative_validation_gain"
+  )
+)
+```
+
+Use `tune_ci_forest()` with a grid that includes `ntree` and `mtry` when you
+want the same cross-validation workflow for forests.
+
+```{r development-inflate, eval=FALSE}
+fusen::inflate(
+  flat_file = "dev/tuning_tutorial.Rmd",
+  vignette_name = "Tuning tutorial",
+  overwrite = "yes",
+  open_vignette = FALSE,
+  check = FALSE,
+  document = FALSE
+)
+```

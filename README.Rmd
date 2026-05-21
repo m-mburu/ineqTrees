@@ -26,10 +26,13 @@ knitr::opts_chunk$set(
 `ineqTrees` provides tools for studying socioeconomic inequality in health
 outcomes with tree-based models. The package includes weighted rank and
 concentration-index utilities, inequality-aware split scoring, and wrappers
-for fitting greedy concentration-index trees and forests. Open the
+for fitting greedy concentration-index trees and forests. Start with the
 [inequality-aware party trees article](https://m-mburu.github.io/ineqTrees/articles/inequality-aware-party-trees.html)
-for more detail on how these trees define the two-column response, choose
-concentration-index splits, tune controls, and summarize terminal subgroups.
+for the main workflow, then see the
+[tuning tutorial](https://m-mburu.github.io/ineqTrees/articles/tuning-tutorial.html)
+for cross-validating trees and forests and the
+[plotting tutorial](https://m-mburu.github.io/ineqTrees/articles/plotting-tutorial.html)
+for customizing tree plots, node statistics, and labels.
 
 ## Installation
 
@@ -140,6 +143,7 @@ if (requireNamespace("pkgload", quietly = TRUE) && file.exists("DESCRIPTION")) {
 }
 suppressPackageStartupMessages(library(data.table))
 load("data/kenya.rda")
+setDT(kenya)
 
 set.seed(1)
 ```
@@ -257,22 +261,22 @@ forest_tuned <- tune::tune_grid(
 ### Fit a surrogate tree to forest predictions
 
 The surrogate is a greedy concentration-index tree that approximates the
-predictions of the fitted forest. This is useful for interpreting the forest,
-since the surrogate can be refit on held-out data and scored with CI gain.
+predictions of the fitted forest. `ci_forest_surrogate()` adds the forest
+predictions to the analysis data and fits the surrogate with the same rank and
+predictor variables.
 
 ```{r surrogate-tree}
-setDT(kenya)
-kenya[, forest_risk := readme_forest_predict(
-   fit_forest, .SD
-), .SDcols = readme_predictors]
-
-surrogate_tree <- ci_tree(
-  formula = cbind(wealth, forest_risk) ~ rural + ed + reg + unskilled,
+forest_surrogate <- ci_forest_surrogate(
+  fit_forest,
   data = kenya,
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   rank_name = "wealth",
-  outcome_name = "forest_risk",
+  prediction_name = "forest_risk",
   control = ci_tree_control(maxdepth = 4L)
 )
+
+surrogate_tree <- forest_surrogate$fit
+surrogate_data <- forest_surrogate$data
 #surrogate_tree
 ```
 
@@ -281,7 +285,7 @@ surrogate_tree <- ci_tree(
 ```{r surrogate-tree-plot, fig.width=15, fig.height=9, fig.alt="A surrogate concentration-index tree approximating fitted forest predictions."}
 readme_tree_plot(
   surrogate_tree,
-  kenya,
+  surrogate_data,
   outcome_name = "forest_risk",
   outcome_label = "Predicted risk"
 )
@@ -538,42 +542,50 @@ tree_tuning <- tune_ci_tree(
   v = 3L,
   strata = "deadu5_num",
   seed = 20260507,
-  metrics = c("validation_gain", "brier"),
+  metrics = c("validation_gain", "relative_validation_gain", "brier"),
   refit = TRUE,
   control = control_ci_tune(save_pred = TRUE)
 )
 ```
 
 ```{r tree-tuning-table}
-tree_tuning_best <- ci_show_best(
+tree_tuning_best <- ci_select_best(
   tree_tuning,
-  metric = "validation_gain",
-  n = 5L
+  metric = "validation_gain"
 )
 
 tree_tuning_table <- readme_tuning_table(
-  tree_tuning_best,
+  ci_fit_summary_table(
+    tree_tuning,
+    selected = tree_tuning_best,
+    metrics = c(
+      "train_gain",
+      "validation_gain",
+      "train_relative_gain",
+      "relative_validation_gain"
+    )
+  ),
   columns = c(
-    "metric",
     "type",
     "minsplit",
     "minbucket",
     "minprob",
     "maxdepth",
-    "mean_score",
-    "sd_score",
-    "mean_terminal_nodes"
+    "mean_root_objective",
+    "mean_train_gain",
+    "mean_validation_gain",
+    "mean_validation_relative_gain"
   ),
   labels = c(
-    "metric",
     "type",
     "minsplit",
     "minbucket",
     "minprob",
     "maxdepth",
+    "mean_root_objective",
+    "mean_train_gain",
     "mean_validation_gain",
-    "sd_validation_gain",
-    "mean_terminal_nodes"
+    "mean_relative_validation_gain"
   )
 )
 
@@ -585,18 +597,24 @@ knitr::kable(
 ```
 
 ```{r tree-tuning-collectors}
-tree_fold_metrics <- ci_collect_metrics(
+tree_wide_metrics <- ci_collect_metrics(
   tree_tuning,
-  summarize = FALSE,
-  metric = "validation_gain"
+  metric = c("train_gain", "validation_gain"),
+  format = "wide"
 )
 
 tree_saved_predictions <- ci_collect_predictions(tree_tuning)
 
 knitr::kable(
-  head(tree_fold_metrics[, .(grid_id, fold_id, type, score)]),
+  head(tree_wide_metrics[, .(
+    grid_id,
+    type,
+    mean_train_gain,
+    mean_validation_gain,
+    std_err_validation_gain
+  )]),
   digits = 3,
-  caption = "Fold-level validation-gain scores collected from tree tuning"
+  caption = "Wide-format training and validation gain metrics collected from tree tuning"
 )
 ```
 
@@ -639,7 +657,7 @@ forest_tuning <- tune_ci_forest(
   v = 3L,
   strata = "deadu5_num",
   seed = 20260508,
-  metrics = c("validation_gain", "brier"),
+  metrics = c("validation_gain", "relative_validation_gain", "brier"),
   prediction_name = "forest_risk",
   parallel_over = "none",
   control = control_ci_tune(save_pred = TRUE),
@@ -649,35 +667,43 @@ forest_tuning <- tune_ci_forest(
 ```
 
 ```{r forest-tuning-table}
-forest_tuning_best <- ci_show_best(
+forest_tuning_best <- ci_select_best(
   forest_tuning,
-  metric = "validation_gain",
-  n = 5L
+  metric = "validation_gain"
 )
 
 forest_tuning_table <- readme_tuning_table(
-  forest_tuning_best,
+  ci_fit_summary_table(
+    forest_tuning,
+    selected = forest_tuning_best,
+    metrics = c(
+      "train_gain",
+      "validation_gain",
+      "train_relative_gain",
+      "relative_validation_gain"
+    )
+  ),
   columns = c(
-    "metric",
     "type",
     "ntree",
     "mtry",
     "minbucket",
     "maxdepth",
-    "mean_score",
-    "sd_score",
-    "mean_terminal_nodes"
+    "mean_root_objective",
+    "mean_train_gain",
+    "mean_validation_gain",
+    "mean_percent_validation_gain"
   ),
   labels = c(
-    "metric",
     "type",
     "ntree",
     "mtry",
     "minbucket",
     "maxdepth",
+    "mean_root_objective",
+    "mean_train_gain",
     "mean_validation_gain",
-    "sd_validation_gain",
-    "mean_terminal_nodes"
+    "percent_validation_gain"
   )
 )
 
@@ -690,10 +716,14 @@ knitr::kable(
 
 ```{r forest-tuning-collectors}
 forest_saved_predictions <- ci_collect_predictions(forest_tuning)
-forest_brier <- ci_collect_metrics(forest_tuning, metric = "brier")
+forest_brier <- ci_collect_metrics(
+  forest_tuning,
+  metric = "brier",
+  format = "wide"
+)
 
 knitr::kable(
-  head(forest_brier[, .(type, ntree, mtry, mean_score, sd_score)]),
+  head(forest_brier[, .(type, ntree, mtry, mean_brier, std_err_brier)]),
   digits = 3,
   caption = "Brier scores collected from the same forest tuning run"
 )

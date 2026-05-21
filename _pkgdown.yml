@@ -33,6 +33,8 @@ articles:
   - title: Overview
     contents:
       - "inequality-aware-party-trees"
+      - "tuning-tutorial"
+      - "plotting-tutorial"
   - title: Tree internals
     contents:
       - "ci-ranking-helpers"

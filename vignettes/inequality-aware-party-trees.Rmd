@@ -98,63 +98,26 @@ criterion_types <- c("CI", "CIg", "CIc", "L")
 ```
 
 
-```{r helper-functions}
-best_settings_by_type <- function(x, metric = "validation_gain") {
-  out <- copy(as.data.table(x))
-  if ("metric" %in% names(out)) {
-    out <- out[out$metric == metric, , drop = FALSE]
-  }
-  data.table::setorderv(out, c("type", "mean_score"), c(1L, -1L))
-  out[type %in% criterion_types, .SD[1L], by = type]
-}
-
-add_root_gain_columns <- function(best_dt, root_table) {
-  out <- copy(as.data.table(best_dt))
-
-  root_lookup <- root_table[
-    ,
-    .(
-      type = criterion,
-      root_ci_index = root_ci_index
-    )
-  ]
-
-  out <- merge(out, root_lookup, by = "type", all.x = TRUE, sort = FALSE)
-
-  out[
-    ,
-    percent_gain_recovered := data.table::fifelse(
-      is.finite(root_ci_index) & root_ci_index > 0,
-      100 * mean_score / root_ci_index,
-      NA_real_
-    )
-  ]
-
-  out
-}
-```
-
-
 ## 2. Measure socioeconomic inequality at the root
 
 The concentration index summarizes whether the outcome is concentrated among
 poorer or richer children after ordering observations by the ranking variable.
-`ci_factory()` returns a scoring function. The same scoring function is used
-inside the tree splitter, and each criterion has its own root-node benchmark.
+`ci_root_impurity()` computes the unsplit/root objective with the same scoring
+convention used by tree and forest tuning. Each criterion has its own root-node
+benchmark.
 ```{r root-concentration-index}
-root_response <- cbind(
-  rank = kenya_model$wealth,
-  outcome = kenya_model$deadu5_num
-)
-
-root_weights <- kenya_model$sample_weight
-
-whole_sample_ci <- data.table(criterion = criterion_types)[
+whole_sample_ci <- data.table(type = criterion_types)[
   ,
   .(
-    root_ci_index = ci_factory(criterion)(root_response, root_weights)
+    root_ci_index = ci_root_impurity(
+      data = kenya_model,
+      rank_name = "wealth",
+      outcome_name = "deadu5_num",
+      weights = kenya_model$sample_weight,
+      type = type
+    )
   ),
-  by = criterion
+  by = type
 ]
 
 ci <- ci_factory("CI")
@@ -378,8 +341,9 @@ the full analysis table.
 The default metric is `"validation_gain"`, which selects the model that most
 reduces concentration-index impurity on validation folds. Prediction-oriented
 metrics are also available with `metric = "brier"`, `"log_loss"`, or
-`"roc_auc"`. The example below keeps the grid small so the vignette builds
-quickly.
+`"roc_auc"`. The relative gain metric scales validation gain by the fold's root
+impurity, which is useful when comparing concentration-index criteria. The
+example below keeps the grid small so the vignette builds quickly.
 ```{r tune-tree}
 tuning_grid <- ci_tree_control_grid(
   minsplit = c(120L, 180L),
@@ -399,12 +363,26 @@ tree_tuning <- tune_ci_tree(
   v = 3L,
   strata = "deadu5_num",
   seed = 20260512,
+  metrics = c("validation_gain", "relative_validation_gain"),
   refit = TRUE
 )
 
-tree_tuning$summary[
-  order(-mean_score),
-  .(metric, type, minsplit, minbucket, maxdepth, mean_score, mean_terminal_nodes)
+tree_tuning_metrics <- ci_collect_metrics(
+  tree_tuning,
+  metric = c("validation_gain", "relative_validation_gain"),
+  format = "wide"
+)
+
+tree_tuning_metrics[
+  order(-mean_validation_gain),
+  .(
+    type,
+    minsplit,
+    minbucket,
+    maxdepth,
+    mean_validation_gain,
+    mean_validation_relative_gain
+  )
 ]
 ```
 
@@ -413,14 +391,35 @@ The tuning object stores fold-level metrics, grid-level summaries, selected
 controls, and optional diagnostics. The collector helpers give a stable way to
 inspect those pieces without relying on list internals.
 ```{r inspect-tree-tuning}
-ci_show_best(tree_tuning, metric = "validation_gain", n = 4)[
+tree_selected <- ci_select_best(tree_tuning, metric = "validation_gain")
+
+ci_fit_summary_table(
+  tree_tuning,
+  selected = tree_selected,
+  metrics = c(
+    "train_gain",
+    "validation_gain",
+    "train_relative_gain",
+    "relative_validation_gain"
+  )
+)[
   ,
-  .(type, minsplit, maxdepth, mean_score, sd_score, mean_terminal_nodes)
+  .(
+    type,
+    minsplit,
+    minbucket,
+    maxdepth,
+    mean_root_objective,
+    mean_train_gain,
+    mean_validation_gain,
+    mean_validation_relative_gain,
+    mean_percent_validation_gain
+  )
 ]
 
-ci_select_best(tree_tuning)[
+tree_selected[
   ,
-  .(type, minsplit, minbucket, maxdepth, mean_score)
+  .(type, minsplit, minbucket, maxdepth)
 ]
 ```
 
@@ -450,9 +449,15 @@ diagnostic_tuning <- tune_ci_tree(
   refit = FALSE
 )
 
-ci_collect_metrics(diagnostic_tuning)[
+ci_collect_metrics(diagnostic_tuning, format = "wide")[
   ,
-  .(metric, mean_score, sd_score, mean_terminal_nodes)
+  .(
+    type,
+    mean_validation_gain,
+    std_err_validation_gain,
+    mean_brier,
+    std_err_brier
+  )
 ]
 
 head(ci_collect_predictions(diagnostic_tuning)[
@@ -495,9 +500,9 @@ if (requireNamespace("rsample", quietly = TRUE)) {
     refit = FALSE
   )
 
-  ci_collect_metrics(rsample_tuning)[
+  ci_collect_metrics(rsample_tuning, format = "wide")[
     ,
-    .(metric, type, mean_score, folds_completed)
+    .(type, mean_validation_gain, n_validation_gain)
   ]
 }
 ```
@@ -508,12 +513,21 @@ four criteria are on different numerical scales, it is also useful to report
 the best setting within each criterion and scale the validation gain by that
 criterion's root impurity.
 ```{r best-tree-by-type}
-tree_best_by_type <- add_root_gain_columns(
-  best_settings_by_type(tree_tuning$summary),
-  whole_sample_ci
+tree_best_by_type <- ci_select_best(
+  tree_tuning,
+  metric = "relative_validation_gain"
 )
 
-tree_best_by_type_table <- copy(tree_best_by_type[
+tree_best_by_type_table <- ci_fit_summary_table(
+  tree_tuning,
+  selected = tree_best_by_type,
+  metrics = c(
+    "train_gain",
+    "validation_gain",
+    "train_relative_gain",
+    "relative_validation_gain"
+  )
+)[
   ,
   .(
     type,
@@ -521,17 +535,17 @@ tree_best_by_type_table <- copy(tree_best_by_type[
     minbucket,
     minprob,
     maxdepth,
-    root_ci_index,
-    mean_validation_gain = mean_score,
-    percent_gain_recovered,
-    sd_validation_gain = sd_score,
-    mean_terminal_nodes
+    mean_root_objective,
+    mean_train_gain,
+    mean_validation_gain,
+    mean_validation_relative_gain,
+    mean_percent_validation_gain
   )
-])
+]
 
 tree_best_by_type_table[
   ,
-  percent_gain_recovered := sprintf("%.1f%%", percent_gain_recovered)
+  mean_percent_validation_gain := sprintf("%.1f%%", mean_percent_validation_gain)
 ]
 
 tree_best_by_type_table
@@ -544,7 +558,7 @@ summarized, or plotted in the same way as `tree_fit`.
 ```{r best-tuned-tree}
 tree_tuning$best_params[
   ,
-  .(type, minsplit, minbucket, maxdepth, mean_score, mean_terminal_nodes)
+  .(type, minsplit, minbucket, maxdepth)
 ]
 ```
 
@@ -574,6 +588,32 @@ forest_fit <- ci_forest(
 )
 
 ci_forest_summary(forest_fit)
+```
+
+
+`ci_forest_surrogate()` fits an interpretable greedy tree to the fitted forest
+predictions. This is the same surrogate idea used internally when forest tuning
+scores validation gain.
+```{r forest-surrogate}
+forest_surrogate <- ci_forest_surrogate(
+  forest_fit,
+  data = kenya_model,
+  formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+  rank_name = "wealth",
+  weights = kenya_model$sample_weight,
+  prediction_name = "forest_risk",
+  control = ci_tree_control(
+    minsplit = 120,
+    minbucket = 60,
+    minprob = 0.05,
+    maxdepth = 2
+  )
+)
+
+ci_tree_terminal_summary(forest_surrogate$fit)[
+  ,
+  .(node, n, depth, outcome_percent, rule)
+]
 ```
 
 
@@ -608,19 +648,26 @@ forest_tuning <- tune_ci_forest(
   v = 3L,
   strata = "deadu5_num",
   seed = 20260513,
-  metrics = c("validation_gain", "brier"),
+  metrics = c("validation_gain", "relative_validation_gain", "brier"),
   control = control_ci_tune(save_pred = TRUE),
   refit = TRUE
 )
 
-forest_best_by_type <- add_root_gain_columns(
-  best_settings_by_type(
-    ci_collect_metrics(forest_tuning, metric = "validation_gain")
-  ),
-  whole_sample_ci
+forest_best_by_type <- ci_select_best(
+  forest_tuning,
+  metric = "relative_validation_gain"
 )
 
-forest_best_by_type_table <- copy(forest_best_by_type[
+forest_best_by_type_table <- ci_fit_summary_table(
+  forest_tuning,
+  selected = forest_best_by_type,
+  metrics = c(
+    "train_gain",
+    "validation_gain",
+    "train_relative_gain",
+    "relative_validation_gain"
+  )
+)[
   ,
   .(
     type,
@@ -630,17 +677,17 @@ forest_best_by_type_table <- copy(forest_best_by_type[
     minbucket,
     minprob,
     maxdepth,
-    root_ci_index,
-    mean_validation_gain = mean_score,
-    percent_gain_recovered,
-    sd_validation_gain = sd_score,
-    mean_terminal_nodes
+    mean_root_objective,
+    mean_train_gain,
+    mean_validation_gain,
+    mean_validation_relative_gain,
+    mean_percent_validation_gain
   )
-])
+]
 
 forest_best_by_type_table[
   ,
-  percent_gain_recovered := sprintf("%.1f%%", percent_gain_recovered)
+  mean_percent_validation_gain := sprintf("%.1f%%", mean_percent_validation_gain)
 ]
 
 forest_best_by_type_table
@@ -650,14 +697,30 @@ forest_best_by_type_table
 The same collector helpers work for forests. With `save_pred = TRUE`, the
 validation predictions are available for quick diagnostic checks.
 ```{r inspect-forest-tuning}
-ci_show_best(forest_tuning, metric = "validation_gain", n = 4)[
+ci_fit_summary_table(
+  forest_tuning,
+  selected = forest_best_by_type,
+  metrics = c(
+    "train_gain",
+    "validation_gain",
+    "train_relative_gain",
+    "relative_validation_gain"
+  )
+)[
   ,
-  .(type, ntree, mtry, minbucket, mean_score, mean_terminal_nodes)
+  .(
+    type,
+    ntree,
+    mtry,
+    minbucket,
+    mean_validation_gain,
+    mean_percent_validation_gain
+  )
 ]
 
-ci_collect_metrics(forest_tuning, metric = "brier")[
-  order(mean_score),
-  .(type, ntree, mtry, mean_score, sd_score)
+ci_collect_metrics(forest_tuning, metric = "brier", format = "wide")[
+  order(mean_brier),
+  .(type, ntree, mtry, mean_brier, std_err_brier)
 ]
 
 head(ci_collect_predictions(forest_tuning)[
@@ -668,10 +731,10 @@ head(ci_collect_predictions(forest_tuning)[
 
 
 The percentage gain is calculated as
-`100 * mean_validation_gain / root_ci_index`. This shows how much of the
-whole-sample/root concentration-index impurity is recovered by the selected
-model for each concentration-index criterion. Because the denominator is
-criterion-specific, the percentage makes the gains easier to compare within
+`100 * mean_validation_gain / abs(mean_root_objective)`. This shows how much of
+the validation-fold root concentration-index impurity is recovered by the
+selected model for each concentration-index criterion. Because the denominator
+is criterion-specific, the percentage makes the gains easier to compare within
 each CI definition.
 
 The fitted values are predicted risks. Their concentration index can be
@@ -734,6 +797,9 @@ The introductory workflow covers the main objects:
 - `control_ci_tune()` and the `ci_collect_*()` helpers for saving predictions,
   extracting fold diagnostics, collecting notes, and inspecting tuning results;
 - `ci_forest()` for ensemble risk estimation;
+- `ci_forest_surrogate()` for fitting an interpretable tree to forest
+  predictions;
+- `ci_fit_summary_table()` for report-ready tuning summaries;
 - `shap_conc_decomp()` for decomposing fitted inequality when SHAP values are
   available.
 

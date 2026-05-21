@@ -465,9 +465,12 @@ control_ci_tune <- function(verbose = FALSE,
 }
 
 #' @noRd
-.ci_control_from_grid_row <- function(row) {
+.ci_control_from_grid_row <- function(row, include_mtry = TRUE) {
   ctrl <- ci_tree_control()
   control_names <- names(ctrl)
+  if (!isTRUE(include_mtry)) {
+    control_names <- setdiff(control_names, "mtry")
+  }
 
   for (nm in intersect(control_names, names(row))) {
     value <- row[[nm]][1L]
@@ -479,6 +482,29 @@ control_ci_tune <- function(verbose = FALSE,
   }
 
   .ci_tree_normalize_control(ctrl)
+}
+
+#' Convert a tuning row to CI tree controls
+#'
+#' @description
+#' Converts one selected tuning row, such as a row returned by
+#' [ci_select_best()], into a [ci_tree_control()] object. Columns that are not
+#' CI tree controls, such as `grid_id`, `type`, metrics, or `ntree`, are
+#' ignored.
+#'
+#' @param row A one-row data frame or `data.table` containing tuning control
+#'   columns.
+#' @param include_mtry Logical; include `mtry` when present and non-missing.
+#'
+#' @return A normalized `ci_tree_control()` list.
+#'
+#' @export
+ci_control_from_row <- function(row, include_mtry = TRUE) {
+  row <- data.table::as.data.table(row)
+  if (!nrow(row)) {
+    stop("`row` must contain at least one tuning row.", call. = FALSE)
+  }
+  .ci_control_from_grid_row(row[1L], include_mtry = include_mtry)
 }
 
 #' @noRd
@@ -770,6 +796,41 @@ control_ci_tune <- function(verbose = FALSE,
   )
 }
 
+#' Compute root concentration-index impurity
+#'
+#' @description
+#' Computes the unsplit/root concentration-index objective for a data set using
+#' the same validation and scoring convention as [tune_ci_tree()] and
+#' [tune_ci_forest()]. This is useful as a baseline for interpreting training
+#' and validation gain.
+#'
+#' @param data A data frame containing the rank and outcome columns.
+#' @param rank_name Name of the socioeconomic rank variable.
+#' @param outcome_name Name of the outcome variable.
+#' @param weights Optional non-negative case weights. Defaults to equal
+#'   weights.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"`.
+#'
+#' @return A single numeric root impurity value.
+#'
+#' @export
+ci_root_impurity <- function(data,
+                             rank_name,
+                             outcome_name,
+                             weights = NULL,
+                             type = c("CI", "CIg", "CIc", "L")) {
+  data <- as.data.frame(data)
+  type <- match.arg(type)
+  weights <- .ci_default_weights(weights, nrow(data))
+  .ci_data_root_impurity(
+    data = data,
+    weights = weights,
+    rank_name = rank_name,
+    outcome_name = outcome_name,
+    type = type
+  )
+}
+
 .ci_lookup_root_impurity <- function(root_table, fold_id, type) {
   idx <- root_table$fold_id == fold_id & root_table$type == type
   if (any(idx)) {
@@ -996,6 +1057,90 @@ control_ci_tune <- function(verbose = FALSE,
   )
 
   list(fit = surrogate, data = surrogate_data)
+}
+
+#' Fit a surrogate CI tree for a CI forest
+#'
+#' @description
+#' Predicts from a fitted [ci_forest()] object and fits a greedy [ci_tree()] to
+#' the forest predictions. The result is the same kind of surrogate used
+#' internally by [tune_ci_forest()] to score forest tuning settings by
+#' concentration-index validation gain.
+#'
+#' @param forest_fit A fitted `ci_forest` object.
+#' @param data Optional data used to fit the surrogate. Defaults to the forest
+#'   training data stored in `forest_fit`.
+#' @param formula Optional formula defining the surrogate predictors. Defaults
+#'   to the formula stored in `forest_fit`, with the original outcome replaced
+#'   by `prediction_name`.
+#' @param rank_name Optional rank column name. Defaults to `forest_fit$rank_name`.
+#' @param weights Optional non-negative case weights for `data`. Defaults to
+#'   the forest training weights when `data` has the same number of rows as the
+#'   original training data, otherwise equal weights.
+#' @param type Optional concentration-index type. Defaults to `forest_fit$type`.
+#' @param control Optional [ci_tree_control()] for the surrogate. Defaults to
+#'   the forest controls with `mtry = NULL`.
+#' @param prediction_name Name of the prediction column added to the surrogate
+#'   data.
+#' @param na.action A function for handling missing values in the surrogate
+#'   tree fit.
+#'
+#' @return A list with `fit`, `data`, and `prediction_name`.
+#'
+#' @export
+ci_forest_surrogate <- function(forest_fit,
+                                data = NULL,
+                                formula = NULL,
+                                rank_name = NULL,
+                                weights = NULL,
+                                type = NULL,
+                                control = NULL,
+                                prediction_name = "forest_risk",
+                                na.action = stats::na.omit) {
+  if (!inherits(forest_fit, "ci_forest")) {
+    stop("`forest_fit` must be a fitted `ci_forest` object.", call. = FALSE)
+  }
+
+  if (is.null(data)) {
+    data <- forest_fit$data
+  }
+  data <- as.data.frame(data)
+
+  if (is.null(formula)) {
+    formula <- forest_fit$formula
+  }
+  if (is.null(rank_name)) {
+    rank_name <- forest_fit$rank_name
+  }
+  if (is.null(type)) {
+    type <- forest_fit$type
+  }
+  type <- match.arg(type, choices = c("CI", "CIg", "CIc", "L"))
+
+  if (is.null(weights)) {
+    weights <- if (!is.null(forest_fit$weights) &&
+                   nrow(data) == length(forest_fit$weights)) {
+      forest_fit$weights
+    } else {
+      rep(1, nrow(data))
+    }
+  }
+  weights <- .ci_default_weights(weights, nrow(data))
+
+  control <- .ci_surrogate_control(forest_fit$control, control)
+  out <- .ci_fit_forest_surrogate(
+    forest = forest_fit,
+    data = data,
+    formula = formula,
+    rank_name = rank_name,
+    prediction_name = prediction_name,
+    weights = weights,
+    type = type,
+    control = control,
+    na.action = na.action
+  )
+  out$prediction_name <- prediction_name
+  out
 }
 
 #' Predict terminal-node outcome means from a greedy CI tree
@@ -1508,17 +1653,119 @@ tune_ci_tree <- function(formula,
     extract_rows <- data.table::data.table()
     fit_rows <- data.table::data.table()
     pred <- NULL
+    train_data <- data[train_idx, , drop = FALSE]
+    valid_data <- data[test_idx, , drop = FALSE]
     n_terminal <- NA_integer_
+    train_gain <- NA_real_
+    fold_validation_gain <- NA_real_
+    train_relative_gain <- NA_real_
+    fold_validation_relative_gain <- NA_real_
+    relative_generalization_gap <- NA_real_
+    train_root_impurity <- NA_real_
+    validation_root_impurity <- NA_real_
 
     if (isTRUE(fit_result$ok)) {
       n_terminal <- length(partykit::nodeids(fit_result$value, terminal = TRUE))
+
+      diagnostic_result <- .ci_capture({
+        train_root_impurity <- .ci_data_root_impurity(
+          data = train_data,
+          weights = weights[train_idx],
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          type = this_type
+        )
+        validation_root_impurity <- .ci_lookup_root_impurity(
+          root_table,
+          fold,
+          this_type
+        )
+        if (is.null(validation_root_impurity)) {
+          validation_root_impurity <- .ci_data_root_impurity(
+            data = valid_data,
+            weights = weights[test_idx],
+            rank_name = rank_name,
+            outcome_name = outcome_name,
+            type = this_type
+          )
+        }
+
+        train_gain <- .ci_score_validation_gain(
+          fit = fit_result$value,
+          new_data = train_data,
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          weights = weights[train_idx],
+          type = this_type,
+          root_impurity = train_root_impurity
+        )
+        train_relative_gain <- .ci_score_relative_validation_gain(
+          fit = fit_result$value,
+          new_data = train_data,
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          weights = weights[train_idx],
+          type = this_type,
+          root_impurity = train_root_impurity
+        )
+        fold_validation_gain <- .ci_score_validation_gain(
+          fit = fit_result$value,
+          new_data = valid_data,
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          weights = weights[test_idx],
+          type = this_type,
+          root_impurity = validation_root_impurity
+        )
+        fold_validation_relative_gain <- .ci_score_relative_validation_gain(
+          fit = fit_result$value,
+          new_data = valid_data,
+          rank_name = rank_name,
+          outcome_name = outcome_name,
+          weights = weights[test_idx],
+          type = this_type,
+          root_impurity = validation_root_impurity
+        )
+
+        list(
+          train_gain = train_gain,
+          fold_validation_gain = fold_validation_gain,
+          train_relative_gain = train_relative_gain,
+          fold_validation_relative_gain = fold_validation_relative_gain,
+          relative_generalization_gap =
+            train_relative_gain - fold_validation_relative_gain,
+          train_root_impurity = train_root_impurity,
+          validation_root_impurity = validation_root_impurity
+        )
+      })
+      notes[[length(notes) + 1L]] <- .ci_notes_dt(
+        g, fold, this_type, stage = "diagnostic",
+        messages = diagnostic_result$warnings
+      )
+      if (isTRUE(diagnostic_result$ok)) {
+        train_gain <- diagnostic_result$value$train_gain
+        fold_validation_gain <- diagnostic_result$value$fold_validation_gain
+        train_relative_gain <- diagnostic_result$value$train_relative_gain
+        fold_validation_relative_gain <-
+          diagnostic_result$value$fold_validation_relative_gain
+        relative_generalization_gap <-
+          diagnostic_result$value$relative_generalization_gap
+        train_root_impurity <- diagnostic_result$value$train_root_impurity
+        validation_root_impurity <- diagnostic_result$value$validation_root_impurity
+      } else {
+        notes[[length(notes) + 1L]] <- .ci_notes_dt(
+          g, fold, this_type, stage = "diagnostic",
+          messages = diagnostic_result$error, class = "error"
+        )
+      }
+
       needs_pred <- control$save_pred || any(metrics %in% c("brier", "log_loss", "roc_auc"))
       if (needs_pred) {
         pred_result <- .ci_capture({
           predict_ci_tree_terminal_mean(
             fit = fit_result$value,
-            train_data = data[train_idx, , drop = FALSE],
-            new_data = data[test_idx, , drop = FALSE],
+            train_data = train_data,
+            new_data = valid_data,
             outcome_name = outcome_name,
             weights = weights[train_idx]
           )
@@ -1583,29 +1830,11 @@ tune_ci_tree <- function(formula,
       if (isTRUE(fit_result$ok)) {
         score_result <- .ci_capture({
           if (identical(this_metric, "validation_gain")) {
-            root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
-            .ci_score_validation_gain(
-              fit = fit_result$value,
-              new_data = data[test_idx, , drop = FALSE],
-              rank_name = rank_name,
-              outcome_name = outcome_name,
-              weights = weights[test_idx],
-              type = this_type,
-              root_impurity = root_impurity
-            )
+            fold_validation_gain
           } else if (this_metric %in% c(
             "relative_validation_gain", "percent_validation_root_recovered"
           )) {
-            root_impurity <- .ci_lookup_root_impurity(root_table, fold, this_type)
-            .ci_score_relative_validation_gain(
-              fit = fit_result$value,
-              new_data = data[test_idx, , drop = FALSE],
-              rank_name = rank_name,
-              outcome_name = outcome_name,
-              weights = weights[test_idx],
-              type = this_type,
-              root_impurity = root_impurity
-            )
+            fold_validation_relative_gain
           } else if (!this_metric %in% c(
             "validation_gain", "relative_validation_gain",
             "percent_validation_root_recovered"
@@ -1641,6 +1870,13 @@ tune_ci_tree <- function(formula,
         metric = this_metric,
         score = score,
         n_terminal = n_terminal,
+        train_gain = train_gain,
+        fold_validation_gain = fold_validation_gain,
+        train_relative_gain = train_relative_gain,
+        fold_validation_relative_gain = fold_validation_relative_gain,
+        relative_generalization_gap = relative_generalization_gap,
+        train_root_impurity = train_root_impurity,
+        validation_root_impurity = validation_root_impurity,
         fit_error = fit_result$error
       )
       for (nm in names(tuning_grid)) {
@@ -1750,24 +1986,350 @@ tune_ci_tree <- function(formula,
 #'
 #' @param x A tuning object returned by [tune_ci_tree()] or [tune_ci_forest()].
 #' @param summarize Logical; return grid-level summaries when `TRUE`, or
-#'   fold-level metrics when `FALSE`.
+#'   fold-level metrics when `FALSE`. Ignored when `format = "tidy"`.
 #' @param metric Optional metric name used to filter the result.
+#' @param selected Optional tuning summary rows, typically from
+#'   [ci_select_best()], used to filter the returned metrics to selected
+#'   `type`/`grid_id` combinations.
+#' @param format Output format. `"default"` preserves the package's original
+#'   summary or fold-level table. `"tidy"` returns a tidymodels-like table with
+#'   grid columns followed by `.metric`, `.estimator`, `mean`, `n`, `std_err`,
+#'   `.dataset`, and `.config`. `"wide"` returns one row per tuning setting
+#'   with metric columns such as `mean_validation_gain` and
+#'   `std_err_train_gain`.
+#' @param include_train Logical; for `format = "tidy"` or `"wide"`, include
+#'   training diagnostic rows when the tuning object contains training
+#'   diagnostics.
 #' @param ... Reserved for future extensions.
 #'
 #' @return A `data.table`.
 #'
+#' @import data.table
 #' @export
-ci_collect_metrics <- function(x, summarize = TRUE, metric = NULL, ...) {
+ci_collect_metrics <- function(x,
+                               summarize = TRUE,
+                               metric = NULL,
+                               ...,
+                               selected = NULL,
+                               format = c("default", "tidy", "wide"),
+                               include_train = TRUE) {
   .ci_assert_tuning(x)
+  format <- match.arg(format)
+
+  if (identical(format, "tidy")) {
+    return(.ci_collect_metrics_tidy(
+      x = x,
+      metric = metric,
+      selected = selected,
+      include_train = include_train
+    ))
+  }
+  if (identical(format, "wide")) {
+    return(.ci_collect_metrics_wide(
+      x = x,
+      metric = metric,
+      selected = selected,
+      include_train = include_train
+    ))
+  }
+
   out <- if (isTRUE(summarize)) {
     data.table::copy(x$summary)
   } else {
     data.table::copy(x$fold_results)
   }
+  if (!is.null(selected)) {
+    selected_keys <- unique(data.table::as.data.table(selected)[, c("type", "grid_id"), with = FALSE])
+    out <- out[selected_keys, on = c("type", "grid_id"), nomatch = 0L]
+  }
   if (!is.null(metric)) {
     out <- out[out$metric %in% metric, , drop = FALSE]
   }
   out
+}
+
+#' @noRd
+.ci_collect_metrics_tidy <- function(x,
+                                     metric = NULL,
+                                     selected = NULL,
+                                     include_train = TRUE) {
+  summary_dt <- data.table::copy(x$summary)
+  fold_dt <- data.table::copy(x$fold_results)
+
+  if (!is.null(metric)) {
+    summary_dt <- summary_dt[summary_dt$metric %in% metric, , drop = FALSE]
+  }
+  if (!is.null(selected)) {
+    selected_keys <- unique(data.table::as.data.table(selected)[, c("type", "grid_id"), with = FALSE])
+    summary_dt <- summary_dt[selected_keys, on = c("type", "grid_id"), nomatch = 0L]
+    fold_dt <- fold_dt[selected_keys, on = c("type", "grid_id"), nomatch = 0L]
+  }
+
+  key_cols <- intersect(
+    c(
+      "grid_id", "type", "ntree", "mtry", "minsplit", "minbucket",
+      "minprob", "maxdepth", "min_gain", "min_relative_gain"
+    ),
+    names(summary_dt)
+  )
+
+  out <- data.table::copy(summary_dt)
+  tidy_cols <- c(".metric", ".estimator", "mean", "n", "std_err", ".dataset", ".config")
+  out[
+    ,
+    (tidy_cols) := list(
+      out[["metric"]],
+      "standard",
+      out[["mean_score"]],
+      out[["folds_completed"]],
+      data.table::fifelse(
+        is.finite(out[["sd_score"]]) & out[["folds_completed"]] > 0L,
+        out[["sd_score"]] / sqrt(out[["folds_completed"]]),
+        NA_real_
+      ),
+      "validation",
+      sprintf("ci_model%03d_%s", as.integer(out[["grid_id"]]), out[["type"]])
+    )
+  ]
+  out <- out[
+    ,
+    c(
+      key_cols,
+      ".metric", ".estimator", "mean", "n", "std_err",
+      ".dataset", ".config"
+    ),
+    with = FALSE
+  ]
+
+  if (isTRUE(include_train)) {
+    train_metric_map <- data.table::data.table(
+      source_col = c("train_gain", "train_relative_gain"),
+      .metric = c("train_gain", "train_relative_gain"),
+      validation_metric = c("validation_gain", "relative_validation_gain")
+    )
+    train_metric_map <- train_metric_map[train_metric_map[["source_col"]] %in% names(fold_dt)]
+    if (!is.null(metric)) {
+      train_metric_map <- train_metric_map[
+        train_metric_map[["validation_metric"]] %in% metric |
+          train_metric_map[[".metric"]] %in% metric
+      ]
+    }
+
+    if (nrow(train_metric_map)) {
+      fold_key_cols <- intersect(key_cols, names(fold_dt))
+      train_fold_rows <- fold_dt[
+        ,
+        .SD[1L],
+        by = c(fold_key_cols, "fold_id"),
+        .SDcols = train_metric_map$source_col
+      ]
+      train_long <- data.table::melt(
+        train_fold_rows,
+        id.vars = c(fold_key_cols, "fold_id"),
+        measure.vars = train_metric_map$source_col,
+        variable.name = "source_col",
+        value.name = "score"
+      )
+      train_long <- train_metric_map[train_long, on = "source_col"]
+      train_summary <- train_long[
+        ,
+        {
+          score <- .SD[["score"]]
+          list(
+            mean = mean(score, na.rm = TRUE),
+            n = sum(is.finite(score)),
+            std_err = data.table::fifelse(
+              sum(is.finite(score)) > 1L,
+              stats::sd(score, na.rm = TRUE) / sqrt(sum(is.finite(score))),
+              NA_real_
+            )
+          )
+        },
+        by = c(fold_key_cols, ".metric"),
+        .SDcols = "score"
+      ]
+      train_cols <- c(".estimator", ".dataset", ".config")
+      train_summary[
+        ,
+        (train_cols) := list(
+          "standard",
+          "training",
+          sprintf(
+            "ci_model%03d_%s",
+            as.integer(train_summary[["grid_id"]]),
+            train_summary[["type"]]
+          )
+        )
+      ]
+      train_summary <- train_summary[
+        ,
+        c(
+          key_cols,
+          ".metric", ".estimator", "mean", "n", "std_err",
+          ".dataset", ".config"
+        ),
+        with = FALSE
+      ]
+      out <- data.table::rbindlist(list(out, train_summary), fill = TRUE)
+    }
+  }
+
+  data.table::setorderv(out, c("type", "grid_id", ".dataset", ".metric"))
+  out[]
+}
+
+#' @noRd
+.ci_wide_metric_name <- function(x) {
+  out <- as.character(x)
+  out[out == "relative_validation_gain"] <- "validation_relative_gain"
+  out
+}
+
+#' @noRd
+.ci_collect_metrics_wide <- function(x,
+                                     metric = NULL,
+                                     selected = NULL,
+                                     include_train = TRUE) {
+  tidy <- .ci_collect_metrics_tidy(
+    x = x,
+    metric = metric,
+    selected = selected,
+    include_train = include_train
+  )
+  if (!nrow(tidy)) {
+    return(data.table::as.data.table(tidy))
+  }
+
+  key_cols <- intersect(
+    c(
+      "grid_id", "type", "ntree", "mtry", "minsplit", "minbucket",
+      "minprob", "maxdepth", "min_gain", "min_relative_gain"
+    ),
+    names(tidy)
+  )
+  if (!length(key_cols)) {
+    stop("Unable to identify tuning key columns for wide metrics.", call. = FALSE)
+  }
+
+  tidy <- data.table::copy(tidy)
+  tidy[["metric_name"]] <- .ci_wide_metric_name(tidy[[".metric"]])
+  wide_formula <- stats::as.formula(paste(paste(key_cols, collapse = " + "), "~ metric_name"))
+
+  mean_wide <- data.table::dcast(tidy, wide_formula, value.var = "mean")
+  mean_cols <- setdiff(names(mean_wide), key_cols)
+  data.table::setnames(mean_wide, mean_cols, paste0("mean_", mean_cols))
+
+  n_wide <- data.table::dcast(tidy, wide_formula, value.var = "n")
+  n_cols <- setdiff(names(n_wide), key_cols)
+  data.table::setnames(n_wide, n_cols, paste0("n_", n_cols))
+
+  se_wide <- data.table::dcast(tidy, wide_formula, value.var = "std_err")
+  se_cols <- setdiff(names(se_wide), key_cols)
+  data.table::setnames(se_wide, se_cols, paste0("std_err_", se_cols))
+
+  out <- merge(mean_wide, n_wide, by = key_cols, all = TRUE, sort = FALSE)
+  out <- merge(out, se_wide, by = key_cols, all = TRUE, sort = FALSE)
+  data.table::setorderv(out, intersect(c("type", "grid_id"), names(out)))
+  out[]
+}
+
+#' Summarize selected CI tuning fits
+#'
+#' @description
+#' Builds a report-ready data table for selected [tune_ci_tree()] or
+#' [tune_ci_forest()] settings. The helper combines wide tuning metrics with
+#' mean root objective values from validation folds when they are available.
+#'
+#' @inheritParams ci_collect_metrics
+#' @param selected Optional selected tuning rows. Defaults to [ci_select_best()]
+#'   using the tuning object's selection metric.
+#' @param metrics Metrics to include before widening. Training metrics such as
+#'   `"train_gain"` and `"train_relative_gain"` are allowed when the tuning
+#'   object contains training diagnostics.
+#' @param include_percent Logical; add percent gain columns relative to the
+#'   absolute mean root objective when possible.
+#'
+#' @return A `data.table`.
+#'
+#' @export
+ci_fit_summary_table <- function(x,
+                                 selected = ci_select_best(x),
+                                 metrics = c(
+                                   "train_gain",
+                                   "validation_gain",
+                                   "train_relative_gain",
+                                   "relative_validation_gain"
+                                 ),
+                                 include_percent = TRUE,
+                                 ...) {
+  .ci_assert_tuning(x)
+
+  out <- ci_collect_metrics(
+    x,
+    metric = metrics,
+    selected = selected,
+    format = "wide",
+    include_train = TRUE
+  )
+
+  root_summary <- .ci_tuning_root_summary(x)
+  if (nrow(root_summary) && "type" %in% names(out)) {
+    out <- merge(out, root_summary, by = "type", all.x = TRUE, sort = FALSE)
+  }
+
+  if (isTRUE(include_percent) &&
+      all(c("mean_root_objective", "mean_train_gain") %in% names(out))) {
+    out[["mean_percent_train_gain"]] <- data.table::fifelse(
+      is.finite(out[["mean_root_objective"]]) &
+        abs(out[["mean_root_objective"]]) > .Machine$double.eps,
+      100 * out[["mean_train_gain"]] / abs(out[["mean_root_objective"]]),
+      NA_real_
+    )
+  }
+  if (isTRUE(include_percent) &&
+      all(c("mean_root_objective", "mean_validation_gain") %in% names(out))) {
+    out[["mean_percent_validation_gain"]] <- data.table::fifelse(
+      is.finite(out[["mean_root_objective"]]) &
+        abs(out[["mean_root_objective"]]) > .Machine$double.eps,
+      100 * out[["mean_validation_gain"]] / abs(out[["mean_root_objective"]]),
+      NA_real_
+    )
+  }
+
+  data.table::setorderv(out, intersect(c("type", "grid_id"), names(out)))
+  out[]
+}
+
+#' @noRd
+.ci_tuning_root_summary <- function(x) {
+  roots <- data.table::as.data.table(x$validation_roots)
+  if (!nrow(roots) ||
+      !all(c("type", "root_impurity") %in% names(roots))) {
+    return(data.table::data.table())
+  }
+
+  roots[
+    ,
+    {
+      root_impurity <- .SD[["root_impurity"]]
+      finite_roots <- root_impurity[is.finite(root_impurity)]
+      list(
+        mean_root_objective = if (length(finite_roots)) {
+          mean(finite_roots)
+        } else {
+          NA_real_
+        },
+        n_root_objective = length(finite_roots),
+        std_err_root_objective = if (length(finite_roots) > 1L) {
+          stats::sd(finite_roots) / sqrt(length(finite_roots))
+        } else {
+          NA_real_
+        }
+      )
+    },
+    by = "type",
+    .SDcols = "root_impurity"
+  ]
 }
 
 #' Show the best tuning results
