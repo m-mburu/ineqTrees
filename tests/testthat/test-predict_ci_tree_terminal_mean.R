@@ -154,6 +154,60 @@ test_that("relative validation gain scales validation gain by root impurity", {
   expect_equal(relative_gain, validation_gain / abs(root_impurity))
 })
 
+test_that("ci_forest_validation_gain averages internal tree gains", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16),
+    group = factor(c("a", "a", "b", "b", "a", "a", "b", "b"))
+  )
+  set.seed(11)
+  forest <- ci_forest(
+    cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 4L,
+    mtry = 1L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+  weights <- rep(1, nrow(toy_data))
+  root_impurity <- ci_root_impurity(
+    toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    weights = weights,
+    type = "CI"
+  )
+
+  score <- ci_forest_validation_gain(
+    forest,
+    toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    weights = weights,
+    type = "CI",
+    root_impurity = root_impurity
+  )
+  manual <- mean(vapply(
+    forest$trees,
+    function(tree) {
+      ci_tree_validation_gain(
+        tree$fit,
+        toy_data,
+        rank_name = "rank",
+        outcome_name = "outcome",
+        weights = weights,
+        type = "CI",
+        root_impurity = root_impurity
+      )
+    },
+    numeric(1)
+  ))
+
+  expect_equal(score, manual)
+})
+
 test_that("ci prediction metrics score simple binary predictions", {
   truth <- c(0, 1, 1, 0)
   estimate <- c(0.1, 0.8, 0.7, 0.2)

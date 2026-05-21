@@ -282,6 +282,7 @@ test_that("tune_ci_forest tunes greedy forests and returns a surrogate", {
     control_grid = grid,
     v = 2,
     seed = 3,
+    control = control_ci_tune(save_fit = TRUE),
     refit = TRUE
   )
 
@@ -314,6 +315,36 @@ test_that("tune_ci_forest tunes greedy forests and returns a surrogate", {
     function(x) all(is.finite(x) | is.na(x)),
     logical(1)
   )))
+
+  fit_row <- tuned$fits[1L]
+  fold_row <- tuned$fold_results[
+    grid_id == fit_row$grid_id &
+      fold_id == fit_row$fold_id &
+      type == fit_row$type &
+      metric == "validation_gain"
+  ][1L]
+  test_idx <- which(tuned$fold_id == fit_row$fold_id)
+  root_impurity <- tuned$validation_roots[
+    fold_id == fit_row$fold_id & type == fit_row$type,
+    root_impurity
+  ][1L]
+  manual_gain <- ci_forest_validation_gain(
+    fit_row$.fit[[1L]]$forest,
+    toy_data[test_idx, , drop = FALSE],
+    rank_name = "rank",
+    outcome_name = "outcome",
+    weights = rep(1, nrow(toy_data))[test_idx],
+    type = fit_row$type,
+    root_impurity = root_impurity
+  )
+
+  expect_equal(fold_row$score, manual_gain)
+  expect_equal(
+    fold_row$n_terminal,
+    getFromNamespace(".ci_forest_mean_terminal_nodes", "ineqTrees")(
+      fit_row$.fit[[1L]]$forest
+    )
+  )
 })
 
 test_that("tune_ci_forest supports multiple metrics and saved predictions", {

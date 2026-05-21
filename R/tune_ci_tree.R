@@ -95,7 +95,7 @@ tune_ctree_ci <- function(...) {
   fit_rows <- data.table::data.table()
   pred <- NULL
   valid_data <- data[test_idx, , drop = FALSE]
-  n_terminal <- NA_integer_
+  n_terminal <- NA_real_
   train_gain <- NA_real_
   fold_validation_gain <- NA_real_
   train_relative_gain <- NA_real_
@@ -132,13 +132,10 @@ tune_ctree_ci <- function(...) {
       )
     }
 
-    n_terminal <- length(partykit::nodeids(
-      fit_result$value$surrogate$fit,
-      terminal = TRUE
-    ))
+    n_terminal <- .ci_forest_mean_terminal_nodes(fit_result$value$forest)
 
     diagnostic_result <- .ci_capture({
-      train_data <- fit_result$value$surrogate$data
+      train_data <- data[train_idx, , drop = FALSE]
       train_root_impurity <- .ci_data_root_impurity(
         data = train_data,
         weights = weights[train_idx],
@@ -161,8 +158,8 @@ tune_ctree_ci <- function(...) {
         )
       }
 
-      train_gain <- .ci_score_validation_gain(
-        fit = fit_result$value$surrogate$fit,
+      train_gain <- .ci_score_forest_validation_gain(
+        fit = fit_result$value$forest,
         new_data = train_data,
         rank_name = rank_name,
         outcome_name = outcome_name,
@@ -170,8 +167,8 @@ tune_ctree_ci <- function(...) {
         type = this_type,
         root_impurity = train_root_impurity
       )
-      train_relative_gain <- .ci_score_relative_validation_gain(
-        fit = fit_result$value$surrogate$fit,
+      train_relative_gain <- .ci_score_forest_relative_validation_gain(
+        fit = fit_result$value$forest,
         new_data = train_data,
         rank_name = rank_name,
         outcome_name = outcome_name,
@@ -180,29 +177,24 @@ tune_ctree_ci <- function(...) {
         root_impurity = train_root_impurity
       )
 
-      if (!is.null(pred)) {
-        fold_validation_gain <- .ci_score_validation_gain(
-          fit = fit_result$value$surrogate$fit,
-          new_data = valid_data,
-          rank_name = rank_name,
-          outcome_name = outcome_name,
-          weights = weights[test_idx],
-          type = this_type,
-          root_impurity = validation_root_impurity
-        )
-        fold_validation_relative_gain <- .ci_score_relative_validation_gain(
-          fit = fit_result$value$surrogate$fit,
-          new_data = valid_data,
-          rank_name = rank_name,
-          outcome_name = outcome_name,
-          weights = weights[test_idx],
-          type = this_type,
-          root_impurity = validation_root_impurity
-        )
-      } else {
-        fold_validation_gain <- NA_real_
-        fold_validation_relative_gain <- NA_real_
-      }
+      fold_validation_gain <- .ci_score_forest_validation_gain(
+        fit = fit_result$value$forest,
+        new_data = valid_data,
+        rank_name = rank_name,
+        outcome_name = outcome_name,
+        weights = weights[test_idx],
+        type = this_type,
+        root_impurity = validation_root_impurity
+      )
+      fold_validation_relative_gain <- .ci_score_forest_relative_validation_gain(
+        fit = fit_result$value$forest,
+        new_data = valid_data,
+        rank_name = rank_name,
+        outcome_name = outcome_name,
+        weights = weights[test_idx],
+        type = this_type,
+        root_impurity = validation_root_impurity
+      )
 
       list(
         train_gain = train_gain,
@@ -271,11 +263,11 @@ tune_ctree_ci <- function(...) {
     score <- NA_real_
     if (isTRUE(fit_result$ok)) {
       score_result <- .ci_capture({
-        if (identical(this_metric, "validation_gain") && !is.null(pred)) {
+        if (identical(this_metric, "validation_gain")) {
           fold_validation_gain
         } else if (this_metric %in% c(
           "relative_validation_gain", "percent_validation_root_recovered"
-        ) && !is.null(pred)) {
+        )) {
           fold_validation_relative_gain
         } else if (!this_metric %in% c(
           "validation_gain", "relative_validation_gain",
@@ -354,11 +346,12 @@ tune_ctree_ci <- function(...) {
 #'
 #' @description
 #' Fits [ci_forest()] across candidate forest controls and concentration-index
-#' criteria. Each validation forest is summarized by a surrogate greedy
-#' [ci_tree()] fitted to the forest predictions on the training fold, then
-#' scored by held-out concentration-index validation gain against the observed
-#' outcome. Prediction-oriented metrics can be computed from the forest
-#' predictions in the same tuning run.
+#' criteria. Concentration-index validation gain is computed directly from the
+#' forest's internal trees by averaging held-out validation gain across member
+#' tree partitions. Prediction-oriented metrics are computed from the averaged
+#' forest predictions in the same tuning run. When `refit = TRUE`, the selected
+#' forest is also summarized by a surrogate greedy [ci_tree()] for
+#' interpretation.
 #'
 #' @inheritParams tune_ci_tree
 #' @param ntree Number of trees used when `control_grid` does not contain an

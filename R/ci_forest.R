@@ -105,7 +105,9 @@
 #' optionally, through `mtry`, which restricts the number of predictors searched
 #' at each node. Within each tree, the split rule is the same direct
 #' maximization of concentration-index gain used by [ci_tree()]. Predictions are
-#' aggregated across trees by averaging terminal-node summaries.
+#' aggregated across trees by averaging terminal-node summaries. The fitted
+#' object retains the member trees in `object$trees`; model-selection helpers
+#' use those internal tree partitions to compute forest-native validation gain.
 #'
 #' @param formula A model formula, typically with a two-column response such as
 #'   `cbind(rank, outcome) ~ x1 + x2`.
