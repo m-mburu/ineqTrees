@@ -259,6 +259,16 @@ test_that(".weighted_ci_gain_from_parent matches weighted_ci_gain", {
   )
 })
 
+test_that(".ci_relative_gain uses the current parent node as denominator", {
+  relative_gain <- getFromNamespace(".ci_relative_gain", "ineqTrees")
+
+  expect_equal(
+    relative_gain(gain = 2, parent_impurity = -8),
+    0.25
+  )
+  expect_true(is.na(relative_gain(gain = 2, parent_impurity = 0)))
+})
+
 test_that("weighted_ci_gain returns -Inf for invalid splits", {
   y <- cbind(ses = 1:4, health = c(10, 20, 30, 40))
   wt <- c(1, 2, 3, 4)

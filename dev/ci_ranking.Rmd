@@ -621,25 +621,25 @@ weighted_ci_gain <- function(y, wt, left, ci_fun) {
   )
 }
 
-#' Compute gain relative to the parent/root impurity
+#' Compute gain relative to the parent-node impurity
 #'
 #' @param gain Raw impurity reduction.
-#' @param root_impurity Parent or validation-root impurity.
-#' @param tolerance Numeric zero guard for the root impurity.
+#' @param parent_impurity Impurity of the node being split.
+#' @param tolerance Numeric zero guard for the parent-node impurity.
 #'
 #' @return A scalar ratio, or `NA_real_` when the denominator is degenerate.
 #'
 #' @noRd
 .ci_relative_gain <- function(gain,
-                              root_impurity,
+                              parent_impurity,
                               tolerance = .Machine$double.eps) {
   if (!is.finite(gain) ||
-      !is.finite(root_impurity) ||
-      abs(root_impurity) <= tolerance) {
+      !is.finite(parent_impurity) ||
+      abs(parent_impurity) <= tolerance) {
     return(NA_real_)
   }
 
-  gain / abs(root_impurity)
+  gain / abs(parent_impurity)
 }
 ```
 
@@ -689,6 +689,16 @@ test_that(".weighted_ci_gain_from_parent matches weighted_ci_gain", {
     ),
     weighted_ci_gain(y, wt, left, ci)
   )
+})
+
+test_that(".ci_relative_gain uses the current parent node as denominator", {
+  relative_gain <- getFromNamespace(".ci_relative_gain", "ineqTrees")
+
+  expect_equal(
+    relative_gain(gain = 2, parent_impurity = -8),
+    0.25
+  )
+  expect_true(is.na(relative_gain(gain = 2, parent_impurity = 0)))
 })
 
 test_that("weighted_ci_gain returns -Inf for invalid splits", {

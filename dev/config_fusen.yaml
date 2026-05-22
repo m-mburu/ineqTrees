@@ -156,7 +156,7 @@ plotting_tutorial.Rmd:
     check: false
     document: false
     overwrite: 'yes'
-    clean: 'no'
+    clean: ask
     codecov: false
 shap_article.Rmd:
   path: dev/shap_article.Rmd

@@ -33,8 +33,9 @@ or dials \code{tree_depth} column is used, falling back to the
 
 \item{min_gain}{Minimum concentration-index gains required for a split.}
 
-\item{min_relative_gain}{Minimum concentration-index gains as a share of
-parent-node impurity required for a split.}
+\item{min_relative_gain}{Local split-stopping thresholds: minimum
+concentration-index gains as a share of parent-node impurity required for
+a split.}
 
 \item{mtry}{Optional numbers of variables sampled at each split. If \code{NULL},
 an \code{mtry} column is used when present.}

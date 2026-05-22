@@ -275,7 +275,8 @@ test_that("best_global_ci_split respects min_relative_gain", {
   )
 
   expect_true(is.finite(split$relative_gain))
-  expect_equal(split$relative_gain, split$gain / abs(ci_fun(y, wt)))
+  expect_equal(split$parent_impurity, ci_fun(y, wt))
+  expect_equal(split$relative_gain, split$gain / abs(split$parent_impurity))
 
   ctrl$min_relative_gain <- split$relative_gain + 1e-8
   expect_null(best_global_ci_split(

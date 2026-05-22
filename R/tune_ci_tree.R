@@ -353,6 +353,10 @@ tune_ctree_ci <- function(...) {
 #' forest is also summarized by a surrogate greedy [ci_tree()] for
 #' interpretation.
 #'
+#' As in [tune_ci_tree()], relative validation metrics are root-relative model
+#' scores, while `min_relative_gain` is a local parent-node relative split
+#' threshold.
+#'
 #' @inheritParams tune_ci_tree
 #' @param ntree Number of trees used when `control_grid` does not contain an
 #'   `ntree` column.

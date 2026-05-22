@@ -14,8 +14,9 @@
 #' @param maxdepth Candidate maximum tree depths.
 #' @param min_gain Candidate minimum concentration-index gains required for a
 #'   split.
-#' @param min_relative_gain Candidate minimum concentration-index gains as a
-#'   share of parent-node impurity required for a split.
+#' @param min_relative_gain Local split-stopping thresholds: candidate minimum
+#'   concentration-index gains as a share of parent-node impurity required for
+#'   a split.
 #' @param mtry Optional candidate numbers of variables sampled at each node.
 #'   Use `NULL` to search all candidate variables.
 #' @param ntree Optional candidate numbers of trees for forest tuning.
@@ -93,8 +94,9 @@ ci_tree_control_grid <- function(minsplit = c(50L, 100L, 200L),
 #'   or dials `tree_depth` column is used, falling back to the
 #'   [ci_tree_control()] default.
 #' @param min_gain Minimum concentration-index gains required for a split.
-#' @param min_relative_gain Minimum concentration-index gains as a share of
-#'   parent-node impurity required for a split.
+#' @param min_relative_gain Local split-stopping thresholds: minimum
+#'   concentration-index gains as a share of parent-node impurity required for
+#'   a split.
 #' @param mtry Optional numbers of variables sampled at each split. If `NULL`,
 #'   an `mtry` column is used when present.
 #' @param ntree Optional numbers of trees for forest tuning. If `NULL`, an
@@ -1608,6 +1610,11 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #' validation root impurity for within-type interpretation. Prediction-oriented
 #' metrics (`"brier"`, `"log_loss"`, and `"roc_auc"`) are also available for
 #' numeric risk or binary event outcomes.
+#'
+#' These cross-validation relative metrics are global, root-relative model
+#' scores. They are distinct from `min_relative_gain` in the control grid, which
+#' is a local parent-node relative threshold used only to decide whether a
+#' candidate split should be kept during tree growth.
 #'
 #' @param formula A model formula, typically with a two-column response such as
 #'   `cbind(rank, outcome) ~ x1 + x2`.
