@@ -31,3 +31,41 @@ test_that("best_global_ci_split_cpp matches R scoring with tied ranks", {
   expect_equal(cpp$varid, current$varid)
   expect_equal(cpp$left, current$left)
 })
+
+test_that("best_global_ci_split_cpp respects min_relative_gain", {
+  predictors <- data.frame(
+    x = c(1, 2, 3, 4, 5, 6, 7)
+  )
+  y <- cbind(
+    rank = c(20, 10, 40, 30, 70, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 0, 1)
+  )
+  wt <- c(1, 3, 2, 4, 1, 2, 5)
+  ctrl <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    min_relative_gain = 0
+  )
+
+  split <- best_global_ci_split_cpp(
+    x = predictors,
+    y = y,
+    wt = wt,
+    ctrl = ctrl,
+    type = "CIg"
+  )
+
+  expect_true(is.finite(split$relative_gain))
+  expect_equal(split$parent_impurity, ci_factory("CIg")(y, wt))
+  expect_equal(split$relative_gain, split$gain / abs(split$parent_impurity))
+
+  ctrl$min_relative_gain <- split$relative_gain + 1e-8
+  expect_null(best_global_ci_split_cpp(
+    x = predictors,
+    y = y,
+    wt = wt,
+    ctrl = ctrl,
+    type = "CIg"
+  ))
+})

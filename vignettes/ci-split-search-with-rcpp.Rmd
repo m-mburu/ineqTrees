@@ -77,7 +77,8 @@ The C++ engine computes the same concentration-index gain as the R path:
 3. Compute child-specific weighted fractional ranks inside each candidate child.
 4. Score child nodes with the direct population-style weighted covariance,
    without a child-specific finite-sample correction.
-5. Return the best gain and child membership.
+5. Return the best gain, child membership, parent impurity, and
+   parent-node relative gain for `min_relative_gain` thresholding.
 
 The C++ functions return compact engine results. The R wrappers convert those
 results into the same user-facing objects as the R split search: `partysplit`

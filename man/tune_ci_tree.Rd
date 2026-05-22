@@ -102,6 +102,11 @@ terminal nodes. \code{"relative_validation_gain"} and
 validation root impurity for within-type interpretation. Prediction-oriented
 metrics (\code{"brier"}, \code{"log_loss"}, and \code{"roc_auc"}) are also available for
 numeric risk or binary event outcomes.
+
+These cross-validation relative metrics are global, root-relative model
+scores. They are distinct from \code{min_relative_gain} in the control grid, which
+is a local parent-node relative threshold used only to decide whether a
+candidate split should be kept during tree growth.
 }
 \examples{
 toy_data <- data.frame(

@@ -127,6 +127,10 @@ tree partitions. Prediction-oriented metrics are computed from the averaged
 forest predictions in the same tuning run. When \code{refit = TRUE}, the selected
 forest is also summarized by a surrogate greedy \code{\link[=ci_tree]{ci_tree()}} for
 interpretation.
+
+As in \code{\link[=tune_ci_tree]{tune_ci_tree()}}, relative validation metrics are root-relative model
+scores, while \code{min_relative_gain} is a local parent-node relative split
+threshold.
 }
 \examples{
 if (requireNamespace("future", quietly = TRUE) &&

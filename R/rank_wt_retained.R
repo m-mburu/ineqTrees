@@ -193,7 +193,7 @@
 #' Dependent Indicators of Socioeconomic Inequality of Health." *International
 #' Journal of Environmental Research and Public Health*, 14(7), 673.
 #' doi:10.3390/ijerph14070673.
-#' @export
+#' @export 
 
 ci_factory <- function(type = c("CI", "CIg", "CIc", "L")) {
   type <- match.arg(type)
@@ -369,23 +369,23 @@ weighted_ci_gain <- function(y, wt, left, ci_fun) {
   )
 }
 
-#' Compute gain relative to the parent/root impurity
+#' Compute gain relative to the parent-node impurity
 #'
 #' @param gain Raw impurity reduction.
-#' @param root_impurity Parent or validation-root impurity.
-#' @param tolerance Numeric zero guard for the root impurity.
+#' @param parent_impurity Impurity of the node being split.
+#' @param tolerance Numeric zero guard for the parent-node impurity.
 #'
 #' @return A scalar ratio, or `NA_real_` when the denominator is degenerate.
 #'
 #' @noRd
 .ci_relative_gain <- function(gain,
-                              root_impurity,
+                              parent_impurity,
                               tolerance = .Machine$double.eps) {
   if (!is.finite(gain) ||
-      !is.finite(root_impurity) ||
-      abs(root_impurity) <= tolerance) {
+      !is.finite(parent_impurity) ||
+      abs(parent_impurity) <= tolerance) {
     return(NA_real_)
   }
 
-  gain / abs(root_impurity)
+  gain / abs(parent_impurity)
 }

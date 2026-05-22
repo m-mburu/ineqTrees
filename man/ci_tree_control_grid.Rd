@@ -27,8 +27,9 @@ ci_tree_control_grid(
 \item{min_gain}{Candidate minimum concentration-index gains required for a
 split.}
 
-\item{min_relative_gain}{Candidate minimum concentration-index gains as a
-share of parent-node impurity required for a split.}
+\item{min_relative_gain}{Local split-stopping thresholds: candidate minimum
+concentration-index gains as a share of parent-node impurity required for
+a split.}
 
 \item{mtry}{Optional candidate numbers of variables sampled at each node.
 Use \code{NULL} to search all candidate variables.}

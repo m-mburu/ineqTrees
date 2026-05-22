@@ -158,7 +158,8 @@ best_factor_split <- function(
 #'   of `x`.
 #'
 #' @return A split candidate list, or `NULL` when no variable has an admissible
-#'   gain above `control$min_gain` and `control$min_relative_gain`.
+#'   gain above `control$min_gain` and parent-node relative gain above
+#'   `control$min_relative_gain`.
 #'
 #' @export
 best_global_ci_split <- function(x,
