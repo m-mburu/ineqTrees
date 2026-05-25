@@ -174,6 +174,26 @@ test_that("ci_gain computes a yardstick-style metric", {
   expect_true(is.finite(out$.estimate))
 })
 
+test_that("ci_gain_vec rejects non-finite case weights", {
+  truth <- c(1, 0, 1)
+  estimate <- c(0.8, 0.2, 0.7)
+  rank <- c(10, 20, 30)
+  node <- c(1, 1, 2)
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      ci_gain_vec(
+        truth = truth,
+        estimate = estimate,
+        rank = rank,
+        node = node,
+        case_weights = bad_weights
+      ),
+      "finite"
+    )
+  }
+})
+
 test_that("ci_prediction_index computes prediction inequality", {
   toy_pred <- data.frame(
     truth = c(1, 0, 1, 0, 1, 1),
@@ -194,4 +214,20 @@ test_that("ci_prediction_index computes prediction inequality", {
   expect_s3_class(out, "tbl_df")
   expect_equal(out$.metric, "ci_prediction_index")
   expect_true(is.finite(out$.estimate))
+})
+
+test_that("ci_prediction_index_vec rejects non-finite case weights", {
+  estimate <- c(0.8, 0.2, 0.7)
+  rank <- c(10, 20, 30)
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      ci_prediction_index_vec(
+        estimate = estimate,
+        rank = rank,
+        case_weights = bad_weights
+      ),
+      "finite"
+    )
+  }
 })

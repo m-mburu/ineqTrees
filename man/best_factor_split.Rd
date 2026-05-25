@@ -30,7 +30,8 @@ outcome.}
 \item{varid}{Integer identifier of the splitting variable, passed to
 \code{\link[partykit:partysplit]{partykit::partysplit()}}.}
 
-\item{ctrl}{A list-like control object containing \code{minbucket} and \code{minprob}.}
+\item{ctrl}{A list-like control object containing \code{minbucket}, \code{minprob},
+and optional factor split controls.}
 
 \item{ci_fun}{A concentration-index scoring function, typically created by
 \code{\link[=ci_factory]{ci_factory()}}.}
@@ -46,36 +47,13 @@ after subsetting or if all candidate splits violate the control
 constraints.
 }
 \description{
-Evaluate cumulative binary splits of a factor predictor after ordering the
-observed levels by weighted mean outcome, and return the split with the
-largest weighted concentration-index gain.
+Evaluate binary splits of a factor predictor and return the split with the
+largest weighted concentration-index gain. Exact partition search is used
+for small factors when enabled by \code{ctrl$factor_split}; otherwise levels are
+ordered by weighted mean outcome and cumulative splits are evaluated.
 }
 \details{
 Only levels present among the kept observations are scored, but the returned
 split keeps the full level mapping so it can be used with
 \code{\link[partykit:partysplit]{partykit::partysplit()}}.
-}
-\examples{
-x_full <- factor(
-  c("low", "mid", "high", "low", "mid", "high"),
-  levels = c("low", "mid", "high", "unused")
-)
-keep <- rep(TRUE, 6)
-y_full <- cbind(
-  ses = c(10, 20, 30, 40, 50, 60),
-  health = c(1, 2, 5, 1, 2, 5)
-)
-wt_full <- rep(1, 6)
-ctrl <- list(minbucket = 1, minprob = 0)
-
-split <- best_factor_split(
-  x_full = x_full,
-  keep = keep,
-  y_full = y_full,
-  wt_full = wt_full,
-  varid = 1,
-  ctrl = ctrl,
-  ci_fun = ci_factory("CI")
-)
-split$index
 }

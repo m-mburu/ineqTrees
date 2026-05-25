@@ -91,6 +91,7 @@ ci_splitfun <- function(rank_name,
     if (is.null(weights) || length(weights) == 0L) {
       weights <- rep.int(1L, nrow(mf))
     }
+    weights <- .ci_validate_weights(weights, nrow(mf))
 
     # For formulas like cbind(rank, outcome) ~ x1 + x2, the response may arrive
     # as a matrix-like object in the first model-frame column.
@@ -330,6 +331,29 @@ test_that("ci_splitfun errors when it cannot recover a two-column response", {
     "Unable to recover the two-column response"
   )
 })
+
+test_that("ci_splitfun rejects non-finite weights", {
+  splitfun <- ci_splitfun("rank", "outcome", "CI")
+  toy_data <- data.frame(
+    rank = c(10, 20, 30),
+    outcome = c(1, 0, 1),
+    income = c(2, 4, 6)
+  )
+  ctrl <- list(minsplit = 1, minbucket = 1, minprob = 0)
+
+  expect_error(
+    splitfun(
+      model = NULL,
+      trafo = NULL,
+      data = toy_data,
+      subset = seq_len(nrow(toy_data)),
+      weights = c(1, Inf, 1),
+      whichvar = 3,
+      ctrl = ctrl
+    ),
+    "finite"
+  )
+})
 ```
 
 ```{r, function-.fit_ci_tree_from_frame}
@@ -392,11 +416,51 @@ test_that("ci_splitfun errors when it cannot recover a two-column response", {
     )
   )
   class(fit) <- unique(c("ci_tree", "constparty", class(fit)))
+  if (length(tree$variable.importance)) {
+    fit$variable.importance <- tree$variable.importance
+  }
   fit
 }
 ```
 
 ```{r, function-ci_tree}
+#' Validate non-negative finite case weights
+#'
+#' @param weights Optional case weights.
+#' @param n Expected length.
+#' @param arg Argument name used in error messages.
+#'
+#' @return A numeric vector of finite non-negative weights.
+#'
+#' @filename ci_tree.R
+#' @noRd
+.ci_validate_weights <- function(weights, n, arg = "weights") {
+  if (is.null(weights)) {
+    weights <- rep(1, n)
+  }
+  if (length(weights) != n) {
+    stop(sprintf("`%s` must have length %d.", arg, n), call. = FALSE)
+  }
+
+  weights <- suppressWarnings(as.numeric(weights))
+  if (any(is.na(weights) & !is.nan(weights))) {
+    stop(sprintf("`%s` must not contain missing values.", arg), call. = FALSE)
+  }
+  if (!all(is.finite(weights))) {
+    stop(sprintf("`%s` must contain only finite values.", arg), call. = FALSE)
+  }
+  if (any(weights < 0)) {
+    stop(sprintf("`%s` must be non-negative.", arg), call. = FALSE)
+  }
+  if (!any(weights > 0)) {
+    stop(sprintf("at least one `%s` value must be positive.", arg),
+      call. = FALSE
+    )
+  }
+
+  weights
+}
+
 #' Fit a greedy concentration-index tree
 #'
 #' Grow a binary tree by directly maximizing concentration-index gain across
@@ -492,31 +556,17 @@ ci_tree <- function(formula,
   )
   terms_object <- stats::terms(mf)
 
-  if (!is.null(weights)) {
-    if (any(weights < 0, na.rm = TRUE)) {
-      stop("weights must be non-negative")
+  if (is.null(weights)) {
+    weights <- .ci_validate_weights(weights, nrow(mf))
+  } else if (length(weights) == nrow(data)) {
+    weights <- .ci_validate_weights(weights, nrow(data))
+    omitted <- attr(mf, "na.action")
+    if (!is.null(omitted)) {
+      weights <- weights[-as.integer(omitted)]
     }
-    if (anyNA(weights)) {
-      stop("weights must not contain missing values")
-    }
-
-    if (length(weights) == nrow(data)) {
-      omitted <- attr(mf, "na.action")
-      if (!is.null(omitted)) {
-        weights <- weights[-as.integer(omitted)]
-      }
-    }
+    weights <- .ci_validate_weights(weights, nrow(mf))
   } else {
-    weights <- rep(1, nrow(mf))
-  }
-
-  if (length(weights) != nrow(mf)) {
-    stop("weights must have the same length as the fitted model frame")
-  }
-
-  weights <- as.numeric(weights)
-  if (!any(weights > 0, na.rm = TRUE)) {
-    stop("at least one weight must be positive")
+    weights <- .ci_validate_weights(weights, nrow(mf))
   }
 
   y_full <- .ci_tree_response(mf, rank_name, outcome_name)
@@ -622,8 +672,29 @@ test_that("ci_tree rejects negative weights", {
       outcome_name = "outcome",
       weights = c(1, -1, 1, 1)
     ),
-    "weights must be non-negative"
+    "non-negative"
   )
+})
+
+test_that("ci_tree rejects non-finite weights", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30),
+    outcome = c(1, 0, 1),
+    income = c(2, 4, 6)
+  )
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      ci_tree(
+        formula = cbind(rank, outcome) ~ income,
+        data = toy_data,
+        rank_name = "rank",
+        outcome_name = "outcome",
+        weights = bad_weights
+      ),
+      "finite"
+    )
+  }
 })
 
 test_that("ci_tree accepts non-integer weights", {
@@ -707,6 +778,32 @@ test_that("ci_tree returns partykit predictions and terminal nodes", {
   expect_equal(length(predict(fit, type = "node")), nrow(toy_data))
   expect_equal(length(predict(fit, type = "response")), nrow(toy_data))
   expect_equal(length(partykit::nodeids(fit, terminal = TRUE)), 2L)
+})
+
+test_that("ci_tree stores simple rpart-style variable importance", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12),
+    group = factor(c("low", "low", "mid", "mid", "high", "high"))
+  )
+
+  fit <- ci_tree(
+    formula = cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 2)
+  )
+
+  expect_type(fit$variable.importance, "double")
+  expect_named(fit$variable.importance)
+  expect_gt(length(fit$variable.importance), 0L)
+  expect_true(all(fit$variable.importance >= 0))
+  expect_equal(
+    fit$variable.importance,
+    sort(fit$variable.importance, decreasing = TRUE)
+  )
 })
 
 test_that("ci_tree split_engine R fallback matches cpp default", {
@@ -884,28 +981,57 @@ test_that("as_caseweights rejects invalid input weights", {
   ctrl
 }
 
+#' Normalize forest resampling controls
+#'
+#' @noRd
+.ci_normalize_perturb <- function(perturb) {
+  if (is.null(perturb)) {
+    perturb <- list(replace = FALSE, fraction = 0.632)
+  }
+  if (!is.list(perturb)) {
+    stop("`perturb` must be `NULL` or a list.", call. = FALSE)
+  }
+
+  replace <- perturb$replace
+  if (is.null(replace)) {
+    replace <- FALSE
+  } else {
+    if (length(replace) != 1L || is.na(replace) || !is.logical(replace)) {
+      stop(
+        "`perturb$replace` must be `NULL` or a single non-missing logical.",
+        call. = FALSE
+      )
+    }
+    replace <- isTRUE(replace)
+  }
+
+  fraction <- perturb$fraction
+  if (is.null(fraction)) {
+    fraction <- if (replace) 1 else 0.632
+  } else {
+    if (length(fraction) != 1L ||
+        is.na(fraction) ||
+        !is.numeric(fraction) ||
+        !is.finite(fraction) ||
+        fraction <= 0) {
+      stop(
+        "`perturb$fraction` must be `NULL` or a positive finite number.",
+        call. = FALSE
+      )
+    }
+    fraction <- as.numeric(fraction)
+  }
+
+  list(replace = replace, fraction = fraction)
+}
+
 #' Draw row indices for one greedy CI forest tree
 #'
 #' @noRd
 .ci_forest_sample <- function(n, perturb) {
-  if (is.null(perturb)) {
-    perturb <- list(replace = FALSE, fraction = 0.632)
-  }
-
-  replace <- isTRUE(perturb$replace)
+  perturb <- .ci_normalize_perturb(perturb)
+  replace <- perturb$replace
   fraction <- perturb$fraction
-  if (is.null(fraction)) {
-    fraction <- if (replace) 1 else 0.632
-  }
-
-  if (length(fraction) != 1L ||
-      is.na(fraction) ||
-      !is.finite(fraction) ||
-      fraction <= 0) {
-    stop("`perturb$fraction` must be a positive finite number.",
-      call. = FALSE
-    )
-  }
 
   size <- max(1L, as.integer(ceiling(n * fraction)))
   if (!replace) {
@@ -959,6 +1085,27 @@ test_that("as_caseweights rejects invalid input weights", {
   as.numeric(pred)
 }
 
+#' Calculate simple forest variable importance from member trees
+#'
+#' @noRd
+.ci_forest_variable_importance <- function(trees) {
+  imps <- lapply(trees, function(tree) tree$fit$variable.importance)
+  imps <- Filter(function(imp) length(imp) > 0L, imps)
+
+  if (!length(imps)) {
+    return(numeric())
+  }
+
+  vars <- unique(unlist(lapply(imps, names), use.names = FALSE))
+  importance <- stats::setNames(numeric(length(vars)), vars)
+
+  for (imp in imps) {
+    importance[names(imp)] <- importance[names(imp)] + as.numeric(imp)
+  }
+
+  sort(importance, decreasing = TRUE)
+}
+
 #' Fit a greedy concentration-index forest
 #'
 #' Grow an ensemble of greedy concentration-index trees. Each tree uses the same
@@ -993,12 +1140,16 @@ test_that("as_caseweights rejects invalid input weights", {
 #'   the greedy tree builder.
 #' @param ntree Number of trees to grow.
 #' @param mtry Optional number of variables randomly tried at each split.
-#' @param perturb Resampling specification. `replace` controls whether rows are
-#'   sampled with replacement and `fraction` controls the sample size relative
-#'   to the complete analysis data.
+#' @param perturb Resampling specification. Use `NULL` for the default
+#'   subsample or a list with optional `replace` and `fraction` entries.
+#'   `replace` controls whether rows are sampled with replacement and must be
+#'   `NULL` or a single non-missing logical. `fraction` controls the sample
+#'   size relative to the complete analysis data and must be `NULL` or a
+#'   positive finite number.
 #' @param parallel Logical; grow trees with [future.apply::future_lapply()].
-#'   The future backend is controlled by the user outside `ci_forest()`, for
-#'   example with `future::plan()`.
+#'   This requires the suggested package `future.apply`. The future backend is
+#'   controlled by the user outside `ci_forest()`, for example with
+#'   `future::plan()`.
 #' @param future.seed Passed to [future.apply::future_lapply()] when
 #'   `parallel = TRUE`.
 #' @param na.action A function for handling missing values.
@@ -1070,6 +1221,7 @@ ci_forest <- function(formula,
     stop("`parallel` must be a single non-missing logical value.", call. = FALSE)
   }
   parallel <- isTRUE(parallel)
+  perturb <- .ci_normalize_perturb(perturb)
 
   data <- as.data.frame(data)
   mf <- stats::model.frame(
@@ -1091,27 +1243,13 @@ ci_forest <- function(formula,
   }
 
   if (is.null(weights)) {
-    weights <- rep(1, n)
+    weights <- .ci_validate_weights(weights, n)
+  } else if (length(weights) == nrow(data)) {
+    weights <- .ci_validate_weights(weights, nrow(data))
+    weights <- weights[keep_rows]
+    weights <- .ci_validate_weights(weights, n)
   } else {
-    if (length(weights) == nrow(data)) {
-      weights <- weights[keep_rows]
-    }
-    if (length(weights) != n) {
-      stop("`weights` must have the same length as the analysis data.",
-        call. = FALSE
-      )
-    }
-    if (anyNA(weights)) {
-      stop("`weights` must not contain missing values.", call. = FALSE)
-    }
-    if (any(weights < 0, na.rm = TRUE)) {
-      stop("`weights` must be non-negative.", call. = FALSE)
-    }
-    weights <- as.numeric(weights)
-  }
-
-  if (!any(weights > 0, na.rm = TRUE)) {
-    stop("at least one weight must be positive.", call. = FALSE)
+    weights <- .ci_validate_weights(weights, n)
   }
 
   ntree <- as.integer(ntree)
@@ -1136,6 +1274,12 @@ ci_forest <- function(formula,
       mf[[j]] <- factor(mf[[j]])
     }
   }
+
+  .ci_require_future_apply(
+    enabled = parallel,
+    when = "`parallel = TRUE`",
+    disable = "`parallel = FALSE`"
+  )
 
   grow_one_tree <- function(b) {
     sample_rows <- .ci_forest_sample(n, perturb)
@@ -1176,6 +1320,8 @@ ci_forest <- function(formula,
     inbag[, b] <- tabulate(trees[[b]]$rows, nbins = n)
   }
 
+  variable_importance <- .ci_forest_variable_importance(trees)
+
   fit <- list(
     call = call,
     formula = formula,
@@ -1188,7 +1334,8 @@ ci_forest <- function(formula,
     type = type,
     control = ctrl,
     ntree = ntree,
-    perturb = perturb
+    perturb = perturb,
+    variable.importance = variable_importance
   )
   class(fit) <- "ci_forest"
 
@@ -1842,6 +1989,58 @@ test_that(
   }, logical(1))))
 })
 
+test_that("ci_forest stores simple rpart-style variable importance", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12),
+    group = factor(c("low", "low", "mid", "mid", "high", "high"))
+  )
+
+  set.seed(20260525)
+  fit <- ci_forest(
+    formula = cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 5L,
+    mtry = 1L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 2)
+  )
+
+  expect_type(fit$variable.importance, "double")
+  expect_named(fit$variable.importance)
+  expect_gt(length(fit$variable.importance), 0L)
+  expect_true(all(fit$variable.importance >= 0))
+  expect_equal(
+    fit$variable.importance,
+    sort(fit$variable.importance, decreasing = TRUE)
+  )
+})
+
+test_that(".ci_forest_variable_importance returns numeric() with no split trees", {
+  forest_vi <- getFromNamespace(".ci_forest_variable_importance", "ineqTrees")
+  trees <- list(
+    list(fit = list(variable.importance = numeric())),
+    list(fit = list(variable.importance = numeric()))
+  )
+
+  expect_identical(forest_vi(trees), numeric())
+})
+
+test_that(".ci_forest_variable_importance sums trees in decreasing order", {
+  forest_vi <- getFromNamespace(".ci_forest_variable_importance", "ineqTrees")
+  trees <- list(
+    list(fit = list(variable.importance = c(x2 = 1, x1 = 2))),
+    list(fit = list(variable.importance = c(x1 = 3))),
+    list(fit = list(variable.importance = numeric()))
+  )
+  out <- forest_vi(trees)
+
+  expect_equal(out, c(x1 = 5, x2 = 1))
+  expect_equal(out[["x1"]], 5)
+})
+
 test_that("ci_forest accepts explicit weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),
@@ -1861,6 +2060,62 @@ test_that("ci_forest accepts explicit weights", {
 
   expect_s3_class(fit, "ci_forest")
   expect_equal(nrow(stats::fitted(fit)), nrow(toy_data))
+})
+
+test_that("ci_forest rejects non-finite weights", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40),
+    outcome = c(1, 0, 1, 0),
+    income = c(2, 4, 6, 8)
+  )
+
+  for (bad_weights in list(c(1, Inf, 1, 1), c(1, NaN, 1, 1), c(1, -Inf, 1, 1))) {
+    expect_error(
+      ci_forest(
+        formula = cbind(rank, outcome) ~ income,
+        data = toy_data,
+        rank_name = "rank",
+        outcome_name = "outcome",
+        weights = bad_weights,
+        ntree = 2L,
+        control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+      ),
+      "finite"
+    )
+  }
+})
+
+test_that("ci_forest validates perturb inputs", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40),
+    outcome = c(1, 0, 1, 0),
+    income = c(2, 4, 6, 8)
+  )
+  base_args <- list(
+    formula = cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 2L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = 0.632))),
+    "`perturb` must be `NULL` or a list\\."
+  )
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = list(replace = NA)))),
+    "perturb\\$replace"
+  )
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = list(fraction = Inf)))),
+    "perturb\\$fraction"
+  )
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = list(fraction = 0)))),
+    "perturb\\$fraction"
+  )
 })
 
 test_that("ci_forest predicts on new data with old cforest-style FUN", {

@@ -370,8 +370,9 @@ tune_ctree_ci <- function(...) {
 #'   forest fitting serially, `"tuning"` evaluates grid/resample tasks with
 #'   [future.apply::future_lapply()], and `"forest"` keeps tuning tasks serial
 #'   while growing trees inside each [ci_forest()] call with
-#'   [future.apply::future_lapply()]. The future backend is controlled by the
-#'   user outside `tune_ci_forest()`.
+#'   [future.apply::future_lapply()]. Parallel modes require the suggested
+#'   package `future.apply`. The future backend is controlled by the user
+#'   outside `tune_ci_forest()`.
 #' @param future.seed Passed to [future.apply::future_lapply()] when
 #'   `parallel_over` is `"tuning"` or `"forest"`.
 #'
@@ -459,6 +460,7 @@ tune_ci_forest <- function(formula,
   if (length(ntree) != 1L || is.na(ntree) || ntree <= 0L) {
     stop("`ntree` must be a positive integer.", call. = FALSE)
   }
+  perturb <- .ci_normalize_perturb(perturb)
 
   seed_base <- NULL
   if (!is.null(seed)) {
@@ -531,6 +533,11 @@ tune_ci_forest <- function(formula,
   )
 
   task_results <- if (identical(parallel_over, "tuning")) {
+    .ci_require_future_apply(
+      enabled = TRUE,
+      when = "`parallel_over = \"tuning\"`",
+      disable = "`parallel_over = \"none\"`"
+    )
     do.call(
       future.apply::future_lapply,
       c(list(X = tasks, FUN = .ci_tune_forest_task, future.seed = future.seed), task_args)

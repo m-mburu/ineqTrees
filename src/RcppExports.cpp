@@ -43,10 +43,31 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// ci_best_factor_split_cpp_engine_controlled
+List ci_best_factor_split_cpp_engine_controlled(IntegerVector code, NumericMatrix y, NumericVector wt, int n_levels, double minbucket, double minprob, std::string type, std::string factor_split, int max_factor_levels_partition, double max_factor_partitions);
+RcppExport SEXP _ineqTrees_ci_best_factor_split_cpp_engine_controlled(SEXP codeSEXP, SEXP ySEXP, SEXP wtSEXP, SEXP n_levelsSEXP, SEXP minbucketSEXP, SEXP minprobSEXP, SEXP typeSEXP, SEXP factor_splitSEXP, SEXP max_factor_levels_partitionSEXP, SEXP max_factor_partitionsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< IntegerVector >::type code(codeSEXP);
+    Rcpp::traits::input_parameter< NumericMatrix >::type y(ySEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type wt(wtSEXP);
+    Rcpp::traits::input_parameter< int >::type n_levels(n_levelsSEXP);
+    Rcpp::traits::input_parameter< double >::type minbucket(minbucketSEXP);
+    Rcpp::traits::input_parameter< double >::type minprob(minprobSEXP);
+    Rcpp::traits::input_parameter< std::string >::type type(typeSEXP);
+    Rcpp::traits::input_parameter< std::string >::type factor_split(factor_splitSEXP);
+    Rcpp::traits::input_parameter< int >::type max_factor_levels_partition(max_factor_levels_partitionSEXP);
+    Rcpp::traits::input_parameter< double >::type max_factor_partitions(max_factor_partitionsSEXP);
+    rcpp_result_gen = Rcpp::wrap(ci_best_factor_split_cpp_engine_controlled(code, y, wt, n_levels, minbucket, minprob, type, factor_split, max_factor_levels_partition, max_factor_partitions));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_ineqTrees_ci_best_numeric_split_cpp_engine", (DL_FUNC) &_ineqTrees_ci_best_numeric_split_cpp_engine, 6},
     {"_ineqTrees_ci_best_factor_split_cpp_engine", (DL_FUNC) &_ineqTrees_ci_best_factor_split_cpp_engine, 7},
+    {"_ineqTrees_ci_best_factor_split_cpp_engine_controlled", (DL_FUNC) &_ineqTrees_ci_best_factor_split_cpp_engine_controlled, 10},
     {NULL, NULL, 0}
 };
 

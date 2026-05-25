@@ -16,28 +16,57 @@
   ctrl
 }
 
+#' Normalize forest resampling controls
+#'
+#' @noRd
+.ci_normalize_perturb <- function(perturb) {
+  if (is.null(perturb)) {
+    perturb <- list(replace = FALSE, fraction = 0.632)
+  }
+  if (!is.list(perturb)) {
+    stop("`perturb` must be `NULL` or a list.", call. = FALSE)
+  }
+
+  replace <- perturb$replace
+  if (is.null(replace)) {
+    replace <- FALSE
+  } else {
+    if (length(replace) != 1L || is.na(replace) || !is.logical(replace)) {
+      stop(
+        "`perturb$replace` must be `NULL` or a single non-missing logical.",
+        call. = FALSE
+      )
+    }
+    replace <- isTRUE(replace)
+  }
+
+  fraction <- perturb$fraction
+  if (is.null(fraction)) {
+    fraction <- if (replace) 1 else 0.632
+  } else {
+    if (length(fraction) != 1L ||
+        is.na(fraction) ||
+        !is.numeric(fraction) ||
+        !is.finite(fraction) ||
+        fraction <= 0) {
+      stop(
+        "`perturb$fraction` must be `NULL` or a positive finite number.",
+        call. = FALSE
+      )
+    }
+    fraction <- as.numeric(fraction)
+  }
+
+  list(replace = replace, fraction = fraction)
+}
+
 #' Draw row indices for one greedy CI forest tree
 #'
 #' @noRd
 .ci_forest_sample <- function(n, perturb) {
-  if (is.null(perturb)) {
-    perturb <- list(replace = FALSE, fraction = 0.632)
-  }
-
-  replace <- isTRUE(perturb$replace)
+  perturb <- .ci_normalize_perturb(perturb)
+  replace <- perturb$replace
   fraction <- perturb$fraction
-  if (is.null(fraction)) {
-    fraction <- if (replace) 1 else 0.632
-  }
-
-  if (length(fraction) != 1L ||
-      is.na(fraction) ||
-      !is.finite(fraction) ||
-      fraction <= 0) {
-    stop("`perturb$fraction` must be a positive finite number.",
-      call. = FALSE
-    )
-  }
 
   size <- max(1L, as.integer(ceiling(n * fraction)))
   if (!replace) {
@@ -91,6 +120,27 @@
   as.numeric(pred)
 }
 
+#' Calculate simple forest variable importance from member trees
+#'
+#' @noRd
+.ci_forest_variable_importance <- function(trees) {
+  imps <- lapply(trees, function(tree) tree$fit$variable.importance)
+  imps <- Filter(function(imp) length(imp) > 0L, imps)
+
+  if (!length(imps)) {
+    return(numeric())
+  }
+
+  vars <- unique(unlist(lapply(imps, names), use.names = FALSE))
+  importance <- stats::setNames(numeric(length(vars)), vars)
+
+  for (imp in imps) {
+    importance[names(imp)] <- importance[names(imp)] + as.numeric(imp)
+  }
+
+  sort(importance, decreasing = TRUE)
+}
+
 #' Fit a greedy concentration-index forest
 #'
 #' Grow an ensemble of greedy concentration-index trees. Each tree uses the same
@@ -125,12 +175,16 @@
 #'   the greedy tree builder.
 #' @param ntree Number of trees to grow.
 #' @param mtry Optional number of variables randomly tried at each split.
-#' @param perturb Resampling specification. `replace` controls whether rows are
-#'   sampled with replacement and `fraction` controls the sample size relative
-#'   to the complete analysis data.
+#' @param perturb Resampling specification. Use `NULL` for the default
+#'   subsample or a list with optional `replace` and `fraction` entries.
+#'   `replace` controls whether rows are sampled with replacement and must be
+#'   `NULL` or a single non-missing logical. `fraction` controls the sample
+#'   size relative to the complete analysis data and must be `NULL` or a
+#'   positive finite number.
 #' @param parallel Logical; grow trees with [future.apply::future_lapply()].
-#'   The future backend is controlled by the user outside `ci_forest()`, for
-#'   example with `future::plan()`.
+#'   This requires the suggested package `future.apply`. The future backend is
+#'   controlled by the user outside `ci_forest()`, for example with
+#'   `future::plan()`.
 #' @param future.seed Passed to [future.apply::future_lapply()] when
 #'   `parallel = TRUE`.
 #' @param na.action A function for handling missing values.
@@ -202,6 +256,7 @@ ci_forest <- function(formula,
     stop("`parallel` must be a single non-missing logical value.", call. = FALSE)
   }
   parallel <- isTRUE(parallel)
+  perturb <- .ci_normalize_perturb(perturb)
 
   data <- as.data.frame(data)
   mf <- stats::model.frame(
@@ -223,27 +278,13 @@ ci_forest <- function(formula,
   }
 
   if (is.null(weights)) {
-    weights <- rep(1, n)
+    weights <- .ci_validate_weights(weights, n)
+  } else if (length(weights) == nrow(data)) {
+    weights <- .ci_validate_weights(weights, nrow(data))
+    weights <- weights[keep_rows]
+    weights <- .ci_validate_weights(weights, n)
   } else {
-    if (length(weights) == nrow(data)) {
-      weights <- weights[keep_rows]
-    }
-    if (length(weights) != n) {
-      stop("`weights` must have the same length as the analysis data.",
-        call. = FALSE
-      )
-    }
-    if (anyNA(weights)) {
-      stop("`weights` must not contain missing values.", call. = FALSE)
-    }
-    if (any(weights < 0, na.rm = TRUE)) {
-      stop("`weights` must be non-negative.", call. = FALSE)
-    }
-    weights <- as.numeric(weights)
-  }
-
-  if (!any(weights > 0, na.rm = TRUE)) {
-    stop("at least one weight must be positive.", call. = FALSE)
+    weights <- .ci_validate_weights(weights, n)
   }
 
   ntree <- as.integer(ntree)
@@ -268,6 +309,12 @@ ci_forest <- function(formula,
       mf[[j]] <- factor(mf[[j]])
     }
   }
+
+  .ci_require_future_apply(
+    enabled = parallel,
+    when = "`parallel = TRUE`",
+    disable = "`parallel = FALSE`"
+  )
 
   grow_one_tree <- function(b) {
     sample_rows <- .ci_forest_sample(n, perturb)
@@ -308,6 +355,8 @@ ci_forest <- function(formula,
     inbag[, b] <- tabulate(trees[[b]]$rows, nbins = n)
   }
 
+  variable_importance <- .ci_forest_variable_importance(trees)
+
   fit <- list(
     call = call,
     formula = formula,
@@ -320,7 +369,8 @@ ci_forest <- function(formula,
     type = type,
     control = ctrl,
     ntree = ntree,
-    perturb = perturb
+    perturb = perturb,
+    variable.importance = variable_importance
   )
   class(fit) <- "ci_forest"
 

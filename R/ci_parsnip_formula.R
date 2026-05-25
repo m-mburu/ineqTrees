@@ -495,15 +495,11 @@ ci_gain_vec <- function(truth,
     )
   }
 
-  if (is.null(case_weights)) {
-    case_weights <- rep(1, length(truth))
-  } else {
-    case_weights <- as.numeric(case_weights)
-  }
-
-  if (length(case_weights) != length(truth)) {
-    stop("`case_weights` must have the same length as `truth`.", call. = FALSE)
-  }
+  case_weights <- .ci_validate_weights(
+    case_weights,
+    length(truth),
+    "case_weights"
+  )
 
   if (is.null(node)) {
     node <- estimate
@@ -635,15 +631,11 @@ ci_prediction_index_vec <- function(estimate,
     stop("`estimate` and `rank` must have the same length.", call. = FALSE)
   }
 
-  if (is.null(case_weights)) {
-    case_weights <- rep(1, length(estimate))
-  } else {
-    case_weights <- as.numeric(case_weights)
-  }
-
-  if (length(case_weights) != length(estimate)) {
-    stop("`case_weights` must have the same length as `estimate`.", call. = FALSE)
-  }
+  case_weights <- .ci_validate_weights(
+    case_weights,
+    length(estimate),
+    "case_weights"
+  )
 
   keep <- stats::complete.cases(estimate, rank, case_weights) & case_weights > 0
   if (!any(keep)) {

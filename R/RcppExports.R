@@ -9,3 +9,7 @@ ci_best_factor_split_cpp_engine <- function(code, y, wt, n_levels, minbucket, mi
     .Call(`_ineqTrees_ci_best_factor_split_cpp_engine`, code, y, wt, n_levels, minbucket, minprob, type)
 }
 
+ci_best_factor_split_cpp_engine_controlled <- function(code, y, wt, n_levels, minbucket, minprob, type, factor_split, max_factor_levels_partition, max_factor_partitions) {
+    .Call(`_ineqTrees_ci_best_factor_split_cpp_engine_controlled`, code, y, wt, n_levels, minbucket, minprob, type, factor_split, max_factor_levels_partition, max_factor_partitions)
+}
+

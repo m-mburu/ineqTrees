@@ -323,19 +323,7 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 
 #' @noRd
 .ci_default_weights <- function(weights, n, arg = "weights") {
-  if (is.null(weights)) {
-    weights <- rep(1, n)
-  }
-  if (length(weights) != n) {
-    stop(sprintf("`%s` must have length %d.", arg, n), call. = FALSE)
-  }
-  if (anyNA(weights)) {
-    stop(sprintf("`%s` must not contain missing values.", arg), call. = FALSE)
-  }
-  if (any(weights < 0, na.rm = TRUE)) {
-    stop(sprintf("`%s` must be non-negative.", arg), call. = FALSE)
-  }
-  as.numeric(weights)
+  .ci_validate_weights(weights, n, arg)
 }
 
 #' @noRd
@@ -386,7 +374,7 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 #'
 #' @param verbose Logical; print fold-level progress.
 #' @param allow_par Logical; allow future-based parallel execution when
-#'   `num_cores > 1`.
+#'   `num_cores > 1`. This requires the suggested package `future.apply`.
 #' @param parallel_over Parallelization strategy. `"resamples"` and
 #'   `"everything"` are currently accepted; both are executed over
 #'   grid/resample tasks.
@@ -702,12 +690,32 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
   tasks
 }
 
+.ci_require_future_apply <- function(enabled,
+                                     when,
+                                     disable,
+                                     require_namespace = requireNamespace) {
+  if (isTRUE(enabled) && !require_namespace("future.apply", quietly = TRUE)) {
+    stop(
+      "`future.apply` is required when ", when, ". ",
+      "Install it or use ", disable, ".",
+      call. = FALSE
+    )
+  }
+
+  invisible(TRUE)
+}
+
 .ci_lapply_tasks <- function(tasks, fn, control) {
   use_parallel <- isTRUE(control$allow_par) &&
     control$num_cores > 1L &&
     length(tasks) > 1L
 
   if (use_parallel) {
+    .ci_require_future_apply(
+      enabled = TRUE,
+      when = "`allow_par = TRUE` and `num_cores > 1`",
+      disable = "`allow_par = FALSE` or `num_cores = 1L`"
+    )
     return(future.apply::future_lapply(tasks, fn, future.seed = TRUE))
   }
 

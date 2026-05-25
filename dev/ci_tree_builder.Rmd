@@ -34,6 +34,17 @@ pkgload::load_all(export_all = TRUE)
 #' @param mtry Optional number of variables sampled as candidates at each node.
 #' @param split_engine Split-search implementation to use. `"cpp"` uses the
 #'   Rcpp-backed split search, while `"R"` uses the reference R implementation.
+#' @param factor_split Strategy for unordered factor split search. `"partition"`
+#'   evaluates binary partitions, `"order"` orders levels by weighted mean
+#'   outcome and tries cumulative splits, and `"auto"` uses partition search
+#'   when it is small enough and ordered search otherwise.
+#' @param max_factor_levels_partition Maximum number of observed factor levels
+#'   eligible for partition search when `factor_split = "auto"`.
+#' @param max_factor_partitions Maximum number of binary factor partitions
+#'   eligible for partition search when `factor_split = "auto"`.
+#' @details Structural controls `minsplit`, `minbucket`, `minprob`,
+#'   `maxdepth`, and `min_relative_gain` must be finite. `min_gain = Inf` is
+#'   allowed and prevents splitting.
 #'
 #' @return A list of greedy CI tree controls.
 #'
@@ -45,8 +56,12 @@ ci_tree_control <- function(minsplit = 200L,
                             min_gain = 0,
                             min_relative_gain = 0,
                             mtry = NULL,
-                            split_engine = c("cpp", "R")) {
+                            split_engine = c("cpp", "R"),
+                            factor_split = c("auto", "partition", "order"),
+                            max_factor_levels_partition = 10L,
+                            max_factor_partitions = 1e6) {
   split_engine <- match.arg(split_engine)
+  factor_split <- match.arg(factor_split)
 
   list(
     minsplit = minsplit,
@@ -56,7 +71,10 @@ ci_tree_control <- function(minsplit = 200L,
     min_gain = min_gain,
     min_relative_gain = min_relative_gain,
     mtry = mtry,
-    split_engine = split_engine
+    split_engine = split_engine,
+    factor_split = factor_split,
+    max_factor_levels_partition = max_factor_levels_partition,
+    max_factor_partitions = max_factor_partitions
   )
 }
 
@@ -91,7 +109,8 @@ ci_tree_control <- function(minsplit = 200L,
   ctrl <- defaults
   scalar_names <- c(
     "minsplit", "minbucket", "minprob", "maxdepth", "min_gain",
-    "min_relative_gain"
+    "min_relative_gain", "max_factor_levels_partition",
+    "max_factor_partitions"
   )
 
   for (nm in scalar_names) {
@@ -101,6 +120,15 @@ ci_tree_control <- function(minsplit = 200L,
       )
     }
     ctrl[[nm]] <- as.numeric(ctrl[[nm]])
+  }
+
+  finite_names <- c(
+    "minsplit", "minbucket", "minprob", "maxdepth", "min_relative_gain"
+  )
+  for (nm in finite_names) {
+    if (!is.finite(ctrl[[nm]])) {
+      stop(sprintf("`control$%s` must be finite.", nm), call. = FALSE)
+    }
   }
 
   if (ctrl$minsplit < 0 || ctrl$minbucket < 0) {
@@ -120,6 +148,8 @@ ci_tree_control <- function(minsplit = 200L,
 
   ctrl$minsplit <- as.integer(ceiling(ctrl$minsplit))
   ctrl$minbucket <- as.integer(ceiling(ctrl$minbucket))
+  ctrl$max_factor_levels_partition <-
+    as.integer(ceiling(ctrl$max_factor_levels_partition))
 
   if (is.null(ctrl$mtry) || !is.finite(ctrl$mtry)) {
     ctrl$mtry <- NULL
@@ -142,6 +172,26 @@ ci_tree_control <- function(minsplit = 200L,
       call. = FALSE
     )
   }
+  if (is.null(ctrl$factor_split)) {
+    ctrl$factor_split <- "auto"
+  }
+  if (length(ctrl$factor_split) != 1L ||
+      is.na(ctrl$factor_split) ||
+      !ctrl$factor_split %in% c("auto", "partition", "order")) {
+    stop('`control$factor_split` must be one of "auto", "partition", or "order".',
+      call. = FALSE
+    )
+  }
+  if (ctrl$max_factor_levels_partition < 2L) {
+    stop("`control$max_factor_levels_partition` must be at least 2.",
+      call. = FALSE
+    )
+  }
+  if (ctrl$max_factor_partitions < 1) {
+    stop("`control$max_factor_partitions` must be at least 1.",
+      call. = FALSE
+    )
+  }
 
   ctrl
 }
@@ -149,6 +199,7 @@ ci_tree_control <- function(minsplit = 200L,
 
 ```{r, tests-ci_tree_control}
 test_that("ci_tree_control stores greedy tree controls", {
+  default_ctrl <- ci_tree_control()
   ctrl <- ci_tree_control(
     minsplit = 10,
     minbucket = 3,
@@ -167,6 +218,12 @@ test_that("ci_tree_control stores greedy tree controls", {
   expect_equal(ctrl$min_relative_gain, 0.05)
   expect_equal(ctrl$mtry, 1)
   expect_equal(ctrl$split_engine, "cpp")
+  expect_equal(ctrl$factor_split, "auto")
+  expect_equal(
+    ctrl$max_factor_levels_partition,
+    default_ctrl$max_factor_levels_partition
+  )
+  expect_equal(ctrl$max_factor_partitions, default_ctrl$max_factor_partitions)
 })
 
 test_that(".ci_tree_normalize_control accepts shared ctree controls", {
@@ -200,6 +257,93 @@ test_that(".ci_tree_normalize_control rejects unknown split engines", {
     ineqTrees::.ci_tree_normalize_control(list(split_engine = "fortran")),
     "split_engine"
   )
+})
+
+test_that(".ci_tree_normalize_control rejects non-finite structural controls", {
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(minsplit = Inf)),
+    "control\\$minsplit.*finite"
+  )
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(minbucket = Inf)),
+    "control\\$minbucket.*finite"
+  )
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(maxdepth = Inf)),
+    "control\\$maxdepth.*finite"
+  )
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(minprob = Inf)),
+    "control\\$minprob.*finite"
+  )
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(min_relative_gain = Inf)),
+    "control\\$min_relative_gain.*finite"
+  )
+})
+
+test_that("ci_tree_control validates factor split controls", {
+  ctrl <- ci_tree_control(
+    factor_split = "partition",
+    max_factor_levels_partition = 12,
+    max_factor_partitions = 2048
+  )
+  norm <- ineqTrees::.ci_tree_normalize_control(ctrl)
+
+  expect_equal(norm$factor_split, "partition")
+  expect_equal(norm$max_factor_levels_partition, 12L)
+  expect_equal(norm$max_factor_partitions, 2048)
+  expect_error(
+    ineqTrees::.ci_tree_normalize_control(list(factor_split = "random")),
+    "factor_split"
+  )
+})
+
+test_that(".ci_tree_variable_importance returns numeric() for a no-split tree", {
+  tree_vi <- getFromNamespace(".ci_tree_variable_importance", "ineqTrees")
+  node <- partykit::partynode(id = 1L, info = list())
+
+  expect_identical(tree_vi(node), numeric())
+})
+
+test_that(".ci_tree_variable_importance returns one named score for one split", {
+  tree_vi <- getFromNamespace(".ci_tree_variable_importance", "ineqTrees")
+  leaf_node <- function(id) partykit::partynode(id = id, info = list())
+  node <- partykit::partynode(
+    id = 1L,
+    split = partykit::partysplit(varid = 1L, breaks = 0, index = 1:2),
+    kids = list(leaf_node(2L), leaf_node(3L)),
+    info = list(varname = "x1", gain = 2)
+  )
+
+  expect_equal(tree_vi(node), c(x1 = 2))
+})
+
+test_that(".ci_tree_variable_importance sums repeated gains in decreasing order", {
+  tree_vi <- getFromNamespace(".ci_tree_variable_importance", "ineqTrees")
+  leaf_node <- function(id) partykit::partynode(id = id, info = list())
+  left_child <- partykit::partynode(
+    id = 2L,
+    split = partykit::partysplit(varid = 2L, breaks = 0, index = 1:2),
+    kids = list(leaf_node(4L), leaf_node(5L)),
+    info = list(varname = "x2", gain = 1)
+  )
+  right_child <- partykit::partynode(
+    id = 3L,
+    split = partykit::partysplit(varid = 1L, breaks = 0, index = 1:2),
+    kids = list(leaf_node(6L), leaf_node(7L)),
+    info = list(varname = "x1", gain = 1)
+  )
+  root <- partykit::partynode(
+    id = 1L,
+    split = partykit::partysplit(varid = 1L, breaks = 0, index = 1:2),
+    kids = list(left_child, right_child),
+    info = list(varname = "x1", gain = 2)
+  )
+  out <- tree_vi(root)
+
+  expect_equal(out, c(x1 = 3, x2 = 1))
+  expect_equal(out[["x1"]], 3)
 })
 ```
 
@@ -288,6 +432,40 @@ test_that(".ci_tree_normalize_control rejects unknown split engines", {
     ci = ci_fun(y, wt),
     outcome_mean = outcome_mean
   )
+}
+
+#' Calculate simple rpart-style variable importance
+#'
+#' @noRd
+.ci_tree_variable_importance <- function(node) {
+  importance <- numeric()
+
+  collect <- function(node) {
+    if (partykit::is.terminal(node)) {
+      return(invisible(NULL))
+    }
+
+    info <- partykit::info_node(node)
+    varname <- info$varname
+    gain <- info$gain
+
+    if (!is.null(varname) &&
+        length(varname) == 1L &&
+        !is.na(varname) &&
+        nzchar(varname) &&
+        !is.null(gain) &&
+        length(gain) == 1L &&
+        is.finite(gain)) {
+      current <- if (varname %in% names(importance)) importance[[varname]] else 0
+      importance[varname] <<- current + as.numeric(gain)
+    }
+
+    lapply(partykit::kids_node(node), collect)
+    invisible(NULL)
+  }
+
+  collect(node)
+  sort(importance, decreasing = TRUE)
 }
 
 #' Recursively build a greedy concentration-index party tree
@@ -405,7 +583,11 @@ test_that(".ci_tree_normalize_control rejects unknown split engines", {
   fitted <- integer(nrow(data))
   fitted[as.integer(names(tree$fitted))] <- as.integer(tree$fitted)
 
-  list(node = tree$node, fitted = fitted)
+  list(
+    node = tree$node,
+    fitted = fitted,
+    variable.importance = .ci_tree_variable_importance(tree$node)
+  )
 }
 ```
 

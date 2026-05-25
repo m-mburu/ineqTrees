@@ -103,8 +103,9 @@ predictions, saved fits, extraction hooks, and parallel settings.}
 forest fitting serially, \code{"tuning"} evaluates grid/resample tasks with
 \code{\link[future.apply:future_lapply]{future.apply::future_lapply()}}, and \code{"forest"} keeps tuning tasks serial
 while growing trees inside each \code{\link[=ci_forest]{ci_forest()}} call with
-\code{\link[future.apply:future_lapply]{future.apply::future_lapply()}}. The future backend is controlled by the
-user outside \code{tune_ci_forest()}.}
+\code{\link[future.apply:future_lapply]{future.apply::future_lapply()}}. Parallel modes require the suggested
+package \code{future.apply}. The future backend is controlled by the user
+outside \code{tune_ci_forest()}.}
 
 \item{future.seed}{Passed to \code{\link[future.apply:future_lapply]{future.apply::future_lapply()}} when
 \code{parallel_over} is \code{"tuning"} or \code{"forest"}.}

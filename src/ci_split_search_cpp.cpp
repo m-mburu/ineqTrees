@@ -250,6 +250,36 @@ double ci_score_all_ordered(
   return scores.left;
 }
 
+double factor_partition_count(size_t n_levels) {
+  if (n_levels <= 1) return 0.0;
+  return std::pow(2.0, static_cast<double>(n_levels - 1)) - 1.0;
+}
+
+std::string choose_factor_split_mode(
+    const std::string& factor_split,
+    size_t n_levels,
+    int max_factor_levels_partition,
+    double max_factor_partitions) {
+
+  const double n_partitions = factor_partition_count(n_levels);
+  const bool bitmask_fits = n_levels <= 63;
+  const bool can_partition =
+    n_levels <= static_cast<size_t>(max_factor_levels_partition) &&
+    n_partitions <= max_factor_partitions &&
+    bitmask_fits;
+
+  if (factor_split == "order") return "order";
+  if (factor_split == "auto") return can_partition ? "partition" : "order";
+  if (factor_split == "partition") {
+    if (!can_partition) {
+      stop("Exact factor partition search would evaluate too many partitions.");
+    }
+    return "partition";
+  }
+
+  stop("Unknown factor split strategy.");
+}
+
 } // namespace
 
 // [[Rcpp::export]]
@@ -359,15 +389,17 @@ List ci_best_numeric_split_cpp_engine(
   );
 }
 
-// [[Rcpp::export]]
-List ci_best_factor_split_cpp_engine(
+List ci_best_factor_split_cpp_engine_impl(
     IntegerVector code,
     NumericMatrix y,
     NumericVector wt,
     int n_levels,
     double minbucket,
     double minprob,
-    std::string type) {
+    std::string type,
+    std::string factor_split,
+    int max_factor_levels_partition,
+    double max_factor_partitions) {
 
   const int n = code.size();
   if (y.nrow() != n || y.ncol() != 2 || wt.size() != n) {
@@ -396,14 +428,18 @@ List ci_best_factor_split_cpp_engine(
     return List::create(
       _["gain"] = R_NegInf,
       _["left"] = empty_left,
-      _["left_codes"] = IntegerVector(0)
+      _["left_codes"] = IntegerVector(0),
+      _["factor_split"] = NA_STRING
     );
   }
 
   std::sort(present.begin(), present.end());
-  std::stable_sort(present.begin(), present.end(), [&](int a, int b) {
-    return (level_yw[a] / level_w[a]) < (level_yw[b] / level_w[b]);
-  });
+  const std::string split_mode = choose_factor_split_mode(
+    factor_split,
+    present.size(),
+    max_factor_levels_partition,
+    max_factor_partitions
+  );
 
   std::vector<int> ses_ord(n);
   std::iota(ses_ord.begin(), ses_ord.end(), 0);
@@ -431,52 +467,114 @@ List ci_best_factor_split_cpp_engine(
   double total_w = 0.0;
   for (size_t i = 0; i < present.size(); ++i) {
     total_w += level_w[present[i]];
-    cum_level_w[i] = total_w;
+  }
+  if (!R_finite(total_w) || total_w <= 0.0) {
+    return List::create(
+      _["gain"] = R_NegInf,
+      _["left"] = empty_left,
+      _["left_codes"] = IntegerVector(0),
+      _["factor_split"] = split_mode
+    );
   }
 
-  std::vector<unsigned char> side(n_levels + 1, 0);
   double best_gain = R_NegInf;
-  int best_k = -1;
+  std::vector<unsigned char> best_side(n_levels + 1, 0);
+  std::vector<int> best_left_codes;
 
-  for (size_t k = 0; k + 1 < present.size(); ++k) {
-    side[present[k]] = 1;
+  if (split_mode == "partition") {
+    const unsigned long long n_partitions =
+      static_cast<unsigned long long>(factor_partition_count(present.size()));
+    std::vector<unsigned char> side(n_levels + 1, 0);
 
-    const double wl = cum_level_w[k];
-    const double wr = total_w - wl;
-    if (wl < minbucket || wr < minbucket) continue;
-    if ((wl / total_w) < minprob || (wr / total_w) < minprob) continue;
+    for (unsigned long long mask = 1; mask <= n_partitions; ++mask) {
+      std::fill(side.begin(), side.end(), 0);
+      double wl = 0.0;
 
-    TwoCiScores child_scores = ci_score_children_ordered(
-      rank,
-      outcome,
-      weight,
-      ses_ord,
-      [&](int idx) {
-        const int cd = code[idx];
-        if (cd == NA_INTEGER || cd <= 0 || cd > n_levels) return -1;
-        return static_cast<bool>(side[cd]) ? 0 : 1;
-      },
-      type_code
-    );
-    const double gain = ci_parent -
-      ((wl / total_w) * child_scores.left +
-       (wr / total_w) * child_scores.right);
+      for (size_t i = 0; i + 1 < present.size(); ++i) {
+        if ((mask & (1ULL << i)) != 0) {
+          side[present[i]] = 1;
+          wl += level_w[present[i]];
+        }
+      }
 
-    if (gain > best_gain) {
-      best_gain = gain;
-      best_k = static_cast<int>(k);
+      const double wr = total_w - wl;
+      if (wl < minbucket || wr < minbucket) continue;
+      if ((wl / total_w) < minprob || (wr / total_w) < minprob) continue;
+
+      TwoCiScores child_scores = ci_score_children_ordered(
+        rank,
+        outcome,
+        weight,
+        ses_ord,
+        [&](int idx) {
+          const int cd = code[idx];
+          if (cd == NA_INTEGER || cd <= 0 || cd > n_levels) return -1;
+          return static_cast<bool>(side[cd]) ? 0 : 1;
+        },
+        type_code
+      );
+      const double gain = ci_parent -
+        ((wl / total_w) * child_scores.left +
+         (wr / total_w) * child_scores.right);
+
+      if (gain > best_gain) {
+        best_gain = gain;
+        best_side = side;
+        best_left_codes.clear();
+        for (int cd : present) {
+          if (best_side[cd]) best_left_codes.push_back(cd);
+        }
+      }
+    }
+  } else {
+    std::stable_sort(present.begin(), present.end(), [&](int a, int b) {
+      return (level_yw[a] / level_w[a]) < (level_yw[b] / level_w[b]);
+    });
+
+    std::vector<unsigned char> side(n_levels + 1, 0);
+    for (size_t i = 0; i < present.size(); ++i) {
+      cum_level_w[i] = (i == 0 ? 0.0 : cum_level_w[i - 1]) + level_w[present[i]];
+    }
+
+    for (size_t k = 0; k + 1 < present.size(); ++k) {
+      side[present[k]] = 1;
+
+      const double wl = cum_level_w[k];
+      const double wr = total_w - wl;
+      if (wl < minbucket || wr < minbucket) continue;
+      if ((wl / total_w) < minprob || (wr / total_w) < minprob) continue;
+
+      TwoCiScores child_scores = ci_score_children_ordered(
+        rank,
+        outcome,
+        weight,
+        ses_ord,
+        [&](int idx) {
+          const int cd = code[idx];
+          if (cd == NA_INTEGER || cd <= 0 || cd > n_levels) return -1;
+          return static_cast<bool>(side[cd]) ? 0 : 1;
+        },
+        type_code
+      );
+      const double gain = ci_parent -
+        ((wl / total_w) * child_scores.left +
+         (wr / total_w) * child_scores.right);
+
+      if (gain > best_gain) {
+        best_gain = gain;
+        best_side = side;
+        best_left_codes.assign(present.begin(), present.begin() + k + 1);
+      }
     }
   }
 
   LogicalVector left(n, false);
-  IntegerVector left_codes;
+  IntegerVector left_codes(0);
 
-  if (best_k >= 0) {
-    std::vector<unsigned char> best_side(n_levels + 1, 0);
-    left_codes = IntegerVector(best_k + 1);
-    for (int i = 0; i <= best_k; ++i) {
-      best_side[present[i]] = 1;
-      left_codes[i] = present[i];
+  if (R_finite(best_gain)) {
+    left_codes = IntegerVector(best_left_codes.size());
+    for (size_t i = 0; i < best_left_codes.size(); ++i) {
+      left_codes[i] = best_left_codes[i];
     }
     for (int i = 0; i < n; ++i) {
       const int cd = code[i];
@@ -487,6 +585,58 @@ List ci_best_factor_split_cpp_engine(
   return List::create(
     _["gain"] = best_gain,
     _["left"] = left,
-    _["left_codes"] = left_codes
+    _["left_codes"] = left_codes,
+    _["factor_split"] = split_mode
+  );
+}
+
+// [[Rcpp::export]]
+List ci_best_factor_split_cpp_engine(
+    IntegerVector code,
+    NumericMatrix y,
+    NumericVector wt,
+    int n_levels,
+    double minbucket,
+    double minprob,
+    std::string type) {
+
+  return ci_best_factor_split_cpp_engine_impl(
+    code,
+    y,
+    wt,
+    n_levels,
+    minbucket,
+    minprob,
+    type,
+    "order",
+    49,
+    1e6
+  );
+}
+
+// [[Rcpp::export]]
+List ci_best_factor_split_cpp_engine_controlled(
+    IntegerVector code,
+    NumericMatrix y,
+    NumericVector wt,
+    int n_levels,
+    double minbucket,
+    double minprob,
+    std::string type,
+    std::string factor_split,
+    int max_factor_levels_partition,
+    double max_factor_partitions) {
+
+  return ci_best_factor_split_cpp_engine_impl(
+    code,
+    y,
+    wt,
+    n_levels,
+    minbucket,
+    minprob,
+    type,
+    factor_split,
+    max_factor_levels_partition,
+    max_factor_partitions
   );
 }

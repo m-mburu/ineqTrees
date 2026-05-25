@@ -12,7 +12,10 @@ ci_tree_control(
   min_gain = 0,
   min_relative_gain = 0,
   mtry = NULL,
-  split_engine = c("cpp", "R")
+  split_engine = c("cpp", "R"),
+  factor_split = c("auto", "partition", "order"),
+  max_factor_levels_partition = 10L,
+  max_factor_partitions = 1e+06
 )
 }
 \arguments{
@@ -34,10 +37,26 @@ parent-node impurity required to split a node.}
 
 \item{split_engine}{Split-search implementation to use. \code{"cpp"} uses the
 Rcpp-backed split search, while \code{"R"} uses the reference R implementation.}
+
+\item{factor_split}{Strategy for unordered factor split search. \code{"partition"}
+evaluates binary partitions, \code{"order"} orders levels by weighted mean
+outcome and tries cumulative splits, and \code{"auto"} uses partition search
+when it is small enough and ordered search otherwise.}
+
+\item{max_factor_levels_partition}{Maximum number of observed factor levels
+eligible for partition search when \code{factor_split = "auto"}.}
+
+\item{max_factor_partitions}{Maximum number of binary factor partitions
+eligible for partition search when \code{factor_split = "auto"}.}
 }
 \value{
 A list of greedy CI tree controls.
 }
 \description{
 Create controls for greedy concentration-index trees
+}
+\details{
+Structural controls \code{minsplit}, \code{minbucket}, \code{minprob},
+\code{maxdepth}, and \code{min_relative_gain} must be finite. \code{min_gain = Inf} is
+allowed and prevents splitting.
 }
