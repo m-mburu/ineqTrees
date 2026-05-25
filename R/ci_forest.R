@@ -120,10 +120,15 @@
   as.numeric(pred)
 }
 
-#' Calculate simple forest variable importance from member trees
+#' Calculate mean simple forest variable importance from member trees
 #'
 #' @noRd
 .ci_forest_variable_importance <- function(trees) {
+  n_trees <- length(trees)
+  if (!n_trees) {
+    return(numeric())
+  }
+
   imps <- lapply(trees, function(tree) tree$fit$variable.importance)
   imps <- Filter(function(imp) length(imp) > 0L, imps)
 
@@ -137,6 +142,7 @@
   for (imp in imps) {
     importance[names(imp)] <- importance[names(imp)] + as.numeric(imp)
   }
+  importance <- importance / n_trees
 
   sort(importance, decreasing = TRUE)
 }
