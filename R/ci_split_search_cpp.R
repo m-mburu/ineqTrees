@@ -41,6 +41,7 @@ best_numeric_split_cpp <- function(
   type <- match.arg(type)
   return <- match.arg(return)
   ctrl <- .ci_tree_normalize_control(ctrl)
+  wt <- .ci_validate_weights(wt, length(x), "wt")
 
   stopifnot(is.matrix(y), ncol(y) == 2L, length(x) == nrow(y),
             length(wt) == nrow(y))
@@ -97,6 +98,7 @@ best_factor_split_cpp <- function(
   type <- match.arg(type)
   return <- match.arg(return)
   ctrl <- .ci_tree_normalize_control(ctrl)
+  wt_full <- .ci_validate_weights(wt_full, length(x_full), "wt_full")
 
   if (!is.factor(x_full)) {
     x_full <- factor(x_full)
@@ -115,14 +117,17 @@ best_factor_split_cpp <- function(
   }
 
   code <- as.integer(x)
-  out <- ci_best_factor_split_cpp_engine(
+  out <- ci_best_factor_split_cpp_engine_controlled(
     code = code,
     y = y,
     wt = as.numeric(wt),
     n_levels = length(full_levels),
     minbucket = ctrl$minbucket,
     minprob = ctrl$minprob,
-    type = type
+    type = type,
+    factor_split = ctrl$factor_split,
+    max_factor_levels_partition = ctrl$max_factor_levels_partition,
+    max_factor_partitions = ctrl$max_factor_partitions
   )
 
   if (!is.finite(out$gain)) {
@@ -153,6 +158,7 @@ best_factor_split_cpp <- function(
     split = sp,
     left = as.logical(out$left),
     type = "factor",
+    factor_split = out$factor_split,
     left_levels = full_levels[left_codes],
     right_levels = full_levels[right_codes]
   )
@@ -169,6 +175,7 @@ best_split_for_one_variable_cpp <- function(
     type = c("CI", "CIg", "CIc", "L")) {
   type <- match.arg(type)
   stopifnot(length(x) == nrow(y), length(wt) == nrow(y))
+  wt <- .ci_validate_weights(wt, nrow(y), "wt")
   ctrl <- .ci_tree_normalize_control(ctrl)
 
   keep <- stats::complete.cases(y) & !is.na(x) & !is.na(wt) & wt > 0
@@ -221,6 +228,7 @@ best_global_ci_split_cpp <- function(x,
                                      vars = seq_along(x)) {
   type <- match.arg(type)
   stopifnot(is.matrix(y), nrow(y) == length(wt))
+  wt <- .ci_validate_weights(wt, nrow(y), "wt")
   ctrl <- .ci_tree_normalize_control(ctrl)
 
   vars <- as.integer(vars)

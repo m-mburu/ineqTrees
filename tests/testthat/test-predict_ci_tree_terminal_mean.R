@@ -116,6 +116,38 @@ test_that("ci_tree_validation_gain scores a fitted partition", {
   expect_true(is.finite(score))
 })
 
+test_that("validation-gain helpers reject non-finite weights", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12)
+  )
+  fit <- ci_tree(
+    cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  for (bad_weights in list(
+    c(1, Inf, 1, 1, 1, 1),
+    c(1, NaN, 1, 1, 1, 1),
+    c(1, -Inf, 1, 1, 1, 1)
+  )) {
+    expect_error(
+      ci_tree_validation_gain(
+        fit,
+        toy_data,
+        "rank",
+        "outcome",
+        weights = bad_weights
+      ),
+      "finite"
+    )
+  }
+})
+
 test_that("relative validation gain scales validation gain by root impurity", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),

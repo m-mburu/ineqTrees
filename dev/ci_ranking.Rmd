@@ -349,7 +349,7 @@ ci_factory <- function(type = c("CI", "CIg", "CIc", "L")) {
 }
 ```
 
-```{r, example-ci_factory)}
+```{r, example-ci_factory}
 ci <- ci_factory("CI")
 y <- cbind(c(10, 20, 30), c(1, 0, 1))
 ci(y, c(1, 1, 2))

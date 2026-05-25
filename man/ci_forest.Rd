@@ -50,13 +50,17 @@ the greedy tree builder.}
 
 \item{mtry}{Optional number of variables randomly tried at each split.}
 
-\item{perturb}{Resampling specification. \code{replace} controls whether rows are
-sampled with replacement and \code{fraction} controls the sample size relative
-to the complete analysis data.}
+\item{perturb}{Resampling specification. Use \code{NULL} for the default
+subsample or a list with optional \code{replace} and \code{fraction} entries.
+\code{replace} controls whether rows are sampled with replacement and must be
+\code{NULL} or a single non-missing logical. \code{fraction} controls the sample
+size relative to the complete analysis data and must be \code{NULL} or a
+positive finite number.}
 
 \item{parallel}{Logical; grow trees with \code{\link[future.apply:future_lapply]{future.apply::future_lapply()}}.
-The future backend is controlled by the user outside \code{ci_forest()}, for
-example with \code{future::plan()}.}
+This requires the suggested package \code{future.apply}. The future backend is
+controlled by the user outside \code{ci_forest()}, for example with
+\code{future::plan()}.}
 
 \item{future.seed}{Passed to \code{\link[future.apply:future_lapply]{future.apply::future_lapply()}} when
 \code{parallel = TRUE}.}

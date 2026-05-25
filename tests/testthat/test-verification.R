@@ -69,3 +69,83 @@ test_that("best_global_ci_split_cpp respects min_relative_gain", {
     type = "CIg"
   ))
 })
+
+test_that("best_factor_split_cpp uses exact partition search when requested", {
+  x_full <- factor(rep(letters[1:4], each = 4), levels = letters[1:4])
+  keep <- rep(TRUE, 16)
+  y_full <- cbind(
+    rank = c(
+      0.208, 0.307, 0.331, 0.199, 0.236, 0.275, 0.591, 0.253,
+      0.123, 0.230, 0.598, 0.211, 0.464, 0.647, 0.961, 0.676
+    ),
+    outcome = c(
+      2.281, 1.853, 2.333, 2.283, 1.301, 3.502, 2.120, 1.706,
+      2.906, 4.838, 3.343, 3.161, 4.298, 3.896, 4.187, 0.548
+    )
+  )
+  wt_full <- c(
+    1.649, 1.998, 2.799, 2.957, 0.595, 1.945, 2.333, 1.122,
+    1.252, 2.334, 2.767, 1.025, 1.395, 1.621, 2.766, 1.474
+  )
+  ctrl <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    factor_split = "partition",
+    max_factor_partitions = 1e6
+  )
+  expected <- best_factor_split(
+    x_full, keep, y_full, wt_full, 1, ctrl, ci_factory("CI"),
+    return = "candidate"
+  )
+  cpp <- best_factor_split_cpp(
+    x_full, keep, y_full, wt_full, 1, ctrl, type = "CI",
+    return = "candidate"
+  )
+
+  expect_equal(cpp$factor_split, "partition")
+  expect_equal(cpp$gain, expected$gain, tolerance = 1e-12)
+  expect_equal(cpp$left_levels, expected$left_levels)
+})
+
+test_that("best_factor_split_cpp falls back to ordered factor search in auto mode", {
+  x_full <- factor(rep(letters[1:4], each = 2), levels = letters[1:4])
+  keep <- rep(TRUE, 8)
+  y_full <- cbind(
+    rank = seq_len(8),
+    outcome = c(1, 2, 4, 3, 7, 6, 8, 5)
+  )
+  wt_full <- rep(1, 8)
+  ctrl <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    factor_split = "auto",
+    max_factor_partitions = 1
+  )
+  cpp <- best_factor_split_cpp(
+    x_full, keep, y_full, wt_full, 1, ctrl, type = "CI",
+    return = "candidate"
+  )
+
+  expect_equal(cpp$factor_split, "order")
+})
+
+test_that("best_global_ci_split_cpp rejects non-finite weights before C++", {
+  predictors <- data.frame(x = c(1, 2, 3))
+  y <- cbind(rank = c(10, 20, 30), outcome = c(1, 0, 1))
+  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      best_global_ci_split_cpp(
+        x = predictors,
+        y = y,
+        wt = bad_weights,
+        ctrl = ctrl,
+        type = "CI"
+      ),
+      "finite"
+    )
+  }
+})

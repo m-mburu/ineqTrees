@@ -77,6 +77,58 @@ test_that(
   }, logical(1))))
 })
 
+test_that("ci_forest stores simple rpart-style variable importance", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12),
+    group = factor(c("low", "low", "mid", "mid", "high", "high"))
+  )
+
+  set.seed(20260525)
+  fit <- ci_forest(
+    formula = cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 5L,
+    mtry = 1L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 2)
+  )
+
+  expect_type(fit$variable.importance, "double")
+  expect_named(fit$variable.importance)
+  expect_gt(length(fit$variable.importance), 0L)
+  expect_true(all(fit$variable.importance >= 0))
+  expect_equal(
+    fit$variable.importance,
+    sort(fit$variable.importance, decreasing = TRUE)
+  )
+})
+
+test_that(".ci_forest_variable_importance returns numeric() with no split trees", {
+  forest_vi <- getFromNamespace(".ci_forest_variable_importance", "ineqTrees")
+  trees <- list(
+    list(fit = list(variable.importance = numeric())),
+    list(fit = list(variable.importance = numeric()))
+  )
+
+  expect_identical(forest_vi(trees), numeric())
+})
+
+test_that(".ci_forest_variable_importance sums trees in decreasing order", {
+  forest_vi <- getFromNamespace(".ci_forest_variable_importance", "ineqTrees")
+  trees <- list(
+    list(fit = list(variable.importance = c(x2 = 1, x1 = 2))),
+    list(fit = list(variable.importance = c(x1 = 3))),
+    list(fit = list(variable.importance = numeric()))
+  )
+  out <- forest_vi(trees)
+
+  expect_equal(out, c(x1 = 5, x2 = 1))
+  expect_equal(out[["x1"]], 5)
+})
+
 test_that("ci_forest accepts explicit weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),
@@ -96,6 +148,62 @@ test_that("ci_forest accepts explicit weights", {
 
   expect_s3_class(fit, "ci_forest")
   expect_equal(nrow(stats::fitted(fit)), nrow(toy_data))
+})
+
+test_that("ci_forest rejects non-finite weights", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40),
+    outcome = c(1, 0, 1, 0),
+    income = c(2, 4, 6, 8)
+  )
+
+  for (bad_weights in list(c(1, Inf, 1, 1), c(1, NaN, 1, 1), c(1, -Inf, 1, 1))) {
+    expect_error(
+      ci_forest(
+        formula = cbind(rank, outcome) ~ income,
+        data = toy_data,
+        rank_name = "rank",
+        outcome_name = "outcome",
+        weights = bad_weights,
+        ntree = 2L,
+        control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+      ),
+      "finite"
+    )
+  }
+})
+
+test_that("ci_forest validates perturb inputs", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40),
+    outcome = c(1, 0, 1, 0),
+    income = c(2, 4, 6, 8)
+  )
+  base_args <- list(
+    formula = cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 2L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1)
+  )
+
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = 0.632))),
+    "`perturb` must be `NULL` or a list\\."
+  )
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = list(replace = NA)))),
+    "perturb\\$replace"
+  )
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = list(fraction = Inf)))),
+    "perturb\\$fraction"
+  )
+  expect_error(
+    do.call(ci_forest, c(base_args, list(perturb = list(fraction = 0)))),
+    "perturb\\$fraction"
+  )
 })
 
 test_that("ci_forest predicts on new data with old cforest-style FUN", {

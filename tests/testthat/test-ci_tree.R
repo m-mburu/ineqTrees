@@ -112,6 +112,29 @@ test_that("ci_splitfun errors when it cannot recover a two-column response", {
   )
 })
 
+test_that("ci_splitfun rejects non-finite weights", {
+  splitfun <- ci_splitfun("rank", "outcome", "CI")
+  toy_data <- data.frame(
+    rank = c(10, 20, 30),
+    outcome = c(1, 0, 1),
+    income = c(2, 4, 6)
+  )
+  ctrl <- list(minsplit = 1, minbucket = 1, minprob = 0)
+
+  expect_error(
+    splitfun(
+      model = NULL,
+      trafo = NULL,
+      data = toy_data,
+      subset = seq_len(nrow(toy_data)),
+      weights = c(1, Inf, 1),
+      whichvar = 3,
+      ctrl = ctrl
+    ),
+    "finite"
+  )
+})
+
 test_that("ci_tree rejects negative weights", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40),
@@ -127,8 +150,29 @@ test_that("ci_tree rejects negative weights", {
       outcome_name = "outcome",
       weights = c(1, -1, 1, 1)
     ),
-    "weights must be non-negative"
+    "non-negative"
   )
+})
+
+test_that("ci_tree rejects non-finite weights", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30),
+    outcome = c(1, 0, 1),
+    income = c(2, 4, 6)
+  )
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      ci_tree(
+        formula = cbind(rank, outcome) ~ income,
+        data = toy_data,
+        rank_name = "rank",
+        outcome_name = "outcome",
+        weights = bad_weights
+      ),
+      "finite"
+    )
+  }
 })
 
 test_that("ci_tree accepts non-integer weights", {
@@ -212,6 +256,32 @@ test_that("ci_tree returns partykit predictions and terminal nodes", {
   expect_equal(length(predict(fit, type = "node")), nrow(toy_data))
   expect_equal(length(predict(fit, type = "response")), nrow(toy_data))
   expect_equal(length(partykit::nodeids(fit, terminal = TRUE)), 2L)
+})
+
+test_that("ci_tree stores simple rpart-style variable importance", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    income = c(2, 4, 6, 8, 10, 12),
+    group = factor(c("low", "low", "mid", "mid", "high", "high"))
+  )
+
+  fit <- ci_tree(
+    formula = cbind(rank, outcome) ~ income + group,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 2)
+  )
+
+  expect_type(fit$variable.importance, "double")
+  expect_named(fit$variable.importance)
+  expect_gt(length(fit$variable.importance), 0L)
+  expect_true(all(fit$variable.importance >= 0))
+  expect_equal(
+    fit$variable.importance,
+    sort(fit$variable.importance, decreasing = TRUE)
+  )
 })
 
 test_that("ci_tree split_engine R fallback matches cpp default", {

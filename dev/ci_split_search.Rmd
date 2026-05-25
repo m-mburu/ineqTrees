@@ -57,6 +57,7 @@ best_numeric_split <- function(
     ci_fun,
     return = c("split", "candidate")) {
   return <- match.arg(return)
+  wt <- .ci_validate_weights(wt, length(x), "wt")
   ord <- order(x)
   x <- x[ord]
   y <- y[ord, , drop = FALSE]
@@ -230,14 +231,91 @@ test_that("best_numeric_split can return a reusable split candidate", {
   expect_s3_class(candidate$partysplit, "partysplit")
   expect_equal(candidate$left, c(FALSE, TRUE, TRUE, TRUE))
 })
+
+test_that("best_numeric_split rejects non-finite weights", {
+  x <- c(1, 2, 3)
+  y <- cbind(ses = c(10, 20, 30), health = c(1, 0, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      best_numeric_split(x, y, bad_weights, 1, ctrl, ci_factory("CI")),
+      "finite"
+    )
+  }
+})
 ```
 
 ```{r, function-best_factor_split}
+#' Count unique binary partitions for a factor split
+#'
+#' @param n_levels Number of observed factor levels.
+#'
+#' @return Number of unique binary partitions after dropping complements.
+#'
+#' @filename best_numeric_split.R
+#' @noRd
+.ci_factor_partition_count <- function(n_levels) {
+  if (n_levels <= 1L) {
+    return(0)
+  }
+  2^(n_levels - 1L) - 1
+}
+
+#' Choose the factor split search mode for a node
+#'
+#' @param ctrl Normalized tree controls.
+#' @param n_levels Number of observed factor levels.
+#'
+#' @return Either `"partition"` or `"order"`.
+#'
+#' @noRd
+.ci_factor_split_mode <- function(ctrl, n_levels) {
+  ctrl <- .ci_tree_normalize_control(ctrl)
+  n_partitions <- .ci_factor_partition_count(n_levels)
+  can_partition <- n_levels <= ctrl$max_factor_levels_partition &&
+    n_partitions <= ctrl$max_factor_partitions &&
+    n_partitions <= .Machine$integer.max
+
+  if (identical(ctrl$factor_split, "order")) {
+    return("order")
+  }
+  if (identical(ctrl$factor_split, "auto")) {
+    return(if (can_partition) "partition" else "order")
+  }
+  if (!can_partition) {
+    stop(
+      "Exact factor partition search would evaluate too many partitions; ",
+      "increase `control$max_factor_levels_partition` and ",
+      "`control$max_factor_partitions`, or use `factor_split = \"order\"`.",
+      call. = FALSE
+    )
+  }
+
+  "partition"
+}
+
+#' Decode a factor partition bit mask
+#'
+#' @param mask Integer partition mask.
+#' @param n_levels Number of observed factor levels.
+#'
+#' @return Logical vector indicating levels sent left.
+#'
+#' @noRd
+.ci_factor_mask_left <- function(mask, n_levels) {
+  c(
+    as.logical(intToBits(as.integer(mask))[seq_len(n_levels - 1L)]),
+    FALSE
+  )
+}
+
 #' Find the best factor split by concentration-index gain
 #'
-#' Evaluate cumulative binary splits of a factor predictor after ordering the
-#' observed levels by weighted mean outcome, and return the split with the
-#' largest weighted concentration-index gain.
+#' Evaluate binary splits of a factor predictor and return the split with the
+#' largest weighted concentration-index gain. Exact partition search is used
+#' for small factors when enabled by `ctrl$factor_split`; otherwise levels are
+#' ordered by weighted mean outcome and cumulative splits are evaluated.
 #'
 #' Only levels present among the kept observations are scored, but the returned
 #' split keeps the full level mapping so it can be used with
@@ -252,7 +330,8 @@ test_that("best_numeric_split can return a reusable split candidate", {
 #' @param wt_full A numeric vector of case weights for all observations.
 #' @param varid Integer identifier of the splitting variable, passed to
 #'   [partykit::partysplit()].
-#' @param ctrl A list-like control object containing `minbucket` and `minprob`.
+#' @param ctrl A list-like control object containing `minbucket`, `minprob`,
+#'   and optional factor split controls.
 #' @param ci_fun A concentration-index scoring function, typically created by
 #'   [ci_factory()].
 #' @param return Either `"split"` to return only a [partykit::partysplit()]
@@ -268,65 +347,110 @@ best_factor_split <- function(
     x_full, keep, y_full, wt_full, varid, ctrl, ci_fun,
     return = c("split", "candidate")) {
   return <- match.arg(return)
+  ctrl <- .ci_tree_normalize_control(ctrl)
+  wt_full <- .ci_validate_weights(wt_full, length(x_full), "wt_full")
   # keep full level mapping for partysplit()
   full_levels <- levels(x_full)
   x <- x_full[keep]
   y <- y_full[keep, , drop = FALSE]
   wt <- wt_full[keep]
+  x_chr <- as.character(x)
 
-  present_levels <- full_levels[full_levels %in% unique(as.character(x))]
+  present_levels <- full_levels[full_levels %in% unique(x_chr)]
   if (length(present_levels) <= 1L) return(NULL)
 
   ci_parent <- ci_fun(y, wt)
+  split_mode <- .ci_factor_split_mode(ctrl, length(present_levels))
 
-  # order factor levels by weighted mean outcome, then search cumulative
-  # binary splits
-  level_score <- sapply(
+  level_weight <- vapply(
     present_levels,
     function(lv) {
-      idx <- as.character(x) == lv
-      stats::weighted.mean(y[idx, 2], wt[idx])
-    }
+      sum(wt[x_chr == lv], na.rm = TRUE)
+    },
+    numeric(1)
   )
 
-  ord_levels <- present_levels[order(level_score)]
-  level_weight <- sapply(
-    ord_levels,
-    function(lv) {
-      sum(wt[as.character(x) == lv], na.rm = TRUE)
+  total_weight <- sum(level_weight)
+  if (!is.finite(total_weight) || total_weight <= 0) {
+    return(NULL)
+  }
+  best_gain <- -Inf
+  left_levels <- NULL
+
+  if (identical(split_mode, "partition")) {
+    n_partitions <- as.integer(.ci_factor_partition_count(length(present_levels)))
+
+    for (mask in seq_len(n_partitions)) {
+      left_mask <- .ci_factor_mask_left(mask, length(present_levels))
+      wl <- sum(level_weight[left_mask])
+      wr <- total_weight - wl
+
+      if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
+      if ((wl / total_weight) < ctrl$minprob ||
+          (wr / total_weight) < ctrl$minprob) {
+        next
+      }
+
+      candidate_left_levels <- present_levels[left_mask]
+      left <- x_chr %in% candidate_left_levels
+      gain <- .weighted_ci_gain_from_parent(
+        y = y,
+        wt = wt,
+        left = left,
+        ci_fun = ci_fun,
+        ci_parent = ci_parent
+      )
+
+      if (is.finite(gain) && gain > best_gain) {
+        best_gain <- gain
+        left_levels <- candidate_left_levels
+      }
     }
-  )
-  cum_level_weight <- cumsum(level_weight)
-  total_weight <- cum_level_weight[length(cum_level_weight)]
-  gains <- rep(-Inf, length(ord_levels) - 1L)
-
-  for (k in seq_len(length(ord_levels) - 1L)) {
-    wl <- cum_level_weight[k]
-    wr <- total_weight - wl
-
-    if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
-    if ((wl / total_weight) < ctrl$minprob ||
-        (wr / total_weight) < ctrl$minprob) {
-      next
-    }
-
-    left_levels <- ord_levels[seq_len(k)]
-    left <- as.character(x) %in% left_levels
-    gains[k] <- .weighted_ci_gain_from_parent(
-      y = y,
-      wt = wt,
-      left = left,
-      ci_fun = ci_fun,
-      ci_parent = ci_parent
+  } else {
+    level_score <- vapply(
+      present_levels,
+      function(lv) {
+        idx <- x_chr == lv
+        stats::weighted.mean(y[idx, 2], wt[idx])
+      },
+      numeric(1)
     )
+
+    ord_levels <- present_levels[order(level_score)]
+    ordered_weight <- level_weight[match(ord_levels, present_levels)]
+    cum_level_weight <- cumsum(ordered_weight)
+
+    for (k in seq_len(length(ord_levels) - 1L)) {
+      wl <- cum_level_weight[k]
+      wr <- total_weight - wl
+
+      if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
+      if ((wl / total_weight) < ctrl$minprob ||
+          (wr / total_weight) < ctrl$minprob) {
+        next
+      }
+
+      candidate_left_levels <- ord_levels[seq_len(k)]
+      left <- x_chr %in% candidate_left_levels
+      gain <- .weighted_ci_gain_from_parent(
+        y = y,
+        wt = wt,
+        left = left,
+        ci_fun = ci_fun,
+        ci_parent = ci_parent
+      )
+
+      if (is.finite(gain) && gain > best_gain) {
+        best_gain <- gain
+        left_levels <- candidate_left_levels
+      }
+    }
   }
 
-  if (!any(is.finite(gains))) return(NULL)
+  if (!is.finite(best_gain)) return(NULL)
 
-  best_k <- which.max(gains)
-  left_levels <- ord_levels[seq_len(best_k)]
-  right_levels <- ord_levels[-seq_len(best_k)]
-  left <- as.character(x) %in% left_levels
+  right_levels <- present_levels[!present_levels %in% left_levels]
+  left <- x_chr %in% left_levels
 
   index <- rep(NA_integer_, length(full_levels))
   index[match(left_levels,  full_levels)] <- 1L
@@ -342,12 +466,13 @@ best_factor_split <- function(
   }
 
   list(
-    gain = gains[best_k],
+    gain = best_gain,
     varid = as.integer(varid),
     partysplit = sp,
     split = sp,
     left = left,
     type = "factor",
+    factor_split = split_mode,
     left_levels = left_levels,
     right_levels = right_levels
   )
@@ -422,7 +547,7 @@ test_that("best_factor_split chooses the best cumulative level split", {
     health = c(10, 1, 2)
   )
   wt_full <- rep(1, 3)
-  ctrl <- list(minbucket = 1, minprob = 0)
+  ctrl <- ci_tree_control(factor_split = "order", minbucket = 1, minprob = 0)
   mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)^2
 
   split <- best_factor_split(
@@ -451,7 +576,7 @@ test_that("best_factor_split respects minprob when scoring candidates", {
     health = c(1, 2, 2, 10, 10)
   )
   wt_full <- rep(1, 5)
-  ctrl <- list(minbucket = 1, minprob = 0.4)
+  ctrl <- ci_tree_control(factor_split = "order", minbucket = 1, minprob = 0.4)
   mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)^2
 
   split <- best_factor_split(
@@ -478,7 +603,7 @@ test_that("best_factor_split can return a reusable split candidate", {
     health = c(10, 1, 2)
   )
   wt_full <- rep(1, 3)
-  ctrl <- list(minbucket = 1, minprob = 0)
+  ctrl <- ci_tree_control(factor_split = "order", minbucket = 1, minprob = 0)
   mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)^2
 
   candidate <- best_factor_split(
@@ -495,6 +620,115 @@ test_that("best_factor_split can return a reusable split candidate", {
   expect_type(candidate$gain, "double")
   expect_s3_class(candidate$partysplit, "partysplit")
   expect_equal(candidate$left, c(FALSE, TRUE, TRUE))
+})
+
+test_that("best_factor_split exact partition can beat ordered search", {
+  x_full <- factor(rep(letters[1:4], each = 4), levels = letters[1:4])
+  keep <- rep(TRUE, 16)
+  y_full <- cbind(
+    rank = c(
+      0.208, 0.307, 0.331, 0.199, 0.236, 0.275, 0.591, 0.253,
+      0.123, 0.230, 0.598, 0.211, 0.464, 0.647, 0.961, 0.676
+    ),
+    outcome = c(
+      2.281, 1.853, 2.333, 2.283, 1.301, 3.502, 2.120, 1.706,
+      2.906, 4.838, 3.343, 3.161, 4.298, 3.896, 4.187, 0.548
+    )
+  )
+  wt_full <- c(
+    1.649, 1.998, 2.799, 2.957, 0.595, 1.945, 2.333, 1.122,
+    1.252, 2.334, 2.767, 1.025, 1.395, 1.621, 2.766, 1.474
+  )
+  ci <- ci_factory("CI")
+  ctrl_order <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    factor_split = "order"
+  )
+  ctrl_partition <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    factor_split = "partition",
+    max_factor_partitions = 1e6
+  )
+
+  ordered <- best_factor_split(
+    x_full, keep, y_full, wt_full, 1, ctrl_order, ci,
+    return = "candidate"
+  )
+  partition <- best_factor_split(
+    x_full, keep, y_full, wt_full, 1, ctrl_partition, ci,
+    return = "candidate"
+  )
+
+  expect_equal(partition$factor_split, "partition")
+  expect_gt(partition$gain, ordered$gain)
+  expect_equal(partition$left_levels, c("a", "b", "c"))
+})
+
+test_that("best_factor_split auto falls back when partition search is too large", {
+  x_full <- factor(rep(letters[1:4], each = 2), levels = letters[1:4])
+  keep <- rep(TRUE, 8)
+  y_full <- cbind(
+    rank = seq_len(8),
+    outcome = c(1, 2, 4, 3, 7, 6, 8, 5)
+  )
+  wt_full <- rep(1, 8)
+  ctrl <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    factor_split = "auto",
+    max_factor_partitions = 1
+  )
+
+  candidate <- best_factor_split(
+    x_full, keep, y_full, wt_full, 1, ctrl, ci_factory("CI"),
+    return = "candidate"
+  )
+
+  expect_equal(candidate$factor_split, "order")
+})
+
+test_that("best_factor_split explicit partition errors when search is too large", {
+  x_full <- factor(rep(letters[1:4], each = 2), levels = letters[1:4])
+  keep <- rep(TRUE, 8)
+  y_full <- cbind(
+    rank = seq_len(8),
+    outcome = c(1, 2, 4, 3, 7, 6, 8, 5)
+  )
+  wt_full <- rep(1, 8)
+  ctrl <- ci_tree_control(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    factor_split = "partition",
+    max_factor_partitions = 1
+  )
+
+  expect_error(
+    best_factor_split(
+      x_full, keep, y_full, wt_full, 1, ctrl, ci_factory("CI"),
+      return = "candidate"
+    ),
+    "Exact factor partition search"
+  )
+})
+
+test_that("best_factor_split rejects non-finite weights", {
+  x_full <- factor(c("a", "b", "c"), levels = c("a", "b", "c"))
+  keep <- rep(TRUE, 3)
+  y_full <- cbind(rank = c(10, 20, 30), outcome = c(1, 0, 1))
+  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      best_factor_split(x_full, keep, y_full, bad_weights, 1, ctrl, ci_factory("CI")),
+      "finite"
+    )
+  }
 })
 ```
 ```{r, function-best_split_for_one_variable}
@@ -513,6 +747,7 @@ test_that("best_factor_split can return a reusable split candidate", {
 #' @export
 best_split_for_one_variable <- function(x, y, wt, varid, ctrl, ci_fun) {
   stopifnot(length(x) == nrow(y), length(wt) == nrow(y))
+  wt <- .ci_validate_weights(wt, nrow(y), "wt")
   ctrl <- .ci_tree_normalize_control(ctrl)
 
   keep <- stats::complete.cases(y) & !is.na(x) & !is.na(wt) & wt > 0
@@ -582,6 +817,7 @@ best_global_ci_split <- function(x,
                                  ci_fun,
                                  vars = seq_along(x)) {
   stopifnot(is.matrix(y), nrow(y) == length(wt))
+  wt <- .ci_validate_weights(wt, nrow(y), "wt")
   ctrl <- .ci_tree_normalize_control(ctrl)
 
   vars <- as.integer(vars)
@@ -721,6 +957,25 @@ test_that("best_global_ci_split respects min_relative_gain", {
     ci_fun = ci_fun,
     vars = 3
   ))
+})
+
+test_that("best_global_ci_split rejects non-finite weights", {
+  predictors <- data.frame(x = c(1, 2, 3))
+  y <- cbind(rank = c(10, 20, 30), outcome = c(1, 0, 1))
+  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
+
+  for (bad_weights in list(c(1, Inf, 1), c(1, NaN, 1), c(1, -Inf, 1))) {
+    expect_error(
+      best_global_ci_split(
+        x = predictors,
+        y = y,
+        wt = bad_weights,
+        ctrl = ctrl,
+        ci_fun = ci_factory("CI")
+      ),
+      "finite"
+    )
+  }
 })
 ```
 

@@ -19,7 +19,7 @@ control_ci_tune(
 \item{verbose}{Logical; print fold-level progress.}
 
 \item{allow_par}{Logical; allow future-based parallel execution when
-\code{num_cores > 1}.}
+\code{num_cores > 1}. This requires the suggested package \code{future.apply}.}
 
 \item{parallel_over}{Parallelization strategy. \code{"resamples"} and
 \code{"everything"} are currently accepted; both are executed over

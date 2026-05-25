@@ -37,7 +37,7 @@ rank_wt(c(1, 2, NA, 3), c(1, 0, 1, 2))
   
 
 
-```{r example-ci_factory)}
+```{r example-ci_factory}
 ci <- ci_factory("CI")
 y <- cbind(c(10, 20, 30), c(1, 0, 1))
 ci(y, c(1, 1, 2))

@@ -82,7 +82,7 @@ kenya_stat_funs <- list(
 
 
 
-```{r, function-tree_pretty_var_name()}
+```{r, function-tree_pretty_var_name}
 #' Replace underscores with spaces in a variable name
 #'
 #' Internal fallback used when no prettier variable label is supplied for tree
