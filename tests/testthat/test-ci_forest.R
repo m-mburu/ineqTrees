@@ -116,7 +116,7 @@ test_that(".ci_forest_variable_importance returns numeric() with no split trees"
   expect_identical(forest_vi(trees), numeric())
 })
 
-test_that(".ci_forest_variable_importance sums trees in decreasing order", {
+test_that(".ci_forest_variable_importance averages trees in decreasing order", {
   forest_vi <- getFromNamespace(".ci_forest_variable_importance", "ineqTrees")
   trees <- list(
     list(fit = list(variable.importance = c(x2 = 1, x1 = 2))),
@@ -125,8 +125,8 @@ test_that(".ci_forest_variable_importance sums trees in decreasing order", {
   )
   out <- forest_vi(trees)
 
-  expect_equal(out, c(x1 = 5, x2 = 1))
-  expect_equal(out[["x1"]], 5)
+  expect_equal(out, c(x1 = 5 / 3, x2 = 1 / 3))
+  expect_equal(out[["x1"]], 5 / 3)
 })
 
 test_that("ci_forest accepts explicit weights", {
