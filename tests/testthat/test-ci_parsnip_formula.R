@@ -75,6 +75,37 @@ test_that("decision_tree engine maxdepth can override tree_depth", {
   expect_equal(unclass(fit$fit)$info$control$maxdepth, 2L)
 })
 
+test_that("decision_tree engine passes min_relative_gain to control", {
+  skip_if_not_installed("parsnip")
+
+  register_ineqtrees_parsnip()
+
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16)
+  )
+
+  spec <- parsnip::decision_tree(tree_depth = 1, min_n = 1) |>
+    parsnip::set_engine(
+      "ineqTrees",
+      rank_name = "rank",
+      outcome_name = "outcome",
+      minsplit = 1,
+      minprob = 0,
+      min_relative_gain = 0.25
+    ) |>
+    parsnip::set_mode("regression")
+
+  fit <- parsnip::fit(
+    spec,
+    cbind(rank, outcome) ~ income,
+    data = toy_data
+  )
+
+  expect_equal(unclass(fit$fit)$info$control$min_relative_gain, 0.25)
+})
+
 test_that("parsnip wrappers accept a single-outcome formula", {
   skip_if_not_installed("parsnip")
 
@@ -150,6 +181,38 @@ test_that("rand_forest can fit ci_forest through ineqTrees engine", {
   expect_equal(nrow(nodes), nrow(toy_data))
 })
 
+test_that("rand_forest engine passes min_relative_gain to control", {
+  skip_if_not_installed("parsnip")
+
+  register_ineqtrees_parsnip()
+
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16)
+  )
+
+  spec <- parsnip::rand_forest(trees = 3, min_n = 1) |>
+    parsnip::set_engine(
+      "ineqTrees",
+      rank_name = "rank",
+      outcome_name = "outcome",
+      minsplit = 1,
+      minprob = 0,
+      maxdepth = 1,
+      min_relative_gain = 0.25
+    ) |>
+    parsnip::set_mode("regression")
+
+  fit <- parsnip::fit(
+    spec,
+    cbind(rank, outcome) ~ income,
+    data = toy_data
+  )
+
+  expect_equal(fit$fit$control$min_relative_gain, 0.25)
+})
+
 test_that("ci_gain computes a yardstick-style metric", {
   toy_pred <- data.frame(
     truth = c(1, 0, 1, 0, 1, 1),
@@ -192,6 +255,80 @@ test_that("ci_gain_vec rejects non-finite case weights", {
       "finite"
     )
   }
+})
+
+test_that("ci_tuning_metric_set computes validation and relative gain from .row", {
+  source_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    weight = c(1, 1, 1, 2, 2, 2)
+  )
+  pred_data <- data.frame(
+    .row = 1:6,
+    truth = source_data$outcome,
+    pred = c(0.8, 0.2, 0.7, 0.3, 0.6, 0.9)
+  )
+
+  metrics <- ci_tuning_metric_set(
+    source_data,
+    rank_name = "rank",
+    case_weight_name = "weight",
+    type = "CI",
+    metrics = c("validation_gain", "relative_validation_gain")
+  )
+
+  out <- metrics(pred_data, truth = truth, estimate = pred)
+  root_impurity <- ci_factory("CI")(
+    cbind(rank = source_data$rank, outcome = source_data$outcome),
+    source_data$weight
+  )
+
+  expect_s3_class(out, "tbl_df")
+  expect_equal(out$.metric, c("validation_gain", "relative_validation_gain"))
+  expect_true(all(is.finite(out$.estimate)))
+  expect_equal(
+    out$.estimate[out$.metric == "relative_validation_gain"],
+    out$.estimate[out$.metric == "validation_gain"] / abs(root_impurity)
+  )
+})
+
+test_that("ci_tuning_metric_set preserves tuning columns for tune_grid joins", {
+  source_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60),
+    outcome = c(1, 0, 1, 0, 1, 1),
+    weight = 1
+  )
+  pred_data <- rbind(
+    data.frame(
+      .row = 1:6,
+      truth = source_data$outcome,
+      pred = c(0.8, 0.2, 0.7, 0.3, 0.6, 0.9),
+      min_relative_gain = 0,
+      .config = "config_1"
+    ),
+    data.frame(
+      .row = 1:6,
+      truth = source_data$outcome,
+      pred = c(0.9, 0.1, 0.6, 0.4, 0.7, 0.8),
+      min_relative_gain = 0.25,
+      .config = "config_2"
+    )
+  )
+
+  metrics <- ci_tuning_metric_set(
+    source_data,
+    rank_name = "rank",
+    case_weight_name = "weight",
+    type = "CI",
+    metrics = "validation_gain"
+  )
+
+  out <- metrics(pred_data, truth = truth, estimate = pred)
+
+  expect_equal(nrow(out), 2L)
+  expect_true(all(c("min_relative_gain", ".config") %in% names(out)))
+  expect_equal(out$min_relative_gain, c(0, 0.25))
+  expect_equal(out$.config, c("config_1", "config_2"))
 })
 
 test_that("ci_prediction_index computes prediction inequality", {

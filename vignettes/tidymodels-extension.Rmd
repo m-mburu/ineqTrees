@@ -185,7 +185,8 @@ fit_tree_with_type <- function(ci_type) {
       type = ci_type,
       minsplit = 120L,
       minprob = 0.05,
-      min_gain = 0
+      min_gain = 0,
+      min_relative_gain = 0
     ) |>
     set_mode("regression")
 
@@ -246,7 +247,8 @@ tree_spec <- decision_tree(
     type = "CI",
     minsplit = 120L,
     minprob = 0.05,
-    min_gain = 0
+    min_gain = 0,
+    min_relative_gain = 0
   ) |>
   set_mode("regression")
 
@@ -406,7 +408,8 @@ tree_tune_spec <- decision_tree(
     type = "CI",
     minsplit = 120L,
     minprob = 0.05,
-    min_gain = 0
+    min_gain = 0,
+    min_relative_gain = tune()
   ) |>
   set_mode("regression")
 
@@ -415,98 +418,35 @@ tree_wf <- workflow() |>
   add_formula(predictor_formula) |>
   add_case_weights(case_wt)
 
-tree_grid <- grid_regular(
-  tree_depth(range = c(2L, 4L)),
-  min_n(range = c(40L, 90L)),
-  levels = 2L
+tree_grid <- expand.grid(
+  tree_depth = c(2L, 4L),
+  min_n = c(40L, 90L),
+  min_relative_gain = c(0, 0.05),
+  KEEP.OUT.ATTRS = FALSE,
+  stringsAsFactors = FALSE
 )
 
 tree_grid
 ```
 
 
-To tune directly on the inequality objective, we wrap `ci_gain()` as a
-yardstick-compatible metric. `tune_grid()` passes prediction rows to metrics,
-so the wrapper uses the `.row` column to recover each assessment row's rank and
-sampling weight from the original analysis table.
+To tune directly on the inequality objective, we use `ci_tuning_metric_set()`.
+The helper returns yardstick-compatible metrics and uses the `.row` column from
+`tune_grid()` to recover each assessment row's rank and sampling weight from
+the original analysis table.
 ```{r ci-gain-tuning-metric}
-ci_gain_tuning <- yardstick::new_numeric_metric(
-  function(data,
-           truth,
-           estimate,
-           na_rm = TRUE,
-           ci_type = "CI",
-           ...) {
-    truth <- rlang::enquo(truth)
-    estimate <- rlang::enquo(estimate)
-    metric_data <- tibble::as_tibble(data)
-
-    row_id <- if (".row" %in% names(metric_data)) {
-      suppressWarnings(as.integer(metric_data$.row))
-    } else {
-      rep(NA_integer_, nrow(metric_data))
-    }
-
-    if (all(!is.na(row_id)) && max(row_id) <= nrow(kenya_model)) {
-      metric_data$.rank <- kenya_model$wealth[row_id]
-      metric_data$.weight <- kenya_model$sample_weight[row_id]
-    } else if (all(c("wealth", "sample_weight") %in% names(metric_data))) {
-      metric_data$.rank <- metric_data$wealth
-      metric_data$.weight <- metric_data$sample_weight
-    } else {
-      stop(
-        "The CI gain tuning metric needs `.row` or `wealth`/`sample_weight`.",
-        call. = FALSE
-      )
-    }
-
-    score_one <- function(x) {
-      score <- ineqTrees::ci_gain(
-        x,
-        truth = !!truth,
-        estimate = !!estimate,
-        rank = .rank,
-        case_weights = .weight,
-        type = ci_type,
-        na_rm = na_rm
-      )[[".estimate"]]
-
-      tibble::tibble(
-        .metric = "ci_gain_tuning",
-        .estimator = "standard",
-        .estimate = score
-      )
-    }
-
-    tuning_cols <- intersect(
-      c(".config", "tree_depth", "trees", "mtry", "min_n"),
-      names(metric_data)
-    )
-
-    if (length(tuning_cols) > 0L) {
-      split_key <- do.call(
-        interaction,
-        c(metric_data[, tuning_cols, drop = FALSE], drop = TRUE, sep = "\r")
-      )
-
-      return(tibble::as_tibble(do.call(rbind, lapply(split(metric_data, split_key), function(x) {
-        out <- score_one(x)
-        for (col in tuning_cols) {
-          out[[col]] <- x[[col]][[1]]
-        }
-        out
-      }))))
-    }
-
-    score_one(metric_data)
-  },
-  direction = "maximize"
+ci_tuning_metrics <- ci_tuning_metric_set(
+  kenya_model,
+  rank_name = "wealth",
+  case_weight_name = "sample_weight",
+  type = "CI",
+  metrics = c("validation_gain", "relative_validation_gain")
 )
 ```
 
 
-The tuning loop can still collect familiar prediction metrics such as RMSE and
-MAE, but model selection is now driven by held-out concentration-index gain.
+The tuning loop can still collect familiar prediction metrics separately, but
+model selection is now driven by held-out concentration-index gain.
 ```{r tune-tree}
 set.seed(20260516)
 
@@ -514,7 +454,7 @@ tree_tuned <- tune_grid(
   tree_wf,
   resamples = tree_folds,
   grid = tree_grid,
-  metrics = metric_set(ci_gain_tuning, rmse, mae),
+  metrics = ci_tuning_metrics,
   control = control_grid(save_pred = TRUE)
 )
 
@@ -523,9 +463,9 @@ collect_metrics(tree_tuned)
 
 
 ```{r inspect-tree-tuning}
-show_best(tree_tuned, metric = "ci_gain_tuning", n = 4)
+show_best(tree_tuned, metric = "relative_validation_gain", n = 4)
 
-best_tree <- select_best(tree_tuned, metric = "ci_gain_tuning")
+best_tree <- select_best(tree_tuned, metric = "relative_validation_gain")
 best_tree
 ```
 
@@ -578,6 +518,7 @@ forest_spec <- rand_forest(
     minsplit = 120L,
     minprob = 0.05,
     maxdepth = 3L,
+    min_relative_gain = 0,
     perturb = list(replace = FALSE, fraction = 0.632)
   ) |>
   set_mode("regression")
@@ -636,7 +577,8 @@ surrogate_spec <- decision_tree(
     type = "CI",
     minsplit = 120L,
     minprob = 0.05,
-    min_gain = 0
+    min_gain = 0,
+    min_relative_gain = 0
   ) |>
   set_mode("regression")
 
@@ -735,6 +677,7 @@ forest_tune_spec <- rand_forest(
     minsplit = 120L,
     minprob = 0.05,
     maxdepth = 3L,
+    min_relative_gain = tune(),
     perturb = list(replace = FALSE, fraction = 0.632)
   ) |>
   set_mode("regression")
@@ -744,11 +687,13 @@ forest_wf <- workflow() |>
   add_formula(predictor_formula) |>
   add_case_weights(case_wt)
 
-forest_grid <- grid_regular(
-  trees(range = c(8L, 16L)),
-  mtry(range = c(1L, 3L)),
-  min_n(range = c(40L, 90L)),
-  levels = 2L
+forest_grid <- expand.grid(
+  trees = c(8L, 16L),
+  mtry = c(1L, 3L),
+  min_n = c(40L, 90L),
+  min_relative_gain = c(0, 0.05),
+  KEEP.OUT.ATTRS = FALSE,
+  stringsAsFactors = FALSE
 )
 
 forest_grid
@@ -762,7 +707,7 @@ forest_tuned <- tune_grid(
   forest_wf,
   resamples = tree_folds,
   grid = forest_grid,
-  metrics = metric_set(ci_gain_tuning, rmse, mae),
+  metrics = ci_tuning_metrics,
   control = control_grid(save_pred = TRUE, parallel_over = "resamples")
 )
 
@@ -771,9 +716,9 @@ collect_metrics(forest_tuned)
 
 
 ```{r inspect-forest-tuning}
-show_best(forest_tuned, metric = "ci_gain_tuning", n = 4)
+show_best(forest_tuned, metric = "relative_validation_gain", n = 4)
 
-best_forest <- select_best(forest_tuned, metric = "ci_gain_tuning")
+best_forest <- select_best(forest_tuned, metric = "relative_validation_gain")
 best_forest
 ```
 
@@ -806,7 +751,8 @@ final_forest_surrogate_spec <- decision_tree(
     type = "CI",
     minsplit = 120L,
     minprob = 0.05,
-    min_gain = 0
+    min_gain = 0,
+    min_relative_gain = 0
   ) |>
   set_mode("regression")
 
@@ -854,7 +800,7 @@ article, but through a different orchestration layer:
   `ci_tree` and `ci_forest` objects;
 - `plot()` and `ci_tree_terminal_summary()` still work on the extracted tree
   fits;
-- `workflow()`, `vfold_cv()`, `grid_regular()`, and `tune_grid()` provide the
+- `workflow()`, `vfold_cv()`, tuning grids, and `tune_grid()` provide the
   resampling and tuning machinery;
 - `ci_gain()` can be used both as the tuning metric and as the final
   concentration-index interpretation.

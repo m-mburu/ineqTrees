@@ -17,6 +17,7 @@ ci_tree_parsnip(
   minprob = 0.01,
   maxdepth = 4L,
   min_gain = 0,
+  min_relative_gain = 0,
   na.action = stats::na.omit,
   ...
 )
@@ -47,6 +48,9 @@ ci_tree_parsnip(
 this overrides \code{tree_depth}.}
 
 \item{min_gain}{Minimum concentration-index gain required to split.}
+
+\item{min_relative_gain}{Minimum concentration-index gain as a share of the
+parent-node impurity required to split.}
 
 \item{na.action}{Function for handling missing values.}
 

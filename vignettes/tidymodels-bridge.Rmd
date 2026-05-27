@@ -38,6 +38,7 @@ concentration-index gain metric.
 
 
 
+
 ## Example usage
 ```{r example}
 #| eval: no

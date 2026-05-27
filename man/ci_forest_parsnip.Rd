@@ -18,6 +18,7 @@ ci_forest_parsnip(
   minprob = 0.01,
   maxdepth = 4L,
   min_gain = 0,
+  min_relative_gain = 0,
   perturb = list(replace = FALSE, fraction = 0.632),
   na.action = stats::na.omit,
   ...
@@ -51,6 +52,9 @@ ci_forest_parsnip(
 this overrides \code{tree_depth}.}
 
 \item{min_gain}{Minimum concentration-index gain required to split.}
+
+\item{min_relative_gain}{Minimum concentration-index gain as a share of the
+parent-node impurity required to split.}
 
 \item{perturb}{Resampling specification passed to \code{\link[=ci_forest]{ci_forest()}}.}
 
