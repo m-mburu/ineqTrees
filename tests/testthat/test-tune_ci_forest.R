@@ -180,6 +180,13 @@ test_that("tune_ci_tree supports multiple metrics, controls, and collectors", {
 
   expect_equal(tuned$selection_metric, "validation_gain")
   expect_true(all(c("validation_gain", "brier") %in% tuned$summary$metric))
+  expect_equal(unique(ci_collect_metrics(tuned, metric = "brier")$metric), "brier")
+  expect_equal(unique(ci_show_best(tuned, metric = "brier", n = 1L)$metric), "brier")
+  expect_equal(unique(ci_select_best(tuned, metric = "brier")$metric), "brier")
+  expect_error(
+    ci_select_best(tuned, metric = c("validation_gain", "brier")),
+    "`metric` must be a single metric name"
+  )
   expect_s3_class(ci_collect_metrics(tuned), "data.table")
   expect_s3_class(ci_collect_metrics(tuned, summarize = FALSE), "data.table")
   tidy_metrics <- ci_collect_metrics(tuned, format = "tidy")
