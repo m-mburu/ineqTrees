@@ -216,7 +216,7 @@ tidymodels_bridge.Rmd:
     flat_file: dev/tidymodels_bridge.Rmd
     vignette_name: Tidymodels bridge
     open_vignette: true
-    check: true
+    check: false
     document: true
     overwrite: 'yes'
     clean: ask
@@ -230,11 +230,11 @@ tidymodels_extension.Rmd:
   inflate:
     flat_file: dev/tidymodels_extension.Rmd
     vignette_name: Tidymodels extension
-    open_vignette: false
+    open_vignette: true
     check: false
     document: false
     overwrite: 'yes'
-    clean: 'no'
+    clean: ask
     codecov: false
 tuning_tutorial.Rmd:
   path: dev/tuning_tutorial.Rmd

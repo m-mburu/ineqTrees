@@ -351,6 +351,13 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
   unique(metric)
 }
 
+.ci_match_selection_metric <- function(metric) {
+  if (length(metric) != 1L || is.na(metric)) {
+    stop("`metric` must be a single metric name.", call. = FALSE)
+  }
+  match.arg(metric, choices = .ci_metric_choices)
+}
+
 .ci_metric_directions <- function(metrics) {
   directions <- stats::setNames(
     vapply(metrics, .ci_metric_direction, character(1)),
@@ -2198,7 +2205,8 @@ ci_collect_metrics <- function(x,
     out <- out[selected_keys, on = c("type", "grid_id"), nomatch = 0L]
   }
   if (!is.null(metric)) {
-    out <- out[out$metric %in% metric, , drop = FALSE]
+    metric_filter <- metric
+    out <- out[out[["metric"]] %in% metric_filter, , drop = FALSE]
   }
   out
 }
@@ -2212,7 +2220,8 @@ ci_collect_metrics <- function(x,
   fold_dt <- data.table::copy(x$fold_results)
 
   if (!is.null(metric)) {
-    summary_dt <- summary_dt[summary_dt$metric %in% metric, , drop = FALSE]
+    metric_filter <- metric
+    summary_dt <- summary_dt[summary_dt[["metric"]] %in% metric_filter, , drop = FALSE]
   }
   if (!is.null(selected)) {
     selected_keys <- unique(data.table::as.data.table(selected)[, c("type", "grid_id"), with = FALSE])
@@ -2497,7 +2506,7 @@ ci_fit_summary_table <- function(x,
 #' @export
 ci_show_best <- function(x, metric = NULL, n = 5L, ...) {
   .ci_assert_tuning(x)
-  metric <- if (is.null(metric)) x$selection_metric else metric[1L]
+  metric <- .ci_match_selection_metric(if (is.null(metric)) x$selection_metric else metric)
   out <- data.table::as.data.table(ci_collect_metrics(x, summarize = TRUE, metric = metric))
   n <- as.integer(n)[1L]
   if (!nrow(out) || is.na(n) || n <= 0L) {
@@ -2527,7 +2536,7 @@ ci_show_best <- function(x, metric = NULL, n = 5L, ...) {
 #' @export
 ci_select_best <- function(x, metric = NULL, ...) {
   .ci_assert_tuning(x)
-  metric <- if (is.null(metric)) x$selection_metric else metric[1L]
+  metric <- .ci_match_selection_metric(if (is.null(metric)) x$selection_metric else metric)
   ci_show_best(x, metric = metric, n = 1L)
 }
 

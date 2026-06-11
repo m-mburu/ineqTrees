@@ -89,6 +89,8 @@ utils::globalVariables(c("object", "new_data"))
 #' @param maxdepth Maximum tree depth. When supplied through `set_engine()`,
 #'   this overrides `tree_depth`.
 #' @param min_gain Minimum concentration-index gain required to split.
+#' @param min_relative_gain Minimum concentration-index gain as a share of the
+#'   parent-node impurity required to split.
 #' @param na.action Function for handling missing values.
 #' @param ... Additional arguments passed to [ci_tree()].
 #'
@@ -107,6 +109,7 @@ ci_tree_parsnip <- function(formula,
                             minprob = 0.01,
                             maxdepth = 4L,
                             min_gain = 0,
+                            min_relative_gain = 0,
                             na.action = stats::na.omit,
                             ...) {
   if (!is.null(weights)) {
@@ -126,7 +129,8 @@ ci_tree_parsnip <- function(formula,
     minbucket = as.integer(minbucket),
     minprob = minprob,
     maxdepth = as.integer(depth),
-    min_gain = min_gain
+    min_gain = min_gain,
+    min_relative_gain = min_relative_gain
   )
 
   prepared <- .ci_parsnip_formula(
@@ -178,6 +182,7 @@ ci_forest_parsnip <- function(formula,
                               minprob = 0.01,
                               maxdepth = 4L,
                               min_gain = 0,
+                              min_relative_gain = 0,
                               perturb = list(replace = FALSE, fraction = 0.632),
                               na.action = stats::na.omit,
                               ...) {
@@ -190,7 +195,8 @@ ci_forest_parsnip <- function(formula,
     minbucket = as.integer(minbucket),
     minprob = minprob,
     maxdepth = as.integer(maxdepth),
-    min_gain = min_gain
+    min_gain = min_gain,
+    min_relative_gain = min_relative_gain
   )
 
   prepared <- .ci_parsnip_formula(
@@ -607,6 +613,302 @@ ci_gain.data.frame <- function(data,
       na_rm = na_rm
     )
   )
+}
+
+#' Create tidymodels tuning metrics for concentration-index model selection
+#'
+#' @description
+#' Builds a yardstick [yardstick::metric_set()] for use in [tune::tune_grid()]
+#' with `ineqTrees` parsnip engines. The returned metrics recover the
+#' socioeconomic rank and optional case weights from the original analysis data
+#' using the `.row` column supplied by `tune_grid()`.
+#'
+#' These metrics are intended for tidymodels workflows. The package-native
+#' [tune_ci_tree()] and [tune_ci_forest()] helpers remain the most direct way to
+#' tune on fitted CI partitions because they can inspect the fitted tree or
+#' forest objects. In tidymodels, when a node column is not supplied, validation
+#' gain uses predictions as the grouping variable, matching [ci_gain()].
+#'
+#' @param data Original analysis data used to create the resamples.
+#' @param rank_name Name of the socioeconomic rank column in `data`.
+#' @param case_weight_name Optional name of the case-weight column in `data`.
+#' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"`.
+#' @param metrics Character vector of CI metrics to include. Supported values
+#'   are `"validation_gain"` and `"relative_validation_gain"`.
+#' @param node_name Optional name of a node or partition column. If present in
+#'   the prediction data passed to the metric, that column is used as the
+#'   validation partition. Otherwise predictions are used as the partition.
+#'
+#' @return A yardstick metric set.
+#'
+#' @examples
+#' if (requireNamespace("yardstick", quietly = TRUE)) {
+#'   toy_data <- data.frame(
+#'     rank = c(10, 20, 30, 40),
+#'     outcome = c(1, 0, 1, 0),
+#'     weight = c(1, 1, 2, 2)
+#'   )
+#'
+#'   ci_tuning_metric_set(
+#'     toy_data,
+#'     rank_name = "rank",
+#'     case_weight_name = "weight",
+#'     type = "CI",
+#'     metrics = c("validation_gain", "relative_validation_gain")
+#'   )
+#' }
+#'
+#' @export
+ci_tuning_metric_set <- function(data,
+                                 rank_name,
+                                 case_weight_name = NULL,
+                                 type = "CIg",
+                                 metrics = c(
+                                   "validation_gain",
+                                   "relative_validation_gain"
+                                 ),
+                                 node_name = NULL) {
+  data <- as.data.frame(data)
+  if (!rank_name %in% names(data)) {
+    stop("`data` must contain `rank_name`.", call. = FALSE)
+  }
+  if (!is.null(case_weight_name) && !case_weight_name %in% names(data)) {
+    stop("`data` must contain `case_weight_name`.", call. = FALSE)
+  }
+  type <- match.arg(type, choices = c("CI", "CIg", "CIc", "L"))
+  if (length(type) != 1L) {
+    stop("`type` must select exactly one concentration-index criterion.",
+      call. = FALSE
+    )
+  }
+
+  allowed_metrics <- c("validation_gain", "relative_validation_gain")
+  metrics <- match.arg(metrics, allowed_metrics, several.ok = TRUE)
+  metrics <- unique(metrics)
+
+  metric_context <- list(
+    source_data = data,
+    rank_name = rank_name,
+    case_weight_name = case_weight_name,
+    type = type,
+    node_name = node_name
+  )
+
+  validation_gain <- function(data, truth, estimate, na_rm = TRUE, ...) {
+    .ci_tuning_metric(
+      data = data,
+      truth = {{ truth }},
+      estimate = {{ estimate }},
+      context = metric_context,
+      relative = FALSE,
+      na_rm = na_rm
+    )
+  }
+  validation_gain <- yardstick::new_numeric_metric(
+    validation_gain,
+    direction = "maximize"
+  )
+
+  relative_validation_gain <- function(data,
+                                       truth,
+                                       estimate,
+                                       na_rm = TRUE,
+                                       ...) {
+    .ci_tuning_metric(
+      data = data,
+      truth = {{ truth }},
+      estimate = {{ estimate }},
+      context = metric_context,
+      relative = TRUE,
+      na_rm = na_rm
+    )
+  }
+  relative_validation_gain <- yardstick::new_numeric_metric(
+    relative_validation_gain,
+    direction = "maximize"
+  )
+
+  metric_fns <- list(
+    validation_gain = validation_gain,
+    relative_validation_gain = relative_validation_gain
+  )
+  do.call(yardstick::metric_set, metric_fns[metrics])
+}
+
+#' @noRd
+.ci_tuning_vectors <- function(metric_data, context) {
+  metric_data <- as.data.frame(metric_data)
+  source_data <- context$source_data
+
+  row_id <- NULL
+  if (".row" %in% names(metric_data)) {
+    row_id <- suppressWarnings(as.integer(metric_data$.row))
+    if (any(is.na(row_id)) ||
+        any(row_id < 1L) ||
+        any(row_id > nrow(source_data))) {
+      row_id <- NULL
+    }
+  }
+
+  if (!is.null(row_id)) {
+    rank <- source_data[[context$rank_name]][row_id]
+    weights <- if (is.null(context$case_weight_name)) {
+      NULL
+    } else {
+      source_data[[context$case_weight_name]][row_id]
+    }
+  } else {
+    if (!context$rank_name %in% names(metric_data)) {
+      stop(
+        "CI tuning metrics need `.row` or the rank column in prediction data.",
+        call. = FALSE
+      )
+    }
+    rank <- metric_data[[context$rank_name]]
+    weights <- if (is.null(context$case_weight_name)) {
+      NULL
+    } else if (context$case_weight_name %in% names(metric_data)) {
+      metric_data[[context$case_weight_name]]
+    } else {
+      stop(
+        "CI tuning metrics need `.row` or the case-weight column in prediction data.",
+        call. = FALSE
+      )
+    }
+  }
+
+  node <- NULL
+  if (!is.null(context$node_name) && context$node_name %in% names(metric_data)) {
+    node <- metric_data[[context$node_name]]
+  }
+
+  list(rank = rank, weights = weights, node = node)
+}
+
+#' @noRd
+.ci_tuning_root_impurity <- function(truth,
+                                     estimate,
+                                     rank,
+                                     node,
+                                     case_weights,
+                                     type,
+                                     na_rm) {
+  truth <- .ci_outcome_numeric(truth, "truth")
+  estimate <- as.numeric(estimate)
+  rank <- as.numeric(rank)
+  case_weights <- .ci_validate_weights(
+    case_weights,
+    length(truth),
+    "case_weights"
+  )
+  if (is.null(node)) {
+    node <- estimate
+  }
+
+  keep <- stats::complete.cases(truth, estimate, rank, node, case_weights) &
+    case_weights > 0
+  if (!na_rm && any(!keep)) {
+    return(NA_real_)
+  }
+  if (!any(keep)) {
+    return(NA_real_)
+  }
+
+  ci_factory(type)(
+    cbind(rank = rank[keep], outcome = truth[keep]),
+    case_weights[keep]
+  )
+}
+
+#' @noRd
+.ci_tuning_metric <- function(data,
+                              truth,
+                              estimate,
+                              context,
+                              relative = FALSE,
+                              na_rm = TRUE) {
+  truth <- rlang::enquo(truth)
+  estimate <- rlang::enquo(estimate)
+  metric_data <- tibble::as_tibble(data)
+
+  score_one <- function(metric_data) {
+    vectors <- .ci_tuning_vectors(metric_data, context)
+
+    truth_vec <- rlang::eval_tidy(truth, metric_data)
+    estimate_vec <- rlang::eval_tidy(estimate, metric_data)
+
+    root_impurity <- NULL
+    if (isTRUE(relative)) {
+      root_impurity <- .ci_tuning_root_impurity(
+        truth = truth_vec,
+        estimate = estimate_vec,
+        rank = vectors$rank,
+        node = vectors$node,
+        case_weights = vectors$weights,
+        type = context$type,
+        na_rm = na_rm
+      )
+    }
+
+    gain <- ci_gain_vec(
+      truth = truth_vec,
+      estimate = estimate_vec,
+      rank = vectors$rank,
+      node = vectors$node,
+      case_weights = vectors$weights,
+      type = context$type,
+      root_impurity = root_impurity,
+      na_rm = na_rm
+    )
+
+    if (isTRUE(relative)) {
+      if (length(root_impurity) != 1L ||
+          is.na(root_impurity) ||
+          !is.finite(root_impurity) ||
+          abs(root_impurity) <= .Machine$double.eps) {
+        gain <- NA_real_
+      } else {
+        gain <- gain / abs(root_impurity)
+      }
+    }
+
+    tibble::tibble(
+      .metric = if (isTRUE(relative)) {
+        "relative_validation_gain"
+      } else {
+        "validation_gain"
+      },
+      .estimator = "standard",
+      .estimate = gain
+    )
+  }
+
+  tuning_cols <- intersect(
+    c(
+      ".config", "tree_depth", "trees", "mtry", "min_n",
+      "min_relative_gain", "min_gain", "minsplit", "minprob", "maxdepth",
+      "minbucket", "ntree"
+    ),
+    names(metric_data)
+  )
+
+  if (length(tuning_cols) > 0L) {
+    split_key <- do.call(
+      interaction,
+      c(metric_data[, tuning_cols, drop = FALSE], drop = TRUE, sep = "\r")
+    )
+
+    scored <- lapply(split(metric_data, split_key), function(x) {
+      out <- score_one(x)
+      for (col in tuning_cols) {
+        out[[col]] <- x[[col]][[1L]]
+      }
+      out
+    })
+    return(tibble::as_tibble(do.call(rbind, scored)))
+  }
+
+  score_one(metric_data)
 }
 
 #' Concentration index of predictions
