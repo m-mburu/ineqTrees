@@ -252,10 +252,11 @@ readme_tree_plot(
 
 ## SHAP-based decomposition
 
-Approximate SHAP values with `fastshap::explain()`, using a prediction
-wrapper that returns the predicted outcome for each observation, then
-decompose the concentration index of those predicted risks with
-`shap_conc_decomp()`. See the [SHAP-based decomposition
+Approximate SHAP values with
+[`shapr::explain()`](https://cran.r-project.org/web/packages/shapr/index.html),
+using a prediction wrapper that returns the predicted outcome for each
+observation, then decompose the concentration index of those predicted
+risks with `shap_conc_decomp()`. See the [SHAP-based decomposition
 article](https://m-mburu.github.io/ineqTrees/articles/shapley-decomposition.html)
 for the full walkthrough across `ci_tree()`, `ci_forest()`,
 tidymodels-backed forests, and ordinary `ranger` models.
@@ -323,13 +324,12 @@ ranger_rows <- sort(sample.int(nrow(ranger_data), ranger_eval_n))
 ranger_X_eval <- ranger_X[ranger_rows, , drop = FALSE]
 ranger_pred_eval <- ranger_risk_predict(best_ranger, ranger_X_eval)
 
-ranger_shap <- fastshap::explain(
+ranger_shap <- estimate_shapr_values(
   object = best_ranger,
-  X = ranger_X,
+  x_train = ranger_X,
+  x_explain = ranger_X_eval,
   pred_wrapper = ranger_risk_predict,
-  newdata = ranger_X_eval,
-  nsim = 64,
-  adjust = TRUE
+  seed = 20260328
 )
 
 ranger_decomp <- shap_conc_decomp(
@@ -416,13 +416,12 @@ shap_X_eval <- forest_X[shap_rows, , drop = FALSE]
 forest_pred_eval <- readme_forest_predict(fit_forest, shap_X_eval)
 wealth_eval <- kenya$wealth[shap_rows]
 
-forest_shap <- fastshap::explain(
+forest_shap <- estimate_shapr_values(
   object = fit_forest,
-  X = forest_X,
+  x_train = forest_X,
+  x_explain = shap_X_eval,
   pred_wrapper = readme_forest_predict,
-  newdata = shap_X_eval,
-  nsim = 64,
-  adjust = TRUE
+  seed = 20260328
 )
 
 decomp <- shap_conc_decomp(
