@@ -459,8 +459,8 @@ demo_tree_plot(
   ci_type = forest_tuning$best_type
 )
 
-if (!requireNamespace("fastshap", quietly = TRUE)) {
-  knitr::asis_output("`fastshap` is not installed, so the SHAP decomposition is skipped.")
+if (!requireNamespace("shapr", quietly = TRUE)) {
+  knitr::asis_output("`shapr` is not installed, so the SHAP decomposition is skipped.")
 } else {
   set.seed(20260328)
   shap_eval_n <- min(250L, nrow(congo_model_dt))
@@ -471,14 +471,35 @@ if (!requireNamespace("fastshap", quietly = TRUE)) {
   forest_pred_eval <- forest_predict(best_forest, shap_X_eval)
   wealth_eval <- congo_model_dt$wealth[shap_rows]
 
-  forest_shap <- fastshap::explain(
-    object = best_forest,
-    X = forest_X,
-    pred_wrapper = forest_predict,
-    newdata = shap_X_eval,
-    nsim = 16,
-    adjust = TRUE
+  model_specs <- function(unused) {
+    list(
+      labels = names(forest_X),
+      classes = vapply(forest_X, function(col) class(col)[1], character(1)),
+      factor_levels = lapply(forest_X, function(col) {
+        if (is.factor(col)) levels(col) else NULL
+      })
+    )
+  }
+
+  forest_shap_explanation <- shapr::explain(
+    model = best_forest,
+    x_explain = as.data.frame(shap_X_eval),
+    x_train = as.data.frame(forest_X),
+    approach = "independence",
+    phi0 = mean(forest_predict(best_forest, forest_X)),
+    n_MC_samples = 16,
+    seed = 20260328,
+    predict_model = forest_predict,
+    get_model_specs = model_specs,
+    verbose = NULL
   )
+
+  forest_shap <- as.data.frame(forest_shap_explanation$shapley_values_est)
+  forest_shap <- forest_shap[
+    ,
+    setdiff(names(forest_shap), c("explain_id", "none")),
+    drop = FALSE
+  ]
 
   shap_decomp <- shap_conc_decomp(
     shap = forest_shap,
