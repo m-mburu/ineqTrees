@@ -86,6 +86,12 @@ are computed on the signed linear scale for the selected index and then
 oriented so they sum to the non-negative factory score when the SHAP values
 reconstruct the prediction.
 
+Percentage contributions are computed as \code{100 * D_k_SHAP / sum(D_k_SHAP)},
+matching the \code{rineq} convention of dividing each CI contribution by the
+sum of all CI contributions. When SHAP values reconstruct the prediction,
+this denominator is the total concentration-index score; otherwise,
+\code{additivity_gap} records the difference.
+
 For rank-dependent types, weighted fractional ranks and the same unbiased
 weighted covariance convention used by \code{\link[=ci_factory]{ci_factory()}} are used. \code{"CI"}
 divides feature covariances by the weighted mean prediction, \code{"CIg"} uses
