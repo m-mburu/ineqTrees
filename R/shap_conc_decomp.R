@@ -53,6 +53,12 @@
 #'   oriented so they sum to the non-negative factory score when the SHAP values
 #'   reconstruct the prediction.
 #'
+#'   Percentage contributions are computed as `100 * D_k_SHAP / sum(D_k_SHAP)`,
+#'   matching the `rineq` convention of dividing each CI contribution by the
+#'   sum of all CI contributions. When SHAP values reconstruct the prediction,
+#'   this denominator is the total concentration-index score; otherwise,
+#'   `additivity_gap` records the difference.
+#'
 #'   For rank-dependent types, weighted fractional ranks and the same unbiased
 #'   weighted covariance convention used by [ci_factory()] are used. `"CI"`
 #'   divides feature covariances by the weighted mean prediction, `"CIg"` uses
@@ -304,10 +310,10 @@ shap_conc_decomp <- function(
 
   shap_total <- sum(contributions[["D_k_SHAP"]])
 
-  contributions[["pct_contribution"]] <- if (abs(ci_score) <= tolerance) {
+  contributions[["pct_contribution"]] <- if (abs(shap_total) <= tolerance) {
     rep(NA_real_, nrow(contributions))
   } else {
-    100 * contributions[["D_k_SHAP"]] / ci_score
+    100 * contributions[["D_k_SHAP"]] / shap_total
   }
   contributions[["abs_contribution"]] <- abs(contributions[["D_k_SHAP"]])
 

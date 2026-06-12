@@ -102,6 +102,30 @@ test_that("shap_conc_decomp drops incomplete rows with na_rm", {
   expect_equal(out$contributions$D_k_SHAP, c(1 / 12, 1 / 12))
 })
 
+test_that("shap_conc_decomp percentages use summed SHAP contributions", {
+  shap <- data.frame(
+    education = c(1, 0, -1),
+    water = c(0, 1, 1)
+  )
+
+  out <- shap_conc_decomp(
+    shap = shap,
+    rank = c(1, 2, 3),
+    prediction = c(5, 4, 2),
+    sort = FALSE
+  )
+
+  expect_equal(out$diagnostics$concentration_index, 2 / 11)
+  expect_equal(out$diagnostics$shap_sum, 2 / 33)
+  expect_equal(out$diagnostics$additivity_gap, 4 / 33)
+  expect_equal(out$contributions$D_k_SHAP, c(4 / 33, -2 / 33))
+  expect_equal(out$contributions$pct_contribution, c(200, -100))
+  expect_equal(
+    out$contributions$pct_contribution,
+    100 * out$contributions$D_k_SHAP / out$diagnostics$shap_sum
+  )
+})
+
 test_that("shap_conc_decomp uses ci_factory scores for weighted variants", {
   shap <- data.frame(
     education = c(1, 0, -1, 1),
