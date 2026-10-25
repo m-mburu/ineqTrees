@@ -12,7 +12,9 @@ control_ci_tune(
   save_fit = FALSE,
   extract = NULL,
   pkgs = NULL,
-  num_cores = 1L
+  num_cores = 1L,
+  require_complete_folds = TRUE,
+  min_scored_folds = 1L
 )
 }
 \arguments{
@@ -39,6 +41,15 @@ for API compatibility with parallel workflows.}
 
 \item{num_cores}{Compatibility gate for parallel execution. Worker counts are
 controlled by the user's active future plan.}
+
+\item{require_complete_folds}{Logical; require a finite score on every
+intended assessment fold before a candidate can be selected automatically.
+This is the conservative default. Set it to \code{FALSE} to allow selection from
+partial-fold scores; \code{min_scored_folds} then controls the minimum coverage
+and \code{ci_collect_metrics()} reports the achieved coverage.}
+
+\item{min_scored_folds}{Optional minimum number of folds with a finite score
+when \code{require_complete_folds = FALSE}. Defaults to \code{1L}.}
 }
 \value{
 A \code{control_ci_tune} object.

@@ -12,6 +12,8 @@ Invisibly, \code{TRUE}.
 \description{
 Registers \code{ineqTrees} as a regression engine for
 \code{parsnip::decision_tree()} and \code{parsnip::rand_forest()}.
+Refreshes this package's prediction entries when development code is
+reloaded in the same R session, preserving other engines' registrations.
 }
 \examples{
 if (requireNamespace("parsnip", quietly = TRUE)) {

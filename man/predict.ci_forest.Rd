@@ -23,7 +23,10 @@ stored in \code{object} are used.}
 summaries. \code{"node"} returns terminal node ids for each tree.}
 
 \item{OOB}{Should predictions for training rows use only trees where the row
-was out-of-bag?}
+was out-of-bag? Rows without any out-of-bag tree return \code{NA}; they are
+never filled with in-sample tree averages. With \code{OOB = TRUE}, \code{newdata}
+must be omitted or must be the identical training data frame so that the
+in-bag mask can be applied to matching rows.}
 
 \item{FUN}{Optional function with signature \verb{function(y, w)} used to
 summarize terminal nodes. By default, the weighted mean of \code{outcome_name}
@@ -33,7 +36,8 @@ is used.}
 }
 \value{
 A numeric vector for \code{type = "response"} or an integer matrix for
-\code{type = "node"}.
+\code{type = "node"}. Out-of-bag predictions are returned for \code{type = "response"} only; \code{type = "node"} returns terminal node ids for every
+tree and ignores \code{OOB}.
 }
 \description{
 Predict from a greedy concentration-index forest

@@ -1,12 +1,8 @@
 ci_ranking.Rmd:
   path: dev/ci_ranking.Rmd
   state: active
-  R:
-  - R/rank_wt_retained.R
-  - R/rank_wt.R
-  tests:
-  - tests/testthat/test-rank_wt_retained.R
-  - tests/testthat/test-rank_wt.R
+  R: R/rank_wt_retained.R
+  tests: tests/testthat/test-rank_wt_retained.R
   vignettes: vignettes/ci-ranking-helpers.Rmd
   inflate:
     flat_file: dev/ci_ranking.Rmd

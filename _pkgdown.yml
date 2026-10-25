@@ -20,6 +20,9 @@ template:
 development:
   mode: release
 
+figures:
+  bg: "white"
+
 home:
   title: ineqTrees
   description: Tree-based decomposition of health inequality.

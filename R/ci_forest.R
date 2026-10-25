@@ -412,14 +412,19 @@ cf_ci <- function(...) {
 #' @param type Prediction type. `"response"` returns averaged terminal-node
 #'   summaries. `"node"` returns terminal node ids for each tree.
 #' @param OOB Should predictions for training rows use only trees where the row
-#'   was out-of-bag?
+#'   was out-of-bag? Rows without any out-of-bag tree return `NA`; they are
+#'   never filled with in-sample tree averages. With `OOB = TRUE`, `newdata`
+#'   must be omitted or must be the identical training data frame so that the
+#'   in-bag mask can be applied to matching rows.
 #' @param FUN Optional function with signature `function(y, w)` used to
 #'   summarize terminal nodes. By default, the weighted mean of `outcome_name`
 #'   is used.
 #' @param ... Currently ignored.
 #'
 #' @return A numeric vector for `type = "response"` or an integer matrix for
-#'   `type = "node"`.
+#'   `type = "node"`. Out-of-bag predictions are returned for `type =
+#'   "response"` only; `type = "node"` returns terminal node ids for every
+#'   tree and ignores `OOB`.
 #'
 #' @export
 predict.ci_forest <- function(object,
@@ -431,10 +436,21 @@ predict.ci_forest <- function(object,
   type <- match.arg(type)
   use_training_data <- is.null(newdata)
 
+  if (isTRUE(OOB) && !identical(type, "response")) {
+    stop(
+      "`OOB = TRUE` is only supported for `type = \"response\"`.",
+      call. = FALSE
+    )
+  }
+
   if (use_training_data) {
     newdata <- object$data
   } else {
     newdata <- as.data.frame(newdata)
+  }
+
+  if (isTRUE(OOB)) {
+    .ci_check_oob_newdata(newdata, object$data)
   }
 
   pred_mat <- matrix(NA_real_,
@@ -470,26 +486,88 @@ predict.ci_forest <- function(object,
   }
 
   if (isTRUE(OOB)) {
-    if (!use_training_data && nrow(newdata) != nrow(object$data)) {
-      stop("`OOB = TRUE` is only available for training-data predictions.",
+    pred <- .ci_oob_prediction(pred_mat, object$inbag)
+
+    no_oob <- which(is.na(pred))
+    if (length(no_oob)) {
+      warning(
+        sprintf(
+          "%d row(s) have no out-of-bag tree; their OOB prediction is NA.",
+          length(no_oob)
+        ),
         call. = FALSE
       )
     }
 
-    oob_mat <- pred_mat
-    oob_mat[object$inbag > 0L] <- NA_real_
-    pred <- rowMeans(oob_mat, na.rm = TRUE)
-
-    no_oob <- is.nan(pred)
-    if (any(no_oob)) {
-      pred[no_oob] <- rowMeans(pred_mat[no_oob, , drop = FALSE],
-        na.rm = TRUE
-      )
-    }
-    return(as.numeric(pred))
+    return(pred)
   }
 
   as.numeric(rowMeans(pred_mat, na.rm = TRUE))
+}
+
+#' Check that OOB prediction uses the training rows in their stored order
+#'
+#' @param newdata Supplied prediction data.
+#' @param training_data Data frame stored on the fitted forest.
+#'
+#' @return `NULL`, called for its validation side effect.
+#'
+#' @noRd
+.ci_check_oob_newdata <- function(newdata, training_data) {
+  if (nrow(newdata) != nrow(training_data)) {
+    stop(
+      "`OOB = TRUE` requires the training data: `newdata` has ",
+      nrow(newdata),
+      " row(s) but the fitted forest has ",
+      nrow(training_data),
+      ".",
+      call. = FALSE
+    )
+  }
+
+  if (!identical(names(newdata), names(training_data))) {
+    stop(
+      "`OOB = TRUE` requires the training data: `newdata` columns differ ",
+      "from the fitted forest.",
+      call. = FALSE
+    )
+  }
+
+  same_rows <- isTRUE(all.equal(
+    newdata,
+    training_data,
+    check.attributes = FALSE
+  ))
+
+  if (!same_rows) {
+    stop(
+      "`OOB = TRUE` requires the training data: `newdata` rows are not the ",
+      "stored training rows in their original order.",
+      call. = FALSE
+    )
+  }
+
+  invisible(NULL)
+}
+
+#' Average predictions across the trees that held a row out of bag
+#'
+#' @param pred_mat Per-tree predictions with one row per training observation.
+#' @param inbag In-bag count matrix with one row per training observation.
+#'
+#' @return A numeric vector, with `NA` where no tree held the row out of bag.
+#'
+#' @noRd
+.ci_oob_prediction <- function(pred_mat, inbag) {
+  oob_mat <- pred_mat
+  oob_mat[inbag > 0L] <- NA_real_
+
+  oob_tree_count <- rowSums(inbag == 0L)
+
+  pred <- rowMeans(oob_mat, na.rm = TRUE)
+  pred[oob_tree_count == 0L] <- NA_real_
+
+  as.numeric(pred)
 }
 
 #' Extract fitted values from a greedy concentration-index forest

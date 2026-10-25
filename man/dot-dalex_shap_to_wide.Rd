@@ -34,7 +34,10 @@ baseline rows when \code{drop_baseline = TRUE}. Matching is case-sensitive.}
 }
 \value{
 A wide-format \code{data.table} with one row per observation and one
-numeric column per SHAP feature.
+numeric column per SHAP feature. Rows follow the first appearance of each
+observation ID in \code{shap}, and the observation IDs are returned in that
+order as the \code{"observation_ids"} attribute so callers can align other
+per-observation inputs.
 }
 \description{
 Convert a long-format SHAP table with observation IDs, feature names, and
@@ -47,7 +50,11 @@ The function attempts to identify the ID, variable, and value
 columns based on common naming conventions. If \code{drop_baseline = TRUE},
 rows with feature names in \code{baseline_labels} are removed before
 reshaping. The resulting wide table contains only numeric SHAP feature
-columns. Aliases for the identified columns are as follows:
+columns. Row order is preserved rather than sorted by ID, because sorting
+would silently detach the SHAP rows from separately supplied ranks,
+weights or predictions. Duplicate observation-feature pairs are rejected
+instead of being counted by \code{dcast()}. Aliases for the identified columns
+are as follows:
 \itemize{
 \item ID column candidates: \code{"_id_"}, \code{"id"}, \code{"row_id"},
 \code{"observation_id"}, \code{"observation"}, \code{"case_id"}

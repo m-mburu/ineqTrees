@@ -255,6 +255,83 @@ best_factor_split <- function(
 }
 
 
+#' Validate a numeric predictor used for split search
+#'
+#' Rejects missing and infinite predictors at the boundary of the split
+#' search, where a non-finite value has no meaningful ordering. Infinite
+#' values would otherwise produce non-finite midpoints and break routing.
+#'
+#' @param x A numeric predictor vector.
+#' @param arg Argument name used in error messages.
+#'
+#' @return `x` as a numeric vector.
+#'
+#' @noRd
+.ci_validate_numeric_predictor <- function(x, arg = "x") {
+  if (!is.numeric(x)) {
+    stop(sprintf("`%s` must be numeric.", arg), call. = FALSE)
+  }
+
+  x <- as.numeric(x)
+
+  if (anyNA(x)) {
+    stop(
+      sprintf(
+        paste(
+          "`%s` must not contain missing values;",
+          "%d value(s) are missing."
+        ),
+        arg,
+        sum(is.na(x))
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (!all(is.finite(x))) {
+    stop(
+      sprintf(
+        paste(
+          "`%s` must contain only finite values;",
+          "%d value(s) are infinite."
+        ),
+        arg,
+        sum(!is.finite(x))
+      ),
+      call. = FALSE
+    )
+  }
+
+  x
+}
+
+#' Compute a split cutpoint that keeps routing consistent with scoring
+#'
+#' Returns a cutpoint inside the half-open interval `[lower, upper)` so that
+#' `value <= cutpoint` selects exactly the values at or below `lower`. The
+#' naive midpoint `(lower + upper) / 2` overflows for large finite values,
+#' which makes every observation route left even though the scored partition
+#' had observations on both sides. Averaging the halves cannot overflow.
+#' Rounding can still move the result onto `upper` for adjacent doubles, so
+#' that case falls back to `lower`, which is the largest representable value
+#' strictly below `upper`.
+#'
+#' @param lower Lower value of the adjacent ordered pair.
+#' @param upper Upper value of the adjacent ordered pair.
+#'
+#' @return A finite double in `[lower, upper)`.
+#'
+#' @noRd
+.ci_safe_numeric_midpoint <- function(lower, upper) {
+  midpoint <- lower / 2 + upper / 2
+
+  if (midpoint >= upper) {
+    midpoint <- lower
+  }
+
+  max(midpoint, lower)
+}
+
 #' Find the globally best greedy concentration-index split
 #'
 #' Search across all supplied variables and their admissible split points, then
@@ -291,7 +368,8 @@ best_global_ci_split <- function(x,
   }
 
   if (!is.null(ctrl$mtry)) {
-    vars <- sample(vars, min(ctrl$mtry, length(vars)))
+    n_select <- min(ctrl$mtry, length(vars))
+    vars <- vars[sample.int(length(vars), n_select)]
   }
 
   parent_impurity <- ci_fun(y, wt)
@@ -337,10 +415,13 @@ best_global_ci_split <- function(x,
 #' split with the largest weighted concentration-index gain.
 #'
 #' Candidate cutpoints are formed at midpoints between distinct sorted values of
-#' `x`. Each candidate is filtered using `ctrl$minbucket` and `ctrl$minprob`
-#' before being scored with [weighted_ci_gain()].
+#' `x`. The midpoint is computed so that it stays finite and inside the
+#' half-open interval `[lower, upper)`, which keeps `x <= cutpoint` routing
+#' identical to the partition that was scored. Each candidate is filtered using
+#' `ctrl$minbucket` and `ctrl$minprob` before being scored with
+#' [weighted_ci_gain()].
 #'
-#' @param x A numeric predictor vector.
+#' @param x A numeric predictor vector without infinite values.
 #' @param y A two-column numeric matrix whose first column is the socioeconomic
 #'   ranking variable and whose second column is the health outcome.
 #' @param wt A numeric vector of case weights with the same length as `x`.
@@ -386,6 +467,8 @@ best_numeric_split <- function(
     return = c("split", "candidate")) {
   return <- match.arg(return)
   wt <- .ci_validate_weights(wt, length(x), "wt")
+  x <- .ci_validate_numeric_predictor(x, "x")
+
   ord <- order(x)
   x <- x[ord]
   y <- y[ord, , drop = FALSE]
@@ -428,7 +511,7 @@ best_numeric_split <- function(
   }
 
   best_k <- cut_pos[which.max(gains)]
-  cut <- (x[best_k] + x[best_k + 1L]) / 2
+  cut <- .ci_safe_numeric_midpoint(x[best_k], x[best_k + 1L])
   left <- row_id <= best_k
   left_original <- logical(length(left))
   left_original[ord] <- left

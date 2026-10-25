@@ -142,7 +142,7 @@ ci_tree_parsnip <- function(formula,
   formula <- prepared$formula
   outcome_name <- prepared$outcome_name
 
-  ci_tree(
+  fit <- ci_tree(
     formula = formula,
     data = data,
     rank_name = rank_name,
@@ -153,6 +153,9 @@ ci_tree_parsnip <- function(formula,
     na.action = na.action,
     ...
   )
+
+  attr(fit, "ci_training_diagnostics") <- .ci_parsnip_training_scores(fit)
+  fit
 }
 
 #' Fit a greedy CI forest from parsnip
@@ -208,7 +211,7 @@ ci_forest_parsnip <- function(formula,
   formula <- prepared$formula
   outcome_name <- prepared$outcome_name
 
-  ci_forest(
+  fit <- ci_forest(
     formula = formula,
     data = data,
     rank_name = rank_name,
@@ -222,6 +225,137 @@ ci_forest_parsnip <- function(formula,
     na.action = na.action,
     ...
   )
+
+  attr(fit, "ci_training_diagnostics") <- .ci_parsnip_training_scores(fit)
+  fit
+}
+
+#' Predict risks and retain CI partitions for tidymodels scoring
+#'
+#' @description
+#' The numeric prediction method used by the `ineqTrees` parsnip engines.
+#' Keeps `.pred` as the predicted outcome and adds `.ci_node`, `.ci_type`,
+#' `.ci_training_gain`, and `.ci_training_root` for [ci_tuning_metric_set()].
+#' Tree node IDs are integers. Forest node IDs are a list of integer vectors,
+#' with one entry per member tree for each observation.
+#'
+#' Training diagnostics use the fitted analysis sample. Forest gains average
+#' the gains of member-tree partitions applied to that whole analysis sample,
+#' rather than scoring each member's bootstrap sample separately.
+#' Risk predictions use the same node assignments as the scoring metadata.
+#' Factor levels absent from a member's sample retain partykit's probabilistic
+#' routing behaviour. Saved predictions identify the assignments actually used.
+#'
+#' @param object A fitted `ci_tree` or `ci_forest` engine object.
+#' @param newdata Data containing the predictors required by the fitted model.
+#'
+#' @return A tibble with predictions and partition-scoring metadata.
+#' @export
+ci_predict_parsnip <- function(object, newdata) {
+  if (!inherits(object, "ci_tree") && !inherits(object, "ci_forest")) {
+    stop("`object` must be a fitted CI tree or forest.", call. = FALSE)
+  }
+
+  nodes <- stats::predict(object, newdata = newdata, type = "node")
+  if (is.matrix(nodes)) {
+    member_predictions <- vapply(seq_along(object$trees), function(member) {
+      as.numeric(partykit::predict_party(
+        object$trees[[member]]$fit,
+        id = as.integer(nodes[, member]),
+        type = "response"
+      ))
+    }, numeric(nrow(newdata)))
+    prediction <- rowMeans(matrix(
+      member_predictions,
+      nrow = nrow(newdata),
+      ncol = length(object$trees)
+    ))
+    nodes <- lapply(seq_len(nrow(nodes)), function(i) {
+      as.integer(nodes[i, ])
+    })
+  } else {
+    nodes <- as.integer(nodes)
+    prediction <- as.numeric(partykit::predict_party(
+      object, id = nodes, type = "response"
+    ))
+  }
+
+  training <- attr(object, "ci_training_diagnostics", exact = TRUE)
+  if (is.null(training)) {
+    training <- .ci_parsnip_training_scores(object)
+  }
+
+  tibble::tibble(
+    .pred = prediction,
+    .ci_node = nodes,
+    .ci_type = training$type,
+    .ci_training_gain = training$gain,
+    .ci_training_root = training$root
+  )
+}
+
+#' Compute analysis-sample diagnostics once when the parsnip model is fitted
+#' @noRd
+.ci_parsnip_training_scores <- function(fit) {
+  if (inherits(fit, "ci_forest")) {
+    type <- fit$type
+    rank <- fit$data[[fit$rank_name]]
+    outcome <- fit$data[[fit$outcome_name]]
+    weights <- fit$weights
+    node_matrix <- stats::predict(fit, type = "node")
+    nodes <- lapply(seq_len(nrow(node_matrix)), function(i) {
+      as.integer(node_matrix[i, ])
+    })
+  } else {
+    type <- fit$info$type
+    response <- stats::model.response(fit$data)
+    rank <- response[, 1L]
+    outcome <- response[, 2L]
+    weights <- fit$fitted[["(weights)"]]
+    nodes <- fit$fitted[["(fitted)"]]
+  }
+
+  root <- ci_factory(type)(cbind(rank, outcome), weights)
+  gain <- .ci_tuning_partition_gain(
+    truth = outcome,
+    estimate = outcome,
+    vectors = list(rank = rank, weights = weights, node = nodes),
+    type = type,
+    root_impurity = NULL,
+    na_rm = TRUE
+  )
+  list(type = type, gain = gain, root = root, nodes = nodes)
+}
+
+#' Replace this package's prediction entry when reloading development code
+#' @noRd
+.ci_register_prediction <- function(model, type, value) {
+  registry_name <- paste0(model, "_predict")
+  registered <- parsnip::get_from_env(registry_name)
+  replace_rows <- registered$engine %in% "ineqTrees" &
+    registered$mode %in% "regression" & registered$type %in% type
+
+  # Parsnip rejects changed prediction definitions. Its registry survives
+  # pkgload reloads, so remove only our matching entry before registering it.
+  registration_complete <- FALSE
+  on.exit({
+    if (!registration_complete) {
+      parsnip::set_env_val(registry_name, registered)
+    }
+  }, add = TRUE)
+
+  parsnip::set_env_val(
+    registry_name, registered[!replace_rows, , drop = FALSE]
+  )
+  parsnip::set_pred(
+    model = model,
+    mode = "regression",
+    eng = "ineqTrees",
+    type = type,
+    value = value
+  )
+  registration_complete <- TRUE
+  invisible(TRUE)
 }
 
 #' Register `ineqTrees` parsnip engines
@@ -229,6 +363,8 @@ ci_forest_parsnip <- function(formula,
 #' @description
 #' Registers `ineqTrees` as a regression engine for
 #' `parsnip::decision_tree()` and `parsnip::rand_forest()`.
+#' Refreshes this package's prediction entries when development code is
+#' reloaded in the same R session, preserving other engines' registrations.
 #'
 #' @return Invisibly, `TRUE`.
 #'
@@ -303,29 +439,22 @@ register_ineqtrees_decision_tree <- function() {
     )
   )
 
-  parsnip::set_pred(
+  .ci_register_prediction(
     model = "decision_tree",
-    mode = "regression",
-    eng = "ineqTrees",
     type = "numeric",
     value = list(
       pre = NULL,
-      post = function(results, object) {
-        tibble::tibble(.pred = as.numeric(results))
-      },
-      func = c(fun = "predict"),
+      post = NULL,
+      func = c(pkg = "ineqTrees", fun = "ci_predict_parsnip"),
       args = list(
         object = rlang::expr(object$fit),
-        newdata = rlang::expr(new_data),
-        type = "response"
+        newdata = rlang::expr(new_data)
       )
     )
   )
 
-  parsnip::set_pred(
+  .ci_register_prediction(
     model = "decision_tree",
-    mode = "regression",
-    eng = "ineqTrees",
     type = "raw",
     value = list(
       pre = NULL,
@@ -412,29 +541,22 @@ register_ineqtrees_rand_forest <- function() {
     )
   )
 
-  parsnip::set_pred(
+  .ci_register_prediction(
     model = "rand_forest",
-    mode = "regression",
-    eng = "ineqTrees",
     type = "numeric",
     value = list(
       pre = NULL,
-      post = function(results, object) {
-        tibble::tibble(.pred = as.numeric(results))
-      },
-      func = c(fun = "predict"),
+      post = NULL,
+      func = c(pkg = "ineqTrees", fun = "ci_predict_parsnip"),
       args = list(
         object = rlang::expr(object$fit),
-        newdata = rlang::expr(new_data),
-        type = "response"
+        newdata = rlang::expr(new_data)
       )
     )
   )
 
-  parsnip::set_pred(
+  .ci_register_prediction(
     model = "rand_forest",
-    mode = "regression",
-    eng = "ineqTrees",
     type = "raw",
     value = list(
       pre = NULL,
@@ -623,21 +745,26 @@ ci_gain.data.frame <- function(data,
 #' socioeconomic rank and optional case weights from the original analysis data
 #' using the `.row` column supplied by `tune_grid()`.
 #'
-#' These metrics are intended for tidymodels workflows. The package-native
-#' [tune_ci_tree()] and [tune_ci_forest()] helpers remain the most direct way to
-#' tune on fitted CI partitions because they can inspect the fitted tree or
-#' forest objects. In tidymodels, when a node column is not supplied, validation
-#' gain uses predictions as the grouping variable, matching [ci_gain()].
+#' Validation gain uses the actual terminal-node IDs carried by the engine's
+#' numeric predictions. Forest gain averages the member-tree partition gains;
+#' it does not group observations by their averaged predicted risks.
+#' Training gain is computed from the fitted analysis sample and carried
+#' separately in prediction metadata. It is descriptive training performance,
+#' and should not be used to select parameters in place of validation gain.
+#' Relative gains divide by the corresponding analysis or assessment root
+#' impurity, returning `NA` when that root is numerically zero.
 #'
 #' @param data Original analysis data used to create the resamples.
 #' @param rank_name Name of the socioeconomic rank column in `data`.
 #' @param case_weight_name Optional name of the case-weight column in `data`.
 #' @param type One of `"CI"`, `"CIg"`, `"CIc"`, or `"L"`.
 #' @param metrics Character vector of CI metrics to include. Supported values
-#'   are `"validation_gain"` and `"relative_validation_gain"`.
-#' @param node_name Optional name of a node or partition column. If present in
-#'   the prediction data passed to the metric, that column is used as the
-#'   validation partition. Otherwise predictions are used as the partition.
+#'   are `"validation_gain"`, `"relative_validation_gain"`, `"training_gain"`,
+#'   and `"relative_training_gain"`.
+#' @param node_name Optional name of a node or partition column. Defaults to
+#'   the engine's `.ci_node` column. Supply an explicit column when scoring
+#'   manually prepared predictions. Missing partition metadata is an error;
+#'   equal predicted risks do not establish equal terminal-node membership.
 #'
 #' @return A yardstick metric set.
 #'
@@ -682,7 +809,10 @@ ci_tuning_metric_set <- function(data,
     )
   }
 
-  allowed_metrics <- c("validation_gain", "relative_validation_gain")
+  allowed_metrics <- c(
+    "validation_gain", "relative_validation_gain",
+    "training_gain", "relative_training_gain"
+  )
   metrics <- match.arg(metrics, allowed_metrics, several.ok = TRUE)
   metrics <- unique(metrics)
 
@@ -700,7 +830,7 @@ ci_tuning_metric_set <- function(data,
       truth = {{ truth }},
       estimate = {{ estimate }},
       context = metric_context,
-      relative = FALSE,
+      metric = "validation_gain",
       na_rm = na_rm
     )
   }
@@ -719,7 +849,7 @@ ci_tuning_metric_set <- function(data,
       truth = {{ truth }},
       estimate = {{ estimate }},
       context = metric_context,
-      relative = TRUE,
+      metric = "relative_validation_gain",
       na_rm = na_rm
     )
   }
@@ -728,9 +858,45 @@ ci_tuning_metric_set <- function(data,
     direction = "maximize"
   )
 
+  training_gain <- function(data, truth, estimate, na_rm = TRUE, ...) {
+    .ci_tuning_metric(
+      data = data,
+      truth = {{ truth }},
+      estimate = {{ estimate }},
+      context = metric_context,
+      metric = "training_gain",
+      na_rm = na_rm
+    )
+  }
+  training_gain <- yardstick::new_numeric_metric(
+    training_gain,
+    direction = "maximize"
+  )
+
+  relative_training_gain <- function(data,
+                                     truth,
+                                     estimate,
+                                     na_rm = TRUE,
+                                     ...) {
+    .ci_tuning_metric(
+      data = data,
+      truth = {{ truth }},
+      estimate = {{ estimate }},
+      context = metric_context,
+      metric = "relative_training_gain",
+      na_rm = na_rm
+    )
+  }
+  relative_training_gain <- yardstick::new_numeric_metric(
+    relative_training_gain,
+    direction = "maximize"
+  )
+
   metric_fns <- list(
     validation_gain = validation_gain,
-    relative_validation_gain = relative_validation_gain
+    relative_validation_gain = relative_validation_gain,
+    training_gain = training_gain,
+    relative_training_gain = relative_training_gain
   )
   do.call(yardstick::metric_set, metric_fns[metrics])
 }
@@ -742,11 +908,13 @@ ci_tuning_metric_set <- function(data,
 
   row_id <- NULL
   if (".row" %in% names(metric_data)) {
-    row_id <- suppressWarnings(as.integer(metric_data$.row))
-    if (any(is.na(row_id)) ||
-        any(row_id < 1L) ||
+    row_id <- metric_data$.row
+    if (!is.numeric(row_id) || any(!is.finite(row_id)) ||
+        any(row_id != floor(row_id)) || any(row_id < 1L) ||
         any(row_id > nrow(source_data))) {
-      row_id <- NULL
+      stop("`.row` must index rows of the original analysis data.",
+        call. = FALSE
+      )
     }
   }
 
@@ -771,18 +939,66 @@ ci_tuning_metric_set <- function(data,
       metric_data[[context$case_weight_name]]
     } else {
       stop(
-        "CI tuning metrics need `.row` or the case-weight column in prediction data.",
+        "CI tuning metrics need `.row` or the case-weight column in ",
+        "prediction data.",
         call. = FALSE
       )
     }
   }
 
-  node <- NULL
-  if (!is.null(context$node_name) && context$node_name %in% names(metric_data)) {
-    node <- metric_data[[context$node_name]]
+  node_name <- context$node_name
+  if (is.null(node_name)) {
+    node_name <- ".ci_node"
+  }
+  if (!node_name %in% names(metric_data)) {
+    stop(
+      "CI validation gain needs terminal-node metadata. Use ineqTrees ",
+      "engine predictions or supply an explicit `node_name`.",
+      call. = FALSE
+    )
   }
 
-  list(rank = rank, weights = weights, node = node)
+  list(rank = rank, weights = weights, node = metric_data[[node_name]])
+}
+
+#' Average actual partition gains for a tree or the members of a forest
+#' @noRd
+.ci_tuning_partition_gain <- function(truth,
+                                      estimate,
+                                      vectors,
+                                      type,
+                                      root_impurity,
+                                      na_rm) {
+  nodes <- vectors$node
+  if (is.list(nodes)) {
+    member_counts <- lengths(nodes)
+    if (!length(nodes) || any(member_counts == 0L) ||
+        length(unique(member_counts)) != 1L) {
+      stop("Forest node metadata must have one ID per member tree.",
+        call. = FALSE
+      )
+    }
+    partitions <- lapply(seq_len(member_counts[1L]), function(member) {
+      vapply(nodes, function(row) row[[member]], numeric(1))
+    })
+  } else {
+    partitions <- list(nodes)
+  }
+
+  gains <- vapply(partitions, function(partition) {
+    ci_gain_vec(
+      truth = truth,
+      estimate = estimate,
+      rank = vectors$rank,
+      node = partition,
+      case_weights = vectors$weights,
+      type = type,
+      root_impurity = root_impurity,
+      na_rm = na_rm
+    )
+  }, numeric(1))
+
+  if (all(is.na(gains))) NA_real_ else mean(gains, na.rm = TRUE)
 }
 
 #' @noRd
@@ -801,7 +1017,7 @@ ci_tuning_metric_set <- function(data,
     length(truth),
     "case_weights"
   )
-  if (is.null(node)) {
+  if (is.null(node) || is.list(node)) {
     node <- estimate
   }
 
@@ -825,43 +1041,65 @@ ci_tuning_metric_set <- function(data,
                               truth,
                               estimate,
                               context,
-                              relative = FALSE,
+                              metric = "validation_gain",
                               na_rm = TRUE) {
   truth <- rlang::enquo(truth)
   estimate <- rlang::enquo(estimate)
+  grouped_columns <- setdiff(names(attr(data, "groups")), ".rows")
   metric_data <- tibble::as_tibble(data)
+  relative <- startsWith(metric, "relative_")
 
   score_one <- function(metric_data) {
-    vectors <- .ci_tuning_vectors(metric_data, context)
+    if (".ci_type" %in% names(metric_data) &&
+        !identical(unique(metric_data$.ci_type), context$type)) {
+      stop("Metric `type` must match the fitted engine's criterion.",
+        call. = FALSE
+      )
+    }
 
-    truth_vec <- rlang::eval_tidy(truth, metric_data)
-    estimate_vec <- rlang::eval_tidy(estimate, metric_data)
+    if (grepl("training_gain$", metric)) {
+      required <- c(".ci_training_gain", ".ci_training_root")
+      if (!all(required %in% names(metric_data))) {
+        stop("Training gain needs the fitted engine's analysis diagnostics.",
+          call. = FALSE
+        )
+      }
+      gain <- unique(metric_data$.ci_training_gain)
+      root_impurity <- unique(metric_data$.ci_training_root)
+      if (length(gain) != 1L || length(root_impurity) != 1L) {
+        stop("Training diagnostics must identify one fitted candidate.",
+          call. = FALSE
+        )
+      }
+    } else {
+      vectors <- .ci_tuning_vectors(metric_data, context)
+      truth_vec <- rlang::eval_tidy(truth, metric_data)
+      estimate_vec <- rlang::eval_tidy(estimate, metric_data)
 
-    root_impurity <- NULL
-    if (isTRUE(relative)) {
-      root_impurity <- .ci_tuning_root_impurity(
+      root_impurity <- NULL
+      if (relative) {
+        root_impurity <- .ci_tuning_root_impurity(
+          truth = truth_vec,
+          estimate = estimate_vec,
+          rank = vectors$rank,
+          node = vectors$node,
+          case_weights = vectors$weights,
+          type = context$type,
+          na_rm = na_rm
+        )
+      }
+
+      gain <- .ci_tuning_partition_gain(
         truth = truth_vec,
         estimate = estimate_vec,
-        rank = vectors$rank,
-        node = vectors$node,
-        case_weights = vectors$weights,
+        vectors = vectors,
         type = context$type,
+        root_impurity = root_impurity,
         na_rm = na_rm
       )
     }
 
-    gain <- ci_gain_vec(
-      truth = truth_vec,
-      estimate = estimate_vec,
-      rank = vectors$rank,
-      node = vectors$node,
-      case_weights = vectors$weights,
-      type = context$type,
-      root_impurity = root_impurity,
-      na_rm = na_rm
-    )
-
-    if (isTRUE(relative)) {
+    if (relative) {
       if (length(root_impurity) != 1L ||
           is.na(root_impurity) ||
           !is.finite(root_impurity) ||
@@ -873,11 +1111,7 @@ ci_tuning_metric_set <- function(data,
     }
 
     tibble::tibble(
-      .metric = if (isTRUE(relative)) {
-        "relative_validation_gain"
-      } else {
-        "validation_gain"
-      },
+      .metric = metric,
       .estimator = "standard",
       .estimate = gain
     )
@@ -885,7 +1119,8 @@ ci_tuning_metric_set <- function(data,
 
   tuning_cols <- intersect(
     c(
-      ".config", "tree_depth", "trees", "mtry", "min_n",
+      grouped_columns, ".config", "id", "id2",
+      "tree_depth", "trees", "mtry", "min_n",
       "min_relative_gain", "min_gain", "minsplit", "minprob", "maxdepth",
       "minbucket", "ntree"
     ),

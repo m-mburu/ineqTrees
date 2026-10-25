@@ -238,19 +238,10 @@ compact split labels and terminal-node statistics that are easier to read for
 large factor splits. The plain call is useful when you want a quick look at
 the tree structure.
 
-```{r plot-ci-tree-basic, fig.width=12, fig.height=7, fig.alt="A basic plot of a concentration-index tree for under-five death in the Kenya example data."}
-plot(tree_fit)
-```
-
-For reports, the most useful improvement is usually to add readable variable
-names and terminal-node summaries. The `terminal_stats`, `stat_labels`, and
-`stat_formatters` arguments let the plot carry the sample size, outcome rate,
-and mean rank in each terminal node instead of leaving those quantities for a
-separate table.
-
-```{r plot-ci-tree, fig.width=14, fig.height=10, fig.alt="A concentration-index tree for under-five death in the Kenya example data."}
+```{r plot-ci-tree-basic, fig.width=11.5, fig.height=5.5, dpi=200, fig.alt="A basic plot of a concentration-index tree for under-five death in the Kenya example data."}
 plot(
   tree_fit,
+  gp = grid::gpar(fontsize = 9.5),
   data = kenya_model,
   var_labels = c(
     rural = "Residence",
@@ -259,18 +250,60 @@ plot(
     unskilled = "Mother occupation"
   ),
   plural_overrides = c(Province = "provinces"),
+  margins = grid::unit(c(3, 1, 1, 1), "lines"),
+  tnex = 1,
+  ep_args = list(max_items = 1L, max_chars = 20L, just = "equal"),
+  tp_args = list(width_lines = 8.5, height_lines = 2),
+  terminal_fill = "#f7f7f7",
+  stat_formatters = list(
+    n = function(x) format(x, big.mark = ",", scientific = FALSE)
+  )
+)
+```
+
+For reports, the most useful improvement is usually to add readable variable
+names and terminal-node summaries. The `terminal_stats`, `stat_labels`, and
+`stat_formatters` arguments let the plot carry the sample size, outcome rate,
+and mean rank in each terminal node instead of leaving those quantities for a
+separate table. Because the tree is fitted with sample weights, those
+summaries use weighted counts and weighted means so that each panel matches
+the fitted model.
+
+```{r plot-ci-tree, fig.width=11.5, fig.height=5.5, dpi=200, fig.alt="A concentration-index tree for under-five death in the Kenya example data."}
+plot(
+  tree_fit,
+  gp = grid::gpar(fontsize = 9.5),
+  data = kenya_model,
+  var_labels = c(
+    rural = "Residence",
+    ed = "Mother education",
+    reg = "Province",
+    unskilled = "Mother occupation"
+  ),
+  plural_overrides = c(Province = "provinces"),
+  margins = grid::unit(c(3, 1, 1, 1), "lines"),
+  tnex = 1,
+  ep_args = list(max_items = 1L, max_chars = 20L, just = "equal"),
+  tp_args = list(width_lines = 8.5, height_lines = 4.8),
+  terminal_fill = "#f7f7f7",
   terminal_stats = list(
     n = nrow,
-    mortality = function(df) mean(df$deadu5_num),
-    mean_wealth = function(df) mean(df$wealth)
+    weighted_n = function(df) sum(df$sample_weight, na.rm = TRUE),
+    mortality = function(df)
+      stats::weighted.mean(df$deadu5_num, df$sample_weight),
+    mean_wealth = function(df)
+      stats::weighted.mean(df$wealth, df$sample_weight)
   ),
-  stat_labels = c(
+  stat_labels = list(
     n = "n",
+    weighted_n = "weight",
     mortality = "% death",
-    mean_wealth = "mean wealth"
+    mean_wealth = expression(mu ~ wealth)
   ),
   stat_formatters = list(
-    mortality = function(x) sprintf("%.1f%%", 100 * x),
+    n = function(x) format(x, big.mark = ",", scientific = FALSE),
+    weighted_n = function(x) format(round(x), big.mark = ","),
+    mortality = function(x) sprintf("%.2f%%", 100 * x),
     mean_wealth = function(x) sprintf("%.2f", x)
   )
 )

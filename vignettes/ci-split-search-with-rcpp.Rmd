@@ -32,6 +32,10 @@ Package files owned by this development note:
 - `R/RcppExports.R`
 - `src/RcppExports.cpp`
 - `tests/testthat/test-ci_split_search_cpp.R`
+- `tests/testthat/test-verification.R`
+
+`src/ci_split_search_cpp.cpp` is a maintained source file. This flat file
+documents the R wrappers; it does not contain the C++ implementation.
 
 The exported R-facing functions mirror the existing split-search helpers and
 add the `_cpp` suffix:
@@ -51,9 +55,16 @@ The roxygen source for the generated wrapper should document this argument as:
 #'   of `x`.
 ```
 
-The current production tree and forest builders still call the R split-search
-helpers. The `_cpp` helpers are a parallel fast path for testing and later
-integration.
+The production tree and forest builders use the C++ split search by default:
+`ci_tree_control()` sets `split_engine = "cpp"`, and the recursive builder
+calls `best_global_ci_split_cpp()` on that setting. Pass
+`ci_tree_control(split_engine = "R")` to use the R reference search instead.
+Both engines are expected to agree on the chosen partition, and both are
+covered by parity tests.
+
+The historical development notes in the earlier sections of this record
+describe the period when the C++ path was an optional experiment. They are kept
+for provenance only; they are not current usage instructions.
 
 ```{r cpp-wrapper-example}
 #| eval: no

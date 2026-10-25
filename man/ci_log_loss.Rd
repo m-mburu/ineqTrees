@@ -13,7 +13,8 @@ ci_log_loss(truth, estimate, weights = NULL, eps = 1e-06)
 
 \item{weights}{Optional non-negative weights.}
 
-\item{eps}{Small numeric value used to keep estimates away from 0 and 1.}
+\item{eps}{Small numeric value used to keep estimates away from 0 and 1. It
+must be finite and strictly between 0 and 0.5.}
 }
 \value{
 A numeric weighted log loss. Smaller is better.

@@ -20,6 +20,85 @@ pkgload::load_all(export_all = TRUE)
 
 # Split search
 
+```{r, function-split_search_validation}
+#' Validate a numeric predictor used for split search
+#'
+#' Rejects missing and infinite predictors at the boundary of the split
+#' search, where a non-finite value has no meaningful ordering. Infinite
+#' values would otherwise produce non-finite midpoints and break routing.
+#'
+#' @param x A numeric predictor vector.
+#' @param arg Argument name used in error messages.
+#'
+#' @return `x` as a numeric vector.
+#'
+#' @noRd
+.ci_validate_numeric_predictor <- function(x, arg = "x") {
+  if (!is.numeric(x)) {
+    stop(sprintf("`%s` must be numeric.", arg), call. = FALSE)
+  }
+
+  x <- as.numeric(x)
+
+  if (anyNA(x)) {
+    stop(
+      sprintf(
+        paste(
+          "`%s` must not contain missing values;",
+          "%d value(s) are missing."
+        ),
+        arg,
+        sum(is.na(x))
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (!all(is.finite(x))) {
+    stop(
+      sprintf(
+        paste(
+          "`%s` must contain only finite values;",
+          "%d value(s) are infinite."
+        ),
+        arg,
+        sum(!is.finite(x))
+      ),
+      call. = FALSE
+    )
+  }
+
+  x
+}
+
+#' Compute a split cutpoint that keeps routing consistent with scoring
+#'
+#' Returns a cutpoint inside the half-open interval `[lower, upper)` so that
+#' `value <= cutpoint` selects exactly the values at or below `lower`. The
+#' naive midpoint `(lower + upper) / 2` overflows for large finite values,
+#' which makes every observation route left even though the scored partition
+#' had observations on both sides. Averaging the halves cannot overflow.
+#' Rounding can still move the result onto `upper` for adjacent doubles, so
+#' that case falls back to `lower`, which is the largest representable value
+#' strictly below `upper`.
+#'
+#' @param lower Lower value of the adjacent ordered pair.
+#' @param upper Upper value of the adjacent ordered pair.
+#'
+#' @return A finite double in `[lower, upper)`.
+#'
+#' @noRd
+.ci_safe_numeric_midpoint <- function(lower, upper) {
+  midpoint <- lower / 2 + upper / 2
+
+  if (midpoint >= upper) {
+    midpoint <- lower
+  }
+
+  max(midpoint, lower)
+}
+```
+
 ```{r, function-best_numeric_split}
 #' Find the best numeric split by concentration-index gain
 #'
@@ -27,10 +106,13 @@ pkgload::load_all(export_all = TRUE)
 #' split with the largest weighted concentration-index gain.
 #'
 #' Candidate cutpoints are formed at midpoints between distinct sorted values of
-#' `x`. Each candidate is filtered using `ctrl$minbucket` and `ctrl$minprob`
-#' before being scored with [weighted_ci_gain()].
+#' `x`. The midpoint is computed so that it stays finite and inside the
+#' half-open interval `[lower, upper)`, which keeps `x <= cutpoint` routing
+#' identical to the partition that was scored. Each candidate is filtered using
+#' `ctrl$minbucket` and `ctrl$minprob` before being scored with
+#' [weighted_ci_gain()].
 #'
-#' @param x A numeric predictor vector.
+#' @param x A numeric predictor vector without infinite values.
 #' @param y A two-column numeric matrix whose first column is the socioeconomic
 #'   ranking variable and whose second column is the health outcome.
 #' @param wt A numeric vector of case weights with the same length as `x`.
@@ -58,6 +140,8 @@ best_numeric_split <- function(
     return = c("split", "candidate")) {
   return <- match.arg(return)
   wt <- .ci_validate_weights(wt, length(x), "wt")
+  x <- .ci_validate_numeric_predictor(x, "x")
+
   ord <- order(x)
   x <- x[ord]
   y <- y[ord, , drop = FALSE]
@@ -100,7 +184,7 @@ best_numeric_split <- function(
   }
 
   best_k <- cut_pos[which.max(gains)]
-  cut <- (x[best_k] + x[best_k + 1L]) / 2
+  cut <- .ci_safe_numeric_midpoint(x[best_k], x[best_k + 1L])
   left <- row_id <= best_k
   left_original <- logical(length(left))
   left_original[ord] <- left
@@ -243,6 +327,111 @@ test_that("best_numeric_split rejects non-finite weights", {
       "finite"
     )
   }
+})
+
+test_that("best_numeric_split keeps a finite cutpoint for huge predictors", {
+  x <- c(1e308, 1.1e308, 1.2e308, 1.3e308)
+  y <- cbind(ses = 1:4, health = c(0, 0, 1, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  candidate <- best_numeric_split(
+    x = x,
+    y = y,
+    wt = rep(1, 4),
+    varid = 1,
+    ctrl = ctrl,
+    ci_fun = ci_factory("CI"),
+    return = "candidate"
+  )
+
+  expect_true(is.finite(candidate$cutpoint))
+  expect_equal(candidate$left, c(TRUE, TRUE, FALSE, FALSE))
+  expect_true(all((x <= candidate$cutpoint) == candidate$left))
+})
+
+test_that("best_numeric_split cutpoints reproduce partykit routing", {
+  x <- c(1e308, 1.1e308, 1.2e308, 1.3e308)
+  y <- cbind(ses = 1:4, health = c(0, 0, 1, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  candidate <- best_numeric_split(
+    x = x,
+    y = y,
+    wt = rep(1, 4),
+    varid = 1,
+    ctrl = ctrl,
+    ci_fun = ci_factory("CI"),
+    return = "candidate"
+  )
+
+  routing <- partykit::kidids_split(
+    candidate$partysplit,
+    data = data.frame(x = x)
+  )
+
+  expect_equal(routing == 1L, candidate$left)
+})
+
+test_that(".ci_safe_numeric_midpoint stays inside the lower half interval", {
+  huge_lower <- 1e308
+  huge_upper <- 1.1e308
+
+  expect_true(is.finite(.ci_safe_numeric_midpoint(huge_lower, huge_upper)))
+  expect_gte(.ci_safe_numeric_midpoint(huge_lower, huge_upper), huge_lower)
+  expect_lt(.ci_safe_numeric_midpoint(huge_lower, huge_upper), huge_upper)
+
+  negative_lower <- -1.3e308
+  negative_upper <- -1.2e308
+  neg_mid <- .ci_safe_numeric_midpoint(negative_lower, negative_upper)
+  expect_true(is.finite(neg_mid))
+  expect_lt(neg_mid, negative_upper)
+
+  adjacent_lower <- 1
+  adjacent_upper <- adjacent_lower + .Machine$double.eps
+  adjacent_mid <- .ci_safe_numeric_midpoint(adjacent_lower, adjacent_upper)
+  expect_lt(adjacent_mid, adjacent_upper)
+  expect_gte(adjacent_mid, adjacent_lower)
+})
+
+test_that("best_numeric_split separates adjacent representable values", {
+  lower <- 1
+  upper <- lower + .Machine$double.eps
+  x <- c(lower, upper, lower, upper)
+  y <- cbind(ses = 1:4, health = c(0, 0, 1, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  candidate <- best_numeric_split(
+    x = x,
+    y = y,
+    wt = rep(1, 4),
+    varid = 1,
+    ctrl = ctrl,
+    ci_fun = ci_factory("CI"),
+    return = "candidate"
+  )
+
+  expect_true(is.finite(candidate$cutpoint))
+  expect_lt(candidate$cutpoint, upper)
+  expect_gte(candidate$cutpoint, lower)
+  expect_true(all((x <= candidate$cutpoint) == candidate$left))
+})
+
+test_that("best_numeric_split rejects non-finite predictors", {
+  y <- cbind(ses = c(10, 20, 30), health = c(1, 0, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  expect_error(
+    best_numeric_split(c(1, Inf, 3), y, rep(1, 3), 1, ctrl, ci_factory("CI")),
+    "finite"
+  )
+  expect_error(
+    best_numeric_split(c(1, -Inf, 3), y, rep(1, 3), 1, ctrl, ci_factory("CI")),
+    "finite"
+  )
+  expect_error(
+    best_numeric_split(c(1, NA, 3), y, rep(1, 3), 1, ctrl, ci_factory("CI")),
+    "missing"
+  )
 })
 ```
 
@@ -828,7 +1017,8 @@ best_global_ci_split <- function(x,
   }
 
   if (!is.null(ctrl$mtry)) {
-    vars <- sample(vars, min(ctrl$mtry, length(vars)))
+    n_select <- min(ctrl$mtry, length(vars))
+    vars <- vars[sample.int(length(vars), n_select)]
   }
 
   parent_impurity <- ci_fun(y, wt)
@@ -975,6 +1165,34 @@ test_that("best_global_ci_split rejects non-finite weights", {
       ),
       "finite"
     )
+  }
+})
+
+test_that("best_global_ci_split samples mtry variable ids, not positions", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50),
+    outcome = c(1, 5, 10, 20, 40),
+    strong = c(1, 2, 3, 4, 5)
+  )
+  y <- as.matrix(toy_data[c("rank", "outcome")])
+  wt <- rep(1, nrow(toy_data))
+  mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)^2
+
+  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
+  ctrl$mtry <- 1L
+
+  for (seed in 1:20) {
+    set.seed(seed)
+    split <- best_global_ci_split(
+      x = toy_data,
+      y = y,
+      wt = wt,
+      ctrl = ctrl,
+      ci_fun = mock_ci_fun,
+      vars = 3L
+    )
+
+    expect_equal(split$varid, 3L)
   }
 })
 ```

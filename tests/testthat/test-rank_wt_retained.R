@@ -225,6 +225,70 @@ test_that("L index warns once per session for negative socioeconomic levels", {
   )
 })
 
+test_that("ci_factory rejects infinite rank, outcome and weights", {
+  ci <- ci_factory("CI")
+
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, 1, 1)), c(1, Inf, 1)),
+    "`wt` must contain only finite"
+  )
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, Inf, 1)), rep(1, 3)),
+    "`y` must contain only finite"
+  )
+  expect_error(
+    ci(cbind(c(1, Inf, 3), c(0, 1, 1)), rep(1, 3)),
+    "`y` must contain only finite"
+  )
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, 1, 1)), c(1, NaN, 1)),
+    "`wt` must not contain NaN"
+  )
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, -Inf, 1)), rep(1, 3)),
+    "`y` must contain only finite"
+  )
+})
+
+test_that("ci_factory keeps documented missing and zero-weight behaviour", {
+  ci <- ci_factory("CI")
+
+  reference <- ci(cbind(c(10, 20, 30), c(1, 0, 1)), c(1, 1, 2))
+
+  expect_equal(
+    ci(cbind(c(10, 20, 30, NA), c(1, 0, 1, 1)), c(1, 1, 2, 1)),
+    reference
+  )
+  expect_equal(
+    ci(cbind(c(10, 20, 30, 40), c(1, 0, 1, 1)), c(1, 1, 2, 0)),
+    reference
+  )
+})
+
+test_that("ci_factory valid scores match an independent hand calculation", {
+  y <- cbind(rank = c(4, 1, 3, 2, 5), outcome = c(0, 1, 3, 2, 5))
+  wt <- c(1, 2, 1, 3, 2)
+
+  ordered <- order(y[, 1])
+  rank_vals <- y[ordered, 1]
+  weight_vals <- wt[ordered]
+  normalised_weight <- weight_vals / sum(weight_vals)
+  cumulative <- cumsum(normalised_weight)
+  fractional <- cumulative - normalised_weight / 2
+  restored <- numeric(length(rank_vals))
+  restored[ordered] <- fractional
+
+  outcome_vals <- y[, 2]
+  weight_prob <- wt / sum(wt)
+  mean_rank <- sum(weight_prob * restored)
+  mean_outcome <- sum(weight_prob * outcome_vals)
+  covariance <- sum(
+    weight_prob * (restored - mean_rank) * (outcome_vals - mean_outcome)
+  )
+
+  expect_equal(ci_factory("CIg")(y, wt), abs(2 * covariance))
+})
+
 test_that("weighted_ci_gain computes parent minus weighted child impurity", {
   y <- cbind(ses = 1:4, health = c(10, 20, 30, 40))
   wt <- c(1, 2, 3, 4)

@@ -15,7 +15,7 @@ best_numeric_split(
 )
 }
 \arguments{
-\item{x}{A numeric predictor vector.}
+\item{x}{A numeric predictor vector without infinite values.}
 
 \item{y}{A two-column numeric matrix whose first column is the socioeconomic
 ranking variable and whose second column is the health outcome.}
@@ -45,8 +45,11 @@ split with the largest weighted concentration-index gain.
 }
 \details{
 Candidate cutpoints are formed at midpoints between distinct sorted values of
-\code{x}. Each candidate is filtered using \code{ctrl$minbucket} and \code{ctrl$minprob}
-before being scored with \code{\link[=weighted_ci_gain]{weighted_ci_gain()}}.
+\code{x}. The midpoint is computed so that it stays finite and inside the
+half-open interval \verb{[lower, upper)}, which keeps \code{x <= cutpoint} routing
+identical to the partition that was scored. Each candidate is filtered using
+\code{ctrl$minbucket} and \code{ctrl$minprob} before being scored with
+\code{\link[=weighted_ci_gain]{weighted_ci_gain()}}.
 }
 \examples{
 x <- c(2, 4, 6, 8, 10)

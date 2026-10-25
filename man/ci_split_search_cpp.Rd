@@ -74,8 +74,8 @@ of \code{x}.}
 A \code{partysplit} object, split candidate list, or \code{NULL}.
 }
 \description{
-Experimental Rcpp-backed versions of the greedy concentration-index split
-search helpers. These functions keep the same return shape as the current R
-split helpers, but take \code{type} instead of a prebuilt \code{ci_fun} because the
-concentration-index scoring is evaluated in C++.
+Rcpp-backed versions of the greedy concentration-index split search helpers.
+These functions keep the same return shape as the R split helpers, but take
+\code{type} instead of a prebuilt \code{ci_fun} because the concentration-index scoring
+is evaluated in C++.
 }

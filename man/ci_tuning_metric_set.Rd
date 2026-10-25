@@ -23,11 +23,13 @@ ci_tuning_metric_set(
 \item{type}{One of \code{"CI"}, \code{"CIg"}, \code{"CIc"}, or \code{"L"}.}
 
 \item{metrics}{Character vector of CI metrics to include. Supported values
-are \code{"validation_gain"} and \code{"relative_validation_gain"}.}
+are \code{"validation_gain"}, \code{"relative_validation_gain"}, \code{"training_gain"},
+and \code{"relative_training_gain"}.}
 
-\item{node_name}{Optional name of a node or partition column. If present in
-the prediction data passed to the metric, that column is used as the
-validation partition. Otherwise predictions are used as the partition.}
+\item{node_name}{Optional name of a node or partition column. Defaults to
+the engine's \code{.ci_node} column. Supply an explicit column when scoring
+manually prepared predictions. Missing partition metadata is an error;
+equal predicted risks do not establish equal terminal-node membership.}
 }
 \value{
 A yardstick metric set.
@@ -38,11 +40,14 @@ with \code{ineqTrees} parsnip engines. The returned metrics recover the
 socioeconomic rank and optional case weights from the original analysis data
 using the \code{.row} column supplied by \code{tune_grid()}.
 
-These metrics are intended for tidymodels workflows. The package-native
-\code{\link[=tune_ci_tree]{tune_ci_tree()}} and \code{\link[=tune_ci_forest]{tune_ci_forest()}} helpers remain the most direct way to
-tune on fitted CI partitions because they can inspect the fitted tree or
-forest objects. In tidymodels, when a node column is not supplied, validation
-gain uses predictions as the grouping variable, matching \code{\link[=ci_gain]{ci_gain()}}.
+Validation gain uses the actual terminal-node IDs carried by the engine's
+numeric predictions. Forest gain averages the member-tree partition gains;
+it does not group observations by their averaged predicted risks.
+Training gain is computed from the fitted analysis sample and carried
+separately in prediction metadata. It is descriptive training performance,
+and should not be used to select parameters in place of validation gain.
+Relative gains divide by the corresponding analysis or assessment root
+impurity, returning \code{NA} when that root is numerically zero.
 }
 \examples{
 if (requireNamespace("yardstick", quietly = TRUE)) {

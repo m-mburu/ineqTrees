@@ -1377,14 +1377,19 @@ cf_ci <- function(...) {
 #' @param type Prediction type. `"response"` returns averaged terminal-node
 #'   summaries. `"node"` returns terminal node ids for each tree.
 #' @param OOB Should predictions for training rows use only trees where the row
-#'   was out-of-bag?
+#'   was out-of-bag? Rows without any out-of-bag tree return `NA`; they are
+#'   never filled with in-sample tree averages. With `OOB = TRUE`, `newdata`
+#'   must be omitted or must be the identical training data frame so that the
+#'   in-bag mask can be applied to matching rows.
 #' @param FUN Optional function with signature `function(y, w)` used to
 #'   summarize terminal nodes. By default, the weighted mean of `outcome_name`
 #'   is used.
 #' @param ... Currently ignored.
 #'
 #' @return A numeric vector for `type = "response"` or an integer matrix for
-#'   `type = "node"`.
+#'   `type = "node"`. Out-of-bag predictions are returned for `type =
+#'   "response"` only; `type = "node"` returns terminal node ids for every
+#'   tree and ignores `OOB`.
 #'
 #' @export
 predict.ci_forest <- function(object,
@@ -1396,10 +1401,21 @@ predict.ci_forest <- function(object,
   type <- match.arg(type)
   use_training_data <- is.null(newdata)
 
+  if (isTRUE(OOB) && !identical(type, "response")) {
+    stop(
+      "`OOB = TRUE` is only supported for `type = \"response\"`.",
+      call. = FALSE
+    )
+  }
+
   if (use_training_data) {
     newdata <- object$data
   } else {
     newdata <- as.data.frame(newdata)
+  }
+
+  if (isTRUE(OOB)) {
+    .ci_check_oob_newdata(newdata, object$data)
   }
 
   pred_mat <- matrix(NA_real_,
@@ -1435,26 +1451,88 @@ predict.ci_forest <- function(object,
   }
 
   if (isTRUE(OOB)) {
-    if (!use_training_data && nrow(newdata) != nrow(object$data)) {
-      stop("`OOB = TRUE` is only available for training-data predictions.",
+    pred <- .ci_oob_prediction(pred_mat, object$inbag)
+
+    no_oob <- which(is.na(pred))
+    if (length(no_oob)) {
+      warning(
+        sprintf(
+          "%d row(s) have no out-of-bag tree; their OOB prediction is NA.",
+          length(no_oob)
+        ),
         call. = FALSE
       )
     }
 
-    oob_mat <- pred_mat
-    oob_mat[object$inbag > 0L] <- NA_real_
-    pred <- rowMeans(oob_mat, na.rm = TRUE)
-
-    no_oob <- is.nan(pred)
-    if (any(no_oob)) {
-      pred[no_oob] <- rowMeans(pred_mat[no_oob, , drop = FALSE],
-        na.rm = TRUE
-      )
-    }
-    return(as.numeric(pred))
+    return(pred)
   }
 
   as.numeric(rowMeans(pred_mat, na.rm = TRUE))
+}
+
+#' Check that OOB prediction uses the training rows in their stored order
+#'
+#' @param newdata Supplied prediction data.
+#' @param training_data Data frame stored on the fitted forest.
+#'
+#' @return `NULL`, called for its validation side effect.
+#'
+#' @noRd
+.ci_check_oob_newdata <- function(newdata, training_data) {
+  if (nrow(newdata) != nrow(training_data)) {
+    stop(
+      "`OOB = TRUE` requires the training data: `newdata` has ",
+      nrow(newdata),
+      " row(s) but the fitted forest has ",
+      nrow(training_data),
+      ".",
+      call. = FALSE
+    )
+  }
+
+  if (!identical(names(newdata), names(training_data))) {
+    stop(
+      "`OOB = TRUE` requires the training data: `newdata` columns differ ",
+      "from the fitted forest.",
+      call. = FALSE
+    )
+  }
+
+  same_rows <- isTRUE(all.equal(
+    newdata,
+    training_data,
+    check.attributes = FALSE
+  ))
+
+  if (!same_rows) {
+    stop(
+      "`OOB = TRUE` requires the training data: `newdata` rows are not the ",
+      "stored training rows in their original order.",
+      call. = FALSE
+    )
+  }
+
+  invisible(NULL)
+}
+
+#' Average predictions across the trees that held a row out of bag
+#'
+#' @param pred_mat Per-tree predictions with one row per training observation.
+#' @param inbag In-bag count matrix with one row per training observation.
+#'
+#' @return A numeric vector, with `NA` where no tree held the row out of bag.
+#'
+#' @noRd
+.ci_oob_prediction <- function(pred_mat, inbag) {
+  oob_mat <- pred_mat
+  oob_mat[inbag > 0L] <- NA_real_
+
+  oob_tree_count <- rowSums(inbag == 0L)
+
+  pred <- rowMeans(oob_mat, na.rm = TRUE)
+  pred[oob_tree_count == 0L] <- NA_real_
+
+  as.numeric(pred)
 }
 
 #' Extract fitted values from a greedy concentration-index forest
@@ -2214,6 +2292,182 @@ test_that("ci_forest accepts level-dependent L split scoring", {
 
   expect_s3_class(fit, "ci_forest")
   expect_equal(fit$type, "L")
+})
+
+test_that("ci_forest OOB prediction does not substitute in-sample estimates", {
+  toy_data <- data.frame(
+    rank = 1:8,
+    outcome = rep(0:1, 4),
+    predictor = 1:8
+  )
+
+  fit <- ci_forest(
+    cbind(rank, outcome) ~ predictor,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 2L,
+    perturb = list(replace = FALSE, fraction = 1),
+    control = ci_tree_control(maxdepth = 0)
+  )
+
+  expect_true(all(rowSums(fit$inbag == 0) == 0L))
+
+  expect_warning(
+    pred <- predict(fit, OOB = TRUE),
+    "no out-of-bag tree"
+  )
+
+  expect_true(all(is.na(pred)))
+  expect_equal(length(pred), nrow(toy_data))
+  expect_false(any(is.nan(pred)))
+})
+
+test_that("ci_forest OOB prediction uses only eligible trees per row", {
+  toy_data <- data.frame(
+    rank = 1:8,
+    outcome = c(0, 1, 0, 1, 0, 1, 0, 1),
+    predictor = 1:8
+  )
+
+  fit <- ci_forest(
+    cbind(rank, outcome) ~ predictor,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 4L,
+    perturb = list(replace = FALSE, fraction = 0.5),
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1),
+    mtry = 1L
+  )
+
+  expect_true(any(rowSums(fit$inbag == 0) > 0L))
+
+  pred <- suppressWarnings(predict(fit, OOB = TRUE))
+  all_tree_pred <- predict(fit)
+  inbag <- fit$inbag
+
+  per_tree <- matrix(
+    NA_real_,
+    nrow = nrow(toy_data),
+    ncol = fit$ntree
+  )
+  for (b in seq_len(fit$ntree)) {
+    per_tree[, b] <- .ci_tree_terminal_predict(
+      fit = fit$trees[[b]]$fit,
+      train_data = fit$trees[[b]]$data,
+      new_data = fit$data,
+      rank_name = fit$rank_name,
+      outcome_name = fit$outcome_name,
+      weights = fit$trees[[b]]$weights
+    )
+  }
+
+  for (row_index in seq_len(nrow(toy_data))) {
+    eligible <- which(inbag[row_index, ] == 0L)
+
+    if (!length(eligible)) {
+      expect_true(is.na(pred[row_index]))
+    } else {
+      expected <- mean(per_tree[row_index, eligible])
+      expect_equal(pred[row_index], expected)
+    }
+  }
+
+  expect_false(all(pred == all_tree_pred, na.rm = TRUE))
+})
+
+test_that("ci_forest OOB rejects unrelated same-size newdata", {
+  toy_data <- data.frame(
+    rank = 1:8,
+    outcome = c(0, 1, 0, 1, 0, 1, 0, 1),
+    predictor = 1:8
+  )
+
+  fit <- ci_forest(
+    cbind(rank, outcome) ~ predictor,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 2L,
+    perturb = list(replace = FALSE, fraction = 0.632),
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1),
+    mtry = 1L
+  )
+
+  reordered <- toy_data[rev(seq_len(nrow(toy_data))), , drop = FALSE]
+  unrelated <- toy_data
+  unrelated$predictor <- rev(unrelated$predictor)
+
+  expect_error(
+    predict(fit, newdata = unrelated, OOB = TRUE),
+    "requires the training data"
+  )
+  expect_error(
+    predict(fit, newdata = reordered, OOB = TRUE),
+    "requires the training data"
+  )
+  expect_error(
+    predict(fit, newdata = toy_data[1:4, , drop = FALSE], OOB = TRUE),
+    "requires the training data"
+  )
+})
+
+test_that("ci_forest OOB accepts the identical training data", {
+  toy_data <- data.frame(
+    rank = 1:8,
+    outcome = c(0, 1, 0, 1, 0, 1, 0, 1),
+    predictor = 1:8
+  )
+
+  fit <- ci_forest(
+    cbind(rank, outcome) ~ predictor,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 3L,
+    perturb = list(replace = FALSE, fraction = 0.6),
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1),
+    mtry = 1L
+  )
+
+  pred_omitted <- suppressWarnings(predict(fit, OOB = TRUE))
+  pred_explicit <- suppressWarnings(
+    predict(fit, newdata = toy_data, OOB = TRUE)
+  )
+
+  expect_equal(pred_omitted, pred_explicit)
+})
+
+test_that("ci_forest rejects OOB with node predictions", {
+  toy_data <- data.frame(
+    rank = 1:6,
+    outcome = c(0, 1, 0, 1, 0, 1),
+    predictor = 1:6
+  )
+
+  fit <- ci_forest(
+    cbind(rank, outcome) ~ predictor,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    ntree = 2L,
+    control = ci_tree_control(minsplit = 1, minbucket = 1, maxdepth = 1),
+    mtry = 1L
+  )
+
+  expect_error(
+    predict(fit, type = "node", OOB = TRUE),
+    "only supported for `type = \"response\"`"
+  )
+  expect_error(
+    predict(fit, OOB = TRUE, type = "node"),
+    "only supported for `type = \"response\"`"
+  )
+
+  node_pred <- predict(fit, type = "node")
+  expect_equal(nrow(node_pred), nrow(toy_data))
+  expect_equal(ncol(node_pred), fit$ntree)
 })
 ```
 

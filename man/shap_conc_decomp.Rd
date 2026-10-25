@@ -12,6 +12,7 @@ shap_conc_decomp(
   baseline = NULL,
   weights = NULL,
   from_dalex = FALSE,
+  observation_id = NULL,
   dalex_id_col = NULL,
   dalex_variable_col = NULL,
   dalex_value_col = NULL,
@@ -43,10 +44,19 @@ predictions are reconstructed as \code{baseline + rowSums(shap)}.}
 
 \item{weights}{Optional numeric vector of non-negative case weights. If
 omitted, equal weights are used. Observations with non-positive weights do
-not contribute to the decomposition.}
+not contribute to the decomposition. Negative weights are rejected: they
+are not silently dropped, because that would change the analysis
+population without notice.}
 
 \item{from_dalex}{Logical scalar. If \code{TRUE}, reshape a DALEX-like long SHAP
 table to wide format before decomposition.}
+
+\item{observation_id}{Optional vector of observation IDs. When
+\code{from_dalex = TRUE}, it selects and orders the observations from the
+DALEX table and must contain every ID exactly once; the supplied \code{rank},
+\code{prediction} and \code{weights} are then aligned by that ID order. With wide
+\code{shap} input, the IDs only identify the existing rows and must match
+\code{nrow(shap)}.}
 
 \item{dalex_id_col}{Optional column name identifying observations in the
 DALEX-like input.}

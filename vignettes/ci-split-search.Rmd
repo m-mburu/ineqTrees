@@ -28,6 +28,7 @@ library(ineqTrees)
 
 # Split search
 
+
 ```{r example-best_numeric_split}
 x <- c(2, 4, 6, 8, 10)
 y <- cbind(
