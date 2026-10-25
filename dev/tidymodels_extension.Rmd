@@ -415,9 +415,11 @@ tree_grid
 ```
 
 To tune directly on the inequality objective, we use `ci_tuning_metric_set()`.
-The helper returns yardstick-compatible metrics and uses the `.row` column from
-`tune_grid()` to recover each assessment row's rank and sampling weight from
-the original analysis table.
+The helper uses the `.row` column from `tune_grid()` to recover assessment
+ranks and sampling weights. Numeric engine predictions retain actual
+terminal-node assignments: separate leaves with equal risks remain separate,
+and forest gain averages member-tree partition gains. Training diagnostics
+come from each fitted analysis fold, independently of assessment outcomes.
 
 ```{r ci-gain-tuning-metric}
 ci_tuning_metrics <- ci_tuning_metric_set(
@@ -425,12 +427,19 @@ ci_tuning_metrics <- ci_tuning_metric_set(
   rank_name = "wealth",
   case_weight_name = "sample_weight",
   type = "CI",
-  metrics = c("validation_gain", "relative_validation_gain")
+  metrics = c(
+    "validation_gain", "relative_validation_gain",
+    "training_gain", "relative_training_gain"
+  )
 )
 ```
 
 The tuning loop can still collect familiar prediction metrics separately, but
 model selection is now driven by held-out concentration-index gain.
+Training gain describes fit on the analysis fold. Compare it with validation
+gain to assess the training-validation gap; select parameters using the
+validation metric. Relative gains use their respective fold's root impurity
+and are `NA` when that root is numerically zero.
 
 ```{r tune-tree}
 set.seed(20260516)

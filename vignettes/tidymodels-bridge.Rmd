@@ -33,6 +33,103 @@ This flat file registers `ineqTrees` as a parsnip engine for
 `decision_tree()` and `rand_forest()`, and exposes a yardstick-compatible
 concentration-index gain metric.
 
+Assessment gain applies the fitted partition to held-out observations and
+compares its weighted within-leaf impurity with the unsplit assessment
+sample. Training gain makes the same comparison on the analysis sample
+used to fit that model. Ranks are recomputed within each scored leaf for
+the rank-dependent criteria. Forest gain averages these partition gains
+over member trees.
+
+Predicted risk alone cannot identify the partition: two leaves can have
+the same mean, and averaged forest predictions combine several partitions.
+The engine therefore retains terminal-node IDs alongside `.pred`. It also
+caches the analysis-sample assignments used for training diagnostics in
+`attr(engine, "ci_training_diagnostics")`. These assignments matter when
+partykit routes a factor level absent from a member's training sample
+probabilistically. A fresh prediction can make a different routing draw;
+the saved metadata identifies the draw actually scored.
+
+## Tune on assessment gain and inspect training gain
+
+The example uses synthetic child-level observations with complete data and
+unequal importance weights. Zero-weight observations, when present, do not
+contribute to impurity calculations. Include the socioeconomic variable in
+the workflow inputs so the engine can recover it. The bridge removes it
+from the splitting predictors in the single-outcome interface. Recipes must
+retain the rank/level variable and the case-weight role. Do not transform
+the socioeconomic levels when using L unless that transformation is part
+of the intended estimand.
+```{r bridge-tuning-example}
+example_data <- data.frame(
+  rank = seq_len(48),
+  outcome = as.numeric(seq_len(48) %% 7 == 0 | seq_len(48) > 28),
+  group = rep(seq_len(6), each = 8),
+  weight = rep(c(1, 2, 3), 16)
+)
+example_data$case_wt <- hardhat::importance_weights(example_data$weight)
+
+tree_spec <- parsnip::decision_tree(
+  tree_depth = tune::tune(),
+  min_n = 2
+)
+tree_spec <- parsnip::set_engine(
+  tree_spec,
+  "ineqTrees",
+  rank_name = "rank",
+  outcome_name = "outcome",
+  type = "CI",
+  minsplit = 4,
+  minprob = 0
+)
+tree_spec <- parsnip::set_mode(tree_spec, "regression")
+
+tree_workflow <- workflows::workflow()
+tree_workflow <- workflows::add_model(tree_workflow, tree_spec)
+tree_workflow <- workflows::add_formula(
+  tree_workflow, outcome ~ rank + group
+)
+tree_workflow <- workflows::add_case_weights(tree_workflow, case_wt)
+
+set.seed(71)
+example_folds <- rsample::vfold_cv(example_data, v = 3)
+gain_metrics <- ci_tuning_metric_set(
+  example_data,
+  rank_name = "rank",
+  case_weight_name = "weight",
+  type = "CI",
+  metrics = c(
+    "validation_gain", "relative_validation_gain",
+    "training_gain", "relative_training_gain"
+  )
+)
+tree_tuning <- tune::tune_grid(
+  tree_workflow,
+  resamples = example_folds,
+  grid = data.frame(tree_depth = c(1L, 2L)),
+  metrics = gain_metrics,
+  control = tune::control_grid(save_pred = TRUE, allow_par = FALSE)
+)
+
+tune::collect_metrics(tree_tuning)
+tune::select_best(tree_tuning, metric = "validation_gain")
+```
+
+
+Relative training gain uses the analysis root as its denominator; relative
+validation gain uses the assessment root. Either relative gain is undefined
+when its root impurity is numerically zero and is reported as `NA`.
+Use validation gain for selection. Training gain describes the fitted
+sample and helps reveal a training-validation gap. It does not establish
+generalisation or a causal effect. Keep the metric's `type` consistent with
+the engine, and compare tuning candidates within the same criterion.
+
+For reproducible numerical checks, run
+`/usr/bin/Rscript dev/run_tidymodels_scoring_experiments.R` from the package
+root. The script checks actual node assignments against an independent
+weighted calculation and saves fold scores, selection checks and versions
+under `dev/validation/tidymodels_scoring/`.
+
+
 
 
 

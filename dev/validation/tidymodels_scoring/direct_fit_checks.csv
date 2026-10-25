@@ -1,0 +1,17 @@
+"weighted","model","type","prediction_error","node_error"
+FALSE,"tree","CI",0,0
+FALSE,"tree","CIg",0,0
+FALSE,"tree","CIc",0,0
+FALSE,"tree","L",0,0
+FALSE,"forest","CI",0,0
+FALSE,"forest","CIg",0,0
+FALSE,"forest","CIc",0,0
+FALSE,"forest","L",0,0
+TRUE,"tree","CI",0,0
+TRUE,"tree","CIg",0,0
+TRUE,"tree","CIc",0,0
+TRUE,"tree","L",0,0
+TRUE,"forest","CI",0,0
+TRUE,"forest","CIg",0,0
+TRUE,"forest","CIc",0,0
+TRUE,"forest","L",0,0

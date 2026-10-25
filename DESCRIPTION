@@ -1,6 +1,6 @@
 Package: ineqTrees
 Title: Tree-Based Decomposition of Health Inequality
-Version: 0.0.0.1
+Version: 0.0.0.2
 Authors@R: 
     person("Moses", "Mburu", , "mmburu20@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-7281-583X"))
@@ -47,10 +47,10 @@ Suggests:
     workflows
 LinkingTo: 
     Rcpp
-VignetteBuilder: 
-    knitr
+VignetteBuilder: knitr
 Config/fusen/version: 0.7.2
 Config/roxygen2/version: 8.0.0
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
