@@ -15,8 +15,21 @@ test_that("tree_compact_split_label summarizes long level lists", {
       var_labels = c(water_source = "Water source"),
       plural_overrides = c("Water source" = "sources")
     ),
-    "Water source\n4 sources\npiped, borehole, well, ..."
+    "Water source\n4 sources\npiped, borehole, well,\n..."
   )
+})
+
+test_that("split values can be shown without repeating the variable", {
+  expect_equal(
+    tree_compact_split_label("rural", "Urban", show_variable = FALSE),
+    "Urban"
+  )
+  label <- tree_compact_split_label(
+    "reg", "Mombasa, Kwale, Lamu, Taita Taveta, Kilifi",
+    max_chars = 20L,
+    show_variable = FALSE
+  )
+  expect_true(all(nchar(strsplit(label, "\n", fixed = TRUE)[[1L]]) <= 20L))
 })
 
 test_that("tree_edge_panel_compact is a graph-content generator", {
@@ -186,4 +199,66 @@ test_that("plot dispatches for ci_tree without error", {
       )
     )
   )
+})
+
+test_that("plot.ci_tree passes plural_overrides to the default edge panel", {
+  skip_if_not_installed("data.table")
+
+  data(kenya, package = "ineqTrees", envir = environment())
+  kenya_plot_vars <- c(
+    "wealth", "deadu5_num", "rural", "ed", "reg", "unskilled"
+  )
+  kenya_plot_data <- kenya[
+    stats::complete.cases(kenya[, kenya_plot_vars]),
+    kenya_plot_vars
+  ]
+  set.seed(20260512)
+  kenya_plot_data <- kenya_plot_data[
+    sample.int(nrow(kenya_plot_data), 800L),
+    ,
+    drop = FALSE
+  ]
+
+  fit <- ci_tree(
+    cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+    data = kenya_plot_data,
+    rank_name = "wealth",
+    outcome_name = "deadu5_num",
+    control = ci_tree_control(
+      minsplit = 100,
+      minbucket = 50,
+      minprob = 0.05,
+      maxdepth = 3
+    )
+  )
+
+  plot_labels <- function(...) {
+    grid::grid.newpage()
+    plot(fit, ...)
+    gt <- grid::grid.grab()
+
+    text_labels <- character(0)
+    collect <- function(grob) {
+      if (inherits(grob, "text") && !is.null(grob$label)) {
+        text_labels <<- c(text_labels, as.character(grob$label))
+      }
+      if (!is.null(grob$children)) {
+        for (child in grob$children) {
+          collect(child)
+        }
+      }
+    }
+    collect(gt)
+    unique(text_labels)
+  }
+
+  default_labels <- plot_labels(data = kenya_plot_data)
+  custom_labels <- plot_labels(
+    data = kenya_plot_data,
+    var_labels = c(reg = "Province"),
+    plural_overrides = c(Province = "provinces")
+  )
+
+  expect_false(any(grepl("provinces", default_labels, fixed = TRUE)))
+  expect_true(any(grepl("provinces", custom_labels, fixed = TRUE)))
 })

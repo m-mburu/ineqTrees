@@ -13,7 +13,8 @@ tree_edge_panel_compact(
   just = c("alternate", "increasing", "decreasing", "equal"),
   max_items = 3L,
   max_chars = 24L,
-  plural_overrides = NULL
+  plural_overrides = NULL,
+  show_variable = FALSE
 )
 }
 \arguments{
@@ -38,10 +39,13 @@ shortening the label.}
 
 \item{plural_overrides}{An optional named character vector giving custom
 plural nouns for summarized level groups.}
+
+\item{show_variable}{Logical; repeat the variable name on each edge.
+Defaults to \code{FALSE} because internal nodes already identify the variable.}
 }
 \value{
 A graph-content generator function suitable for the \code{edge_panel}
-argument of \code{\link[partykit:plot.party]{partykit::plot.party()}}.
+argument of \code{\link[partykit:party-plot]{partykit::plot.party()}}.
 }
 \description{
 Builds a \code{partykit} graph-content generator that draws compact edge labels

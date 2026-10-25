@@ -10,7 +10,8 @@ tree_inner_panel_labeled(
   id = FALSE,
   show_p = TRUE,
   gp = grid::gpar(),
-  fill = "white"
+  fill = "white",
+  max_chars = 24L
 )
 }
 \arguments{
@@ -26,16 +27,18 @@ nodes.}
 \item{gp}{A \code{grid::gpar()} object applied to the node viewport.}
 
 \item{fill}{Fill color used for the rounded internal node box.}
+
+\item{max_chars}{Maximum wrapping width of internal node labels.}
 }
 \value{
 A graph-content generator function suitable for the \code{inner_panel}
-argument of \code{\link[partykit:plot.party]{partykit::plot.party()}}.
+argument of \code{\link[partykit:party-plot]{partykit::plot.party()}}.
 }
 \description{
 Builds a \code{partykit} graph-content generator that draws internal tree nodes
 with readable variable labels and optional split-test p-values. The returned
 generator is intended for use in the \code{inner_panel} argument of
-\code{\link[partykit:plot.party]{partykit::plot.party()}}.
+\code{\link[partykit:party-plot]{partykit::plot.party()}}.
 }
 \examples{
 data(kenya, package = "ineqTrees")

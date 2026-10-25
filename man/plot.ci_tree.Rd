@@ -18,6 +18,7 @@
   var_labels = NULL,
   stat_labels = NULL,
   stat_formatters = list(),
+  plural_overrides = NULL,
   show_p = TRUE,
   edge_fill = "white",
   inner_fill = "white",
@@ -51,11 +52,15 @@ labels.}
 \item{stat_formatters}{Optional named list of formatting functions for
 terminal summaries.}
 
+\item{plural_overrides}{Optional named character vector giving custom plural
+nouns for summarized factor-level groups in edge labels. Passed to the
+default edge panel and ignored when a custom \code{edge_panel} is supplied.}
+
 \item{show_p}{Logical; include split-test p-values in internal nodes.}
 
 \item{edge_fill, inner_fill, terminal_fill}{Fill colors for the custom panels.}
 
-\item{...}{Additional arguments passed to \code{\link[partykit:plot.party]{partykit::plot.party()}}.}
+\item{...}{Additional arguments passed to \code{\link[partykit:party-plot]{partykit::plot.party()}}.}
 }
 \value{
 Invisibly returns the plotted \code{ci_tree}.

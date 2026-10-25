@@ -134,6 +134,7 @@ tree_pretty_var_name <- function(var_name, var_labels = NULL) {
 #' @param max_chars Maximum wrapping width used for unshortened labels.
 #' @param plural_overrides An optional named character vector giving custom
 #'   plural nouns for summarized level groups.
+#' @param show_variable Logical; include the variable name above split values.
 #'
 #' @return A length-one character vector suitable for edge labels in tree plots.
 #'
@@ -144,7 +145,8 @@ tree_compact_split_label <- function(
     var_labels = NULL,
     max_items = 3L,
     max_chars = 24L,
-    plural_overrides = NULL) {
+    plural_overrides = NULL,
+    show_variable = TRUE) {
   display_name <- tree_pretty_var_name(var_name,
     var_labels = var_labels
   )
@@ -152,7 +154,7 @@ tree_compact_split_label <- function(
   wrap_two_line_label <- function(title, body, width) {
     paste(
       c(
-        strwrap(title, width = width),
+        if (show_variable) strwrap(title, width = width),
         strwrap(body, width = width)
       ),
       collapse = "\n"
@@ -181,10 +183,12 @@ tree_compact_split_label <- function(
   }
 
   paste0(
-    display_name, "\n",
+    if (show_variable) paste0(display_name, "\n"),
     length(parts), " ",
     bucket_label, "\n",
-    shown, ", ..."
+    paste(strwrap(paste0(shown, ", ..."), width = max_chars),
+      collapse = "\n"
+    )
   )
 }
 ```
@@ -216,8 +220,21 @@ test_that("tree_compact_split_label summarizes long level lists", {
       var_labels = c(water_source = "Water source"),
       plural_overrides = c("Water source" = "sources")
     ),
-    "Water source\n4 sources\npiped, borehole, well, ..."
+    "Water source\n4 sources\npiped, borehole, well,\n..."
   )
+})
+
+test_that("split values can be shown without repeating the variable", {
+  expect_equal(
+    tree_compact_split_label("rural", "Urban", show_variable = FALSE),
+    "Urban"
+  )
+  label <- tree_compact_split_label(
+    "reg", "Mombasa, Kwale, Lamu, Taita Taveta, Kilifi",
+    max_chars = 20L,
+    show_variable = FALSE
+  )
+  expect_true(all(nchar(strsplit(label, "\n", fixed = TRUE)[[1L]]) <= 20L))
 })
 ```
 
@@ -245,6 +262,8 @@ test_that("tree_compact_split_label summarizes long level lists", {
 #' @param max_chars Maximum wrapping width used for unshortened labels.
 #' @param plural_overrides An optional named character vector giving custom
 #'   plural nouns for summarized level groups.
+#' @param show_variable Logical; repeat the variable name on each edge.
+#'   Defaults to `FALSE` because internal nodes already identify the variable.
 #'
 #' @return A graph-content generator function suitable for the `edge_panel`
 #'   argument of [partykit::plot.party()].
@@ -258,7 +277,8 @@ tree_edge_panel_compact <- function(
     just = c("alternate", "increasing", "decreasing", "equal"),
     max_items = 3L,
     max_chars = 24L,
-    plural_overrides = NULL) {
+    plural_overrides = NULL,
+    show_variable = FALSE) {
   meta <- obj$data
 
   justfun <- function(i, split_labels) {
@@ -292,7 +312,8 @@ tree_edge_panel_compact <- function(
       var_labels = var_labels,
       max_items = max_items,
       max_chars = max_chars,
-      plural_overrides = plural_overrides
+      plural_overrides = plural_overrides,
+      show_variable = show_variable
     )
 
     y <- justfun(i, split_labels)
@@ -396,6 +417,7 @@ test_that("tree_edge_panel_compact is a graph-content generator", {
 #'   nodes.
 #' @param gp A `grid::gpar()` object applied to the node viewport.
 #' @param fill Fill color used for the rounded internal node box.
+#' @param max_chars Maximum wrapping width of internal node labels.
 #'
 #' @return A graph-content generator function suitable for the `inner_panel`
 #'   argument of [partykit::plot.party()].
@@ -406,7 +428,8 @@ tree_inner_panel_labeled <- function(
     id = FALSE,
     show_p = TRUE,
     gp = grid::gpar(),
-    fill = "white") {
+    fill = "white",
+    max_chars = 24L) {
   meta <- obj$data
 
   extract_label <- function(node) {
@@ -436,30 +459,18 @@ tree_inner_panel_labeled <- function(
   }
 
 
-  maxstr <- function(node) {
-    lab <- extract_label(node)
-    klab <- if (partykit::is.terminal(node)) {
-      ""
-    } else {
-      unlist(lapply(partykit::kids_node(node), maxstr))
-    }
-    lab <- c(lab, klab)
-    lab <- unlist(lapply(lab, function(x) strsplit(x, "\n", fixed = TRUE)))
-    lab <- lab[which.max(nchar(lab))]
-    if (length(lab) < 1L) {
-      ""
-    } else {
-      lab
-    }
-  }
-
-  nstr <- maxstr(partykit::node_party(obj))
-  if (nchar(nstr) < 8L) {
-    nstr <- "aaaaaaaa"
-  }
-
   function(node) {
     lab <- extract_label(node)
+    label_lines <- strwrap(lab[1L], width = max_chars)
+    if (!length(label_lines)) {
+      label_lines <- ""
+    }
+    all_lines <- c(label_lines, if (nzchar(lab[2L])) lab[2L])
+    nstr <- all_lines[which.max(nchar(all_lines))]
+    if (nchar(nstr) < 8L) {
+      nstr <- "aaaaaaaa"
+    }
+    box_height <- length(all_lines) + 0.8
 
     grid::pushViewport(grid::viewport(gp = gp))
     grid::pushViewport(
@@ -467,7 +478,7 @@ tree_inner_panel_labeled <- function(
         x = grid::unit(0.5, "npc"),
         y = grid::unit(0.5, "npc"),
         width = grid::unit(1.15, "strwidth", nstr),
-        height = grid::unit(2.8, "lines")
+        height = grid::unit(box_height, "lines")
       )
     )
 
@@ -476,13 +487,16 @@ tree_inner_panel_labeled <- function(
       gp = grid::gpar(fill = fill)
     )
     grid::grid.text(
-      lab[1L],
-      y = grid::unit(if (lab[2L] != "") 1.7 else 1.4, "lines")
+      paste(label_lines, collapse = "\n"),
+      y = grid::unit(
+        box_height / 2 + if (nzchar(lab[2L])) 0.5 else 0,
+        "lines"
+      )
     )
     if (lab[2L] != "") {
       grid::grid.text(
         lab[2L],
-        y = grid::unit(0.8, "lines"),
+        y = grid::unit(0.9, "lines"),
         gp = grid::gpar(cex = 0.85)
       )
     }
@@ -820,7 +834,7 @@ tree_terminal_panel_stats <- function(
         y = grid::unit(0.5, "npc"),
         just = c("center", "center"),
         width = grid::unit(width_lines, "lines"),
-        height = grid::unit(height_lines, "lines")
+        height = grid::unit(max(height_lines, length(label) + 0.8), "lines")
       )
     )
 
@@ -829,7 +843,11 @@ tree_terminal_panel_stats <- function(
       grid::grid.text(
         label[[i]],
         x = grid::unit(0.08, "npc"),
-        y = grid::unit(length(label) - i + 0.5, "lines"),
+        y = grid::unit(
+          max(height_lines, length(label) + 0.8) / 2 +
+            (length(label) + 1) / 2 - i,
+          "lines"
+        ),
         just = c("left", "center")
       )
     }
@@ -953,6 +971,9 @@ test_that("tree_terminal_panel_stats is a graph-content generator", {
 #'   labels.
 #' @param stat_formatters Optional named list of formatting functions for
 #'   terminal summaries.
+#' @param plural_overrides Optional named character vector giving custom plural
+#'   nouns for summarized factor-level groups in edge labels. Passed to the
+#'   default edge panel and ignored when a custom `edge_panel` is supplied.
 #' @param show_p Logical; include split-test p-values in internal nodes.
 #' @param edge_fill,inner_fill,terminal_fill Fill colors for the custom panels.
 #' @param ... Additional arguments passed to [partykit::plot.party()].
@@ -974,6 +995,7 @@ plot.ci_tree <- function(x,
                          var_labels = NULL,
                          stat_labels = NULL,
                          stat_formatters = list(),
+                         plural_overrides = NULL,
                          show_p = TRUE,
                          edge_fill = "white",
                          inner_fill = "white",
@@ -984,7 +1006,11 @@ plot.ci_tree <- function(x,
   }
   if (inherits(edge_panel, "grapcon_generator")) {
     ep_args <- utils::modifyList(
-      list(var_labels = var_labels, fill = edge_fill),
+      list(
+        var_labels = var_labels,
+        fill = edge_fill,
+        plural_overrides = plural_overrides
+      ),
       ep_args
     )
   }
@@ -1133,6 +1159,68 @@ test_that("plot dispatches for ci_tree without error", {
       )
     )
   )
+})
+
+test_that("plot.ci_tree passes plural_overrides to the default edge panel", {
+  skip_if_not_installed("data.table")
+
+  data(kenya, package = "ineqTrees", envir = environment())
+  kenya_plot_vars <- c(
+    "wealth", "deadu5_num", "rural", "ed", "reg", "unskilled"
+  )
+  kenya_plot_data <- kenya[
+    stats::complete.cases(kenya[, kenya_plot_vars]),
+    kenya_plot_vars
+  ]
+  set.seed(20260512)
+  kenya_plot_data <- kenya_plot_data[
+    sample.int(nrow(kenya_plot_data), 800L),
+    ,
+    drop = FALSE
+  ]
+
+  fit <- ci_tree(
+    cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
+    data = kenya_plot_data,
+    rank_name = "wealth",
+    outcome_name = "deadu5_num",
+    control = ci_tree_control(
+      minsplit = 100,
+      minbucket = 50,
+      minprob = 0.05,
+      maxdepth = 3
+    )
+  )
+
+  plot_labels <- function(...) {
+    grid::grid.newpage()
+    plot(fit, ...)
+    gt <- grid::grid.grab()
+
+    text_labels <- character(0)
+    collect <- function(grob) {
+      if (inherits(grob, "text") && !is.null(grob$label)) {
+        text_labels <<- c(text_labels, as.character(grob$label))
+      }
+      if (!is.null(grob$children)) {
+        for (child in grob$children) {
+          collect(child)
+        }
+      }
+    }
+    collect(gt)
+    unique(text_labels)
+  }
+
+  default_labels <- plot_labels(data = kenya_plot_data)
+  custom_labels <- plot_labels(
+    data = kenya_plot_data,
+    var_labels = c(reg = "Province"),
+    plural_overrides = c(Province = "provinces")
+  )
+
+  expect_false(any(grepl("provinces", default_labels, fixed = TRUE)))
+  expect_true(any(grepl("provinces", custom_labels, fixed = TRUE)))
 })
 ```
 

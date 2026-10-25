@@ -9,7 +9,8 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.path = "man/figures/README-",
   out.width = "100%",
-  dpi = 600
+  dev.args = list(bg = "white"),
+  dpi = 240
 )
 ```
 
@@ -48,18 +49,31 @@ The example below fits an inequality-aware greedy tree on a
 sample from the built-in `kenya` dataset. The response combines the ranking
 variable (`wealth`) and the health outcome (`deadu5_num`), while the split
 criterion is based on concentration-index reduction.
+The README uses shallow trees for readable figures; the main article shows
+examples with depth 3.
 
 
 ```{r readme-helpers, include=FALSE}
 readme_predictors <- c("rural", "ed", "reg", "unskilled")
 
-readme_tree_plot <- function(fit, data, outcome_name, outcome_label = "% death") {
+readme_tree_plot <- function(fit,
+                             data,
+                             outcome_name,
+                             outcome_label = "% death") {
   metric_name <- "outcome_rate"
   outcome_stat <- function(df) mean(df[[outcome_name]], na.rm = TRUE)
 
+  ci_type <- if (!is.null(fit$type)) {
+    as.character(fit$type)
+  } else if (!is.null(fit$info$type)) {
+    as.character(fit$info$type)
+  } else {
+    "CI"
+  }
+
   plot(
     fit,
-    gp = grid::gpar(fontsize = 6.5),
+    gp = grid::gpar(fontsize = 10.5),
     data = data,
     var_labels = c(
       rural = "Residence",
@@ -73,7 +87,7 @@ readme_tree_plot <- function(fit, data, outcome_name, outcome_label = "% death")
       list(
         mean_wealth = function(df) mean(df$wealth, na.rm = TRUE),
         ci = function(df) {
-          ci_factory("CI")(
+          ci_factory(ci_type)(
             cbind(df$wealth, df[[outcome_name]]),
             rep(1, nrow(df))
           )
@@ -85,7 +99,7 @@ readme_tree_plot <- function(fit, data, outcome_name, outcome_label = "% death")
       stats::setNames(list(outcome_label), metric_name),
       list(
         mean_wealth = expression(mu ~ wealth),
-        ci = "CI"
+        ci = ci_type
       )
     ),
     stat_formatters = c(
@@ -101,12 +115,17 @@ readme_tree_plot <- function(fit, data, outcome_name, outcome_label = "% death")
         ci = function(x) sprintf("%.3f", x)
       )
     ),
-    terminal_fill = "#d9d9d9",
+    margins = grid::unit(c(3, 1, 1, 1), "lines"),
+    terminal_fill = "#f7f7f7",
     tp_args = list(
-      width_lines = 11,
-      height_lines = 5.2
+      width_lines = 10,
+      height_lines = 4.8
     ),
-    tnex = 0.85
+    tnex = 1,
+    drop_terminal = FALSE,
+    ip_args = list(max_chars = 18L),
+    ep_args = list(max_items = 1L, max_chars = 20L, just = "equal"),
+    plural_overrides = c(Province = "provinces")
   )
 }
 
@@ -203,7 +222,7 @@ fit_tree <- ci_tree(
   data = kenya,
   rank_name = "wealth",
   outcome_name = "deadu5_num",
-  control = ci_tree_control(maxdepth = 4L)
+  control = ci_tree_control(maxdepth = 2L)
 )
 ```
 
@@ -212,7 +231,7 @@ fit_tree <- ci_tree(
 ci_tree_terminal_summary(fit_tree)
 ```
 
-```{r readme-tree-plot, fig.width=15, fig.height=9, fig.alt="A concentration-index tree fitted to under-five mortality in the Kenya example data."}
+```{r readme-tree-plot, fig.width=9, fig.height=4.5, fig.alt="A concentration-index tree fitted to under-five mortality in the Kenya example data."}
 readme_tree_plot(fit_tree, kenya, "deadu5_num")
 ```
 
@@ -231,7 +250,7 @@ fit_forest <- ci_forest(
   outcome_name = "deadu5_num",
   ntree = 10L,
   mtry = 1L,
-  control = ci_tree_control(maxdepth = 5L)
+  control = ci_tree_control(maxdepth = 2L)
 )
 fit_forest
 ```
@@ -269,7 +288,7 @@ on.exit(future::plan(old_plan), add = TRUE)
 forest_tune_grid <- ci_tree_control_grid(
   minsplit = 100L,
   minbucket = c(50L, 100L),
-  maxdepth = 3:4,
+  maxdepth = 1:2,
   mtry = c(1L, 2L),
   ntree = c(10L, 50L)
 )
@@ -313,7 +332,7 @@ forest_surrogate <- ci_forest_surrogate(
   formula = cbind(wealth, deadu5_num) ~ rural + ed + reg + unskilled,
   rank_name = "wealth",
   prediction_name = "forest_risk",
-  control = ci_tree_control(maxdepth = 4L)
+  control = ci_tree_control(maxdepth = 2L)
 )
 
 surrogate_tree <- forest_surrogate$fit
@@ -323,7 +342,7 @@ surrogate_data <- forest_surrogate$data
 
 ## plot
 
-```{r surrogate-tree-plot, fig.width=15, fig.height=9, fig.alt="A surrogate concentration-index tree approximating fitted forest predictions."}
+```{r surrogate-tree-plot, fig.width=9, fig.height=4.5, fig.alt="A surrogate concentration-index tree approximating fitted forest predictions."}
 readme_tree_plot(
   surrogate_tree,
   surrogate_data,
@@ -567,7 +586,7 @@ hooks. The `ci_collect_*()` helpers read the result back in a stable shape.
 tree_tune_grid <- ci_tree_control_grid(
   minsplit = 100L,
   minbucket = c(50L, 100L),
-  maxdepth = c(3L, 4L),
+  maxdepth = c(1L, 2L),
   minprob = c(0.01, 0.05)
 )
 ```
@@ -659,7 +678,7 @@ knitr::kable(
 )
 ```
 
-```{r tree-tuning-plot, fig.width=15, fig.height=9, fig.alt="The best concentration-index tree selected by cross-validated tuning."}
+```{r tree-tuning-plot, fig.width=9, fig.height=4.5, fig.alt="The best concentration-index tree selected by cross-validated tuning."}
 readme_tree_plot(
   fit = tree_tuning$best_fit,
   data = tuning_data,
@@ -681,7 +700,7 @@ parallel after setting a `future` plan.
 forest_tune_grid <- ci_tree_control_grid(
   minsplit = 100L,
   minbucket = c(50L, 100L),
-  maxdepth = c(3L, 4L),
+  maxdepth = c(1L, 2L),
   mtry = c(1L, 2L),
   ntree = c(10L, 20L),
   minprob = 0.01
@@ -703,6 +722,7 @@ forest_tuning <- tune_ci_forest(
   prediction_name = "forest_risk",
   parallel_over = "none",
   control = control_ci_tune(save_pred = TRUE),
+  surrogate_control = ci_tree_control(maxdepth = 2L),
   refit = TRUE
 )
 
@@ -780,7 +800,7 @@ forest_surrogate_data <- forest_tuning$best_surrogate_data
 forest_surrogate_fit <- forest_tuning$best_surrogate
 ```
 
-```{r forest-surrogate-plot, fig.width=15, fig.height=9, fig.alt="A surrogate tree summarizing the best tuned concentration-index forest."}
+```{r forest-surrogate-plot, fig.width=9, fig.height=4.5, fig.alt="A surrogate tree summarizing the best tuned concentration-index forest."}
 readme_tree_plot(
   fit = forest_surrogate_fit,
   data = forest_surrogate_data,

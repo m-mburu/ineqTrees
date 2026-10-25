@@ -10,7 +10,8 @@ tree_compact_split_label(
   var_labels = NULL,
   max_items = 3L,
   max_chars = 24L,
-  plural_overrides = NULL
+  plural_overrides = NULL,
+  show_variable = TRUE
 )
 }
 \arguments{
@@ -27,6 +28,8 @@ shortening the label.}
 
 \item{plural_overrides}{An optional named character vector giving custom
 plural nouns for summarized level groups.}
+
+\item{show_variable}{Logical; include the variable name above split values.}
 }
 \value{
 A length-one character vector suitable for edge labels in tree plots.
