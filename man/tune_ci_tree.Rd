@@ -78,14 +78,18 @@ selection.}
 \item{verbose}{Should fold progress be printed?}
 
 \item{control}{Optional \code{\link[=control_ci_tune]{control_ci_tune()}} object controlling saved
-predictions, saved fits, extraction hooks, and parallel settings.}
+predictions, saved fits, extraction hooks, parallel settings, and the
+fold-eligibility policy used for automatic selection.}
 
 \item{na.action}{A function for handling missing values.}
 
 \item{...}{Additional arguments passed to \code{\link[=ci_tree]{ci_tree()}}.}
 }
 \value{
-A \code{ci_tree_tuning} object.
+A \code{ci_tree_tuning} object. Candidate selection uses only eligible
+scores: by default a candidate needs a finite score on every intended
+assessment fold. \code{best_params} is empty when no candidate is eligible,
+and \code{best_fit} is then \code{NULL}.
 
 A \code{ci_tree_tuning} object.
 }

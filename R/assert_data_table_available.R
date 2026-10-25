@@ -77,12 +77,19 @@
 #' @param baseline_labels Character vector of feature names to treat as
 #'   baseline rows when `drop_baseline = TRUE`. Matching is case-sensitive.
 #' @return A wide-format `data.table` with one row per observation and one
-#'   numeric column per SHAP feature.
+#'   numeric column per SHAP feature. Rows follow the first appearance of each
+#'   observation ID in `shap`, and the observation IDs are returned in that
+#'   order as the `"observation_ids"` attribute so callers can align other
+#'   per-observation inputs.
 #' @details The function attempts to identify the ID, variable, and value
 #'   columns based on common naming conventions. If `drop_baseline = TRUE`,
 #'   rows with feature names in `baseline_labels` are removed before
 #'   reshaping. The resulting wide table contains only numeric SHAP feature
-#'   columns. Aliases for the identified columns are as follows:
+#'   columns. Row order is preserved rather than sorted by ID, because sorting
+#'   would silently detach the SHAP rows from separately supplied ranks,
+#'   weights or predictions. Duplicate observation-feature pairs are rejected
+#'   instead of being counted by `dcast()`. Aliases for the identified columns
+#'   are as follows:
 #' - ID column candidates: `"_id_"`, `"id"`, `"row_id"`,
 #'   `"observation_id"`, `"observation"`, `"case_id"`
 #' - Variable column candidates: `"_vname_"`, `"variable"`,
@@ -157,6 +164,35 @@
     )
   }
 
+  shap_dt[[id_col]] <- as.character(shap_dt[[id_col]])
+  if (anyNA(shap_dt[[id_col]])) {
+    stop(
+      "DALEX observation IDs must not be missing.",
+      call. = FALSE
+    )
+  }
+
+  duplicated_pairs <- duplicated(
+    shap_dt[, c(id_col, variable_col), with = FALSE]
+  )
+  if (any(duplicated_pairs)) {
+    duplicate_ids <- unique(shap_dt[[id_col]][duplicated_pairs])
+    stop(
+      sprintf(
+        paste(
+          "DALEX SHAP rows contain duplicate observation-feature",
+          "pairs for %d observation(s): %s.",
+          "Resolve the duplicates before reshaping."
+        ),
+        length(duplicate_ids),
+        paste(utils::head(duplicate_ids, 5L), collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  observation_ids <- unique(shap_dt[[id_col]])
+
   quote_name <- function(x) {
     paste0("`", gsub("`", "\\\\`", x), "`")
   }
@@ -167,8 +203,11 @@
     value.var = value_col
   )
 
-  data.table::setorderv(wide_dt, id_col)
+  wide_dt[[id_col]] <- as.character(wide_dt[[id_col]])
+  wide_dt <- wide_dt[match(observation_ids, wide_dt[[id_col]])]
   wide_dt[[id_col]] <- NULL
+
+  attr(wide_dt, "observation_ids") <- observation_ids
   wide_dt
 }
 
@@ -251,6 +290,25 @@
     stop(
       sprintf(
         "All SHAP columns must be numeric. Non-numeric columns: %s",
+        paste(bad_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  has_infinite <- vapply(
+    shap_dt,
+    function(values) base::any(is.infinite(values)),
+    logical(1L)
+  )
+  if (base::any(has_infinite)) {
+    bad_cols <- names(shap_dt)[has_infinite]
+    stop(
+      sprintf(
+        paste(
+          "SHAP columns must contain only finite values.",
+          "Columns with infinite values: %s"
+        ),
         paste(bad_cols, collapse = ", ")
       ),
       call. = FALSE

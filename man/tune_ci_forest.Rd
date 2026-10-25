@@ -95,7 +95,8 @@ surrogate data.}
 \item{verbose}{Should fold progress be printed?}
 
 \item{control}{Optional \code{\link[=control_ci_tune]{control_ci_tune()}} object controlling saved
-predictions, saved fits, extraction hooks, and parallel settings.}
+predictions, saved fits, extraction hooks, parallel settings, and the
+fold-eligibility policy used for automatic selection.}
 
 \item{perturb}{Resampling controls passed to \code{\link[=ci_forest]{ci_forest()}}.}
 
@@ -115,7 +116,10 @@ outside \code{tune_ci_forest()}.}
 \value{
 A \code{ci_forest_tuning} object.
 
-A \code{ci_forest_tuning} object.
+A \code{ci_forest_tuning} object. Candidate selection uses only eligible
+scores: by default a candidate needs a finite score on every intended
+assessment fold. \code{best_params} is empty when no candidate is eligible,
+and \code{best_fit} and \code{best_surrogate} are then \code{NULL}.
 }
 \description{
 \code{tune_cf_ci()} is kept for existing code. New code should use

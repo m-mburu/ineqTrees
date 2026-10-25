@@ -10,6 +10,13 @@ inst/doc
 /docs/
 /Meta/
 Rplots.pdf
+/README.html
+
+# Compiled C++ sources and libraries
+*.o
+*.so
+*.dll
+*.dylib
 
 /.quarto/
 **/*.quarto_ipynb

@@ -225,6 +225,227 @@ test_that("tune_ci_tree supports multiple metrics, controls, and collectors", {
   expect_s3_class(ci_collect_notes(tuned), "data.table")
 })
 
+test_that("ci_select_best_params skips candidate with incomplete folds", {
+  tuning_grid <- data.table::data.table(
+    minsplit = c(1L, 2L),
+    minbucket = 1L,
+    minprob = 0,
+    maxdepth = 1L,
+    type = "CI"
+  )
+
+  fold_results <- data.table::data.table(
+    grid_id = c(1L, 1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L, 2L),
+    fold_id = c(1L, 2L, 3L, 4L, 5L, 1L, 2L, 3L, 4L, 5L),
+    metric = "validation_gain",
+    score = c(0.9, NA, NA, NA, NA, 0.5, 0.5, 0.5, 0.5, 0.5),
+    n_terminal = c(2L, NA, NA, NA, NA, 2L, 2L, 2L, 2L, 2L),
+    fit_error = c(NA, "boom", "boom", "boom", "boom", NA, NA, NA, NA, NA)
+  )
+
+  summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = "validation_gain"
+  )
+
+  expect_true(all(c(
+    "folds_intended", "folds_completed", "folds_failed",
+    "folds_unscored", "fold_coverage", "eligible"
+  ) %in% names(summary)))
+
+  first_row <- summary[summary$grid_id == 1L, ]
+  expect_equal(first_row$folds_completed, 1L)
+  expect_equal(first_row$folds_intended, 5L)
+  expect_equal(first_row$folds_failed, 4L)
+  expect_equal(first_row$fold_coverage, 0.2)
+  expect_false(first_row$eligible)
+
+  second_row <- summary[summary$grid_id == 2L, ]
+  expect_true(second_row$eligible)
+
+  best <- .ci_select_best_params(summary, "validation_gain")
+  expect_equal(best$grid_id, 2L)
+})
+
+test_that("ci_select_best_params allows partial folds only when requested", {
+  tuning_grid <- data.table::data.table(
+    minsplit = c(1L, 2L),
+    minbucket = 1L,
+    minprob = 0,
+    maxdepth = 1L,
+    type = "CI"
+  )
+  fold_results <- data.table::data.table(
+    grid_id = c(1L, 1L, 1L, 2L, 2L, 2L),
+    fold_id = c(1L, 2L, 3L, 1L, 2L, 3L),
+    metric = "validation_gain",
+    score = c(0.9, NA, NA, 0.5, 0.5, 0.5),
+    n_terminal = c(2L, NA, NA, 2L, 2L, 2L),
+    fit_error = NA_character_
+  )
+  permissive <- control_ci_tune(
+    require_complete_folds = FALSE,
+    min_scored_folds = 1L
+  )
+
+  strict_summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = "validation_gain"
+  )
+  permissive_summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = "validation_gain",
+    control = permissive
+  )
+
+  expect_false(
+    strict_summary[strict_summary$grid_id == 1L, ]$eligible
+  )
+  expect_true(
+    permissive_summary[permissive_summary$grid_id == 1L, ]$eligible
+  )
+  expect_equal(
+    permissive_summary[permissive_summary$grid_id == 1L, ]$fold_coverage,
+    1 / 3
+  )
+})
+
+test_that("ci_select_best_params returns nothing with no eligible row", {
+  tuning_grid <- data.table::data.table(
+    minsplit = c(1L, 2L),
+    minbucket = 1L,
+    minprob = 0,
+    maxdepth = 1L,
+    type = "CI"
+  )
+  fold_results <- data.table::data.table(
+    grid_id = c(1L, 1L, 2L, 2L),
+    fold_id = c(1L, 2L, 1L, 2L),
+    metric = "validation_gain",
+    score = c(NA_real_, NA_real_, NA_real_, NA_real_),
+    n_terminal = NA_integer_,
+    fit_error = c("boom", NA, NA, NA)
+  )
+
+  summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = "validation_gain"
+  )
+
+  expect_false(any(summary$eligible))
+
+  best <- .ci_select_best_params(summary, "validation_gain")
+  expect_equal(nrow(best), 0L)
+})
+
+test_that("ci_select_best_params treats non-finite scores as ineligible", {
+  tuning_grid <- data.table::data.table(
+    minsplit = c(1L, 2L),
+    minbucket = 1L,
+    minprob = 0,
+    maxdepth = 1L,
+    type = "CI"
+  )
+  fold_results <- data.table::data.table(
+    grid_id = c(1L, 1L, 2L, 2L),
+    fold_id = c(1L, 2L, 1L, 2L),
+    metric = "validation_gain",
+    score = c(Inf, Inf, 0.4, 0.6),
+    n_terminal = c(2L, 2L, 2L, 2L),
+    fit_error = NA_character_
+  )
+
+  summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = "validation_gain"
+  )
+
+  infinite_row <- summary[summary$grid_id == 1L, ]
+  expect_false(is.finite(infinite_row$mean_score))
+
+  best <- .ci_select_best_params(summary, "validation_gain")
+  expect_equal(best$grid_id, 2L)
+})
+
+test_that("ci_select_best returns no winner when every type fails", {
+  tuning_grid <- data.table::data.table(
+    minsplit = c(1L, 2L),
+    minbucket = 1L,
+    minprob = 0,
+    maxdepth = 1L,
+    type = c("CI", "CIg")
+  )
+  fold_results <- data.table::data.table(
+    grid_id = c(1L, 1L, 1L, 2L, 2L, 2L),
+    fold_id = c(1L, 2L, 3L, 1L, 2L, 3L),
+    metric = "validation_gain",
+    score = c(0.7, 0.7, 0.7, 0.3, 0.3, 0.3),
+    n_terminal = c(2L, 2L, 2L, 2L, 2L, 2L),
+    fit_error = NA_character_
+  )
+
+  summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = "validation_gain"
+  )
+  best <- .ci_select_best_params(summary, "validation_gain")
+
+  expect_equal(nrow(best), 2L)
+  expect_setequal(best$type, c("CI", "CIg"))
+})
+
+test_that("ci_select_best drops a type whose only candidate is incomplete", {
+  tuning_grid <- data.table::data.table(
+    minsplit = c(1L, 2L),
+    minbucket = 1L,
+    minprob = 0,
+    maxdepth = 1L,
+    type = c("CI", "CIg")
+  )
+  fold_results <- data.table::data.table(
+    grid_id = c(1L, 1L, 1L, 2L, 2L, 2L),
+    fold_id = c(1L, 2L, 3L, 1L, 2L, 3L),
+    metric = "validation_gain",
+    score = c(0.7, 0.7, 0.7, 0.9, NA, NA),
+    n_terminal = c(2L, 2L, 2L, 2L, NA, NA),
+    fit_error = NA_character_
+  )
+
+  summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = "validation_gain"
+  )
+  best <- .ci_select_best_params(summary, "validation_gain")
+
+  expect_equal(nrow(best), 1L)
+  expect_equal(best$type, "CI")
+})
+
+test_that("control_ci_tune validates its eligibility settings", {
+  expect_true(control_ci_tune()$require_complete_folds)
+  expect_equal(control_ci_tune()$min_scored_folds, 1L)
+
+  expect_error(
+    control_ci_tune(require_complete_folds = NA),
+    "single non-missing logical"
+  )
+  expect_error(
+    control_ci_tune(min_scored_folds = 0L),
+    "positive integer"
+  )
+  expect_error(
+    control_ci_tune(min_scored_folds = NA),
+    "positive integer"
+  )
+})
+
 test_that("ci_root_impurity matches the factory score", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40),

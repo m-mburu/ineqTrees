@@ -3,10 +3,10 @@
 #' Greedy CI split search using Rcpp engines
 #'
 #' @description
-#' Experimental Rcpp-backed versions of the greedy concentration-index split
-#' search helpers. These functions keep the same return shape as the current R
-#' split helpers, but take `type` instead of a prebuilt `ci_fun` because the
-#' concentration-index scoring is evaluated in C++.
+#' Rcpp-backed versions of the greedy concentration-index split search helpers.
+#' These functions keep the same return shape as the R split helpers, but take
+#' `type` instead of a prebuilt `ci_fun` because the concentration-index scoring
+#' is evaluated in C++.
 #'
 #' @param x A numeric predictor vector.
 #' @param x_full A factor predictor containing all original levels.
@@ -42,6 +42,7 @@ best_numeric_split_cpp <- function(
   return <- match.arg(return)
   ctrl <- .ci_tree_normalize_control(ctrl)
   wt <- .ci_validate_weights(wt, length(x), "wt")
+  x <- .ci_validate_numeric_predictor(x, "x")
 
   stopifnot(is.matrix(y), ncol(y) == 2L, length(x) == nrow(y),
             length(wt) == nrow(y))
@@ -239,7 +240,8 @@ best_global_ci_split_cpp <- function(x,
   }
 
   if (!is.null(ctrl$mtry)) {
-    vars <- sample(vars, min(ctrl$mtry, length(vars)))
+    n_select <- min(ctrl$mtry, length(vars))
+    vars <- vars[sample.int(length(vars), n_select)]
   }
 
   parent_impurity <- ci_factory(type)(y, wt)

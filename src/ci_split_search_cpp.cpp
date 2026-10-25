@@ -19,6 +19,21 @@ int type_to_code(std::string type) {
   stop("Unknown CI type.");
 }
 
+// Cutpoint kept inside [lower, upper) so that `value <= cutpoint` selects
+// exactly the observations that were scored on the left. Averaging the halves
+// avoids the overflow of (lower + upper) / 2. Rounding can still land exactly
+// on `upper` for adjacent doubles, where `lower` is then the largest
+// representable value below `upper`.
+double safe_numeric_midpoint(double lower, double upper) {
+  double midpoint = lower / 2.0 + upper / 2.0;
+
+  if (!R_finite(midpoint) || midpoint >= upper) {
+    midpoint = lower;
+  }
+
+  return midpoint > lower ? midpoint : lower;
+}
+
 struct TwoCiScores {
   double left;
   double right;
@@ -296,6 +311,15 @@ List ci_best_numeric_split_cpp_engine(
     stop("Inputs have incompatible sizes.");
   }
 
+  for (int i = 0; i < n; ++i) {
+    if (NumericVector::is_na(x[i])) {
+      stop("`x` must not contain missing values in split search.");
+    }
+    if (!R_finite(x[i])) {
+      stop("`x` must contain only finite values in split search.");
+    }
+  }
+
   std::vector<int> ord(n);
   std::iota(ord.begin(), ord.end(), 0);
   std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) {
@@ -370,7 +394,7 @@ List ci_best_numeric_split_cpp_engine(
 
     if (gain > best_gain) {
       best_gain = gain;
-      best_cutpoint = (xs[pos] + xs[pos + 1]) / 2.0;
+      best_cutpoint = safe_numeric_midpoint(xs[pos], xs[pos + 1]);
       best_pos = pos;
     }
   }

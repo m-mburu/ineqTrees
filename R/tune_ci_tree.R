@@ -376,7 +376,10 @@ tune_ctree_ci <- function(...) {
 #' @param future.seed Passed to [future.apply::future_lapply()] when
 #'   `parallel_over` is `"tuning"` or `"forest"`.
 #'
-#' @return A `ci_forest_tuning` object.
+#' @return A `ci_forest_tuning` object. Candidate selection uses only eligible
+#'   scores: by default a candidate needs a finite score on every intended
+#'   assessment fold. `best_params` is empty when no candidate is eligible,
+#'   and `best_fit` and `best_surrogate` are then `NULL`.
 #'
 #' @examples
 #' if (requireNamespace("future", quietly = TRUE) &&
@@ -557,7 +560,12 @@ tune_ci_forest <- function(formula,
   fits <- data.table::rbindlist(lapply(task_results, `[[`, "fits"), fill = TRUE)
   notes <- data.table::rbindlist(lapply(task_results, `[[`, "notes"), fill = TRUE)
 
-  summary <- .ci_summarize_tuning(fold_results, tuning_grid, selection_metric)
+  summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = selection_metric,
+    control = control
+  )
   best_params <- .ci_select_best_params(summary, selection_metric)
   best_control <- NULL
   best_fit <- NULL
@@ -565,7 +573,10 @@ tune_ci_forest <- function(formula,
   best_surrogate_data <- NULL
   best_type <- NA_character_
 
-  refit_params <- best_params[is.finite(best_params$mean_score), , drop = FALSE]
+  refit_params <- best_params[
+    isTRUE_vec(best_params$eligible) & is.finite(best_params$mean_score), ,
+    drop = FALSE
+  ]
   if (nrow(refit_params) > 0L) {
     refit_params <- refit_params[1L, , drop = FALSE]
     best_control <- .ci_control_from_grid_row(refit_params)

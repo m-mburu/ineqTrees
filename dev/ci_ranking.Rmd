@@ -151,6 +151,73 @@ test_that("rank_wt tied ranks are stable under row reordering", {
 ```
 
 ```{r, function-ci_factory}
+#' Validate numeric inputs to concentration-index scoring
+#'
+#' Rejects infinite rank, outcome and weight values at the public scoring
+#' boundary. Missing and non-positive values keep their documented meaning:
+#' they are excluded before scoring, and the retained population is reported by
+#' the callers that need it.
+#'
+#' @param y A two-column numeric matrix with rank variable and outcome.
+#' @param wt Non-negative case weights.
+#'
+#' @return Invisibly `TRUE`.
+#'
+#' @noRd
+.ci_validate_ci_score_inputs <- function(y, wt) {
+  if (!is.numeric(y)) {
+    stop("`y` must be a numeric matrix.", call. = FALSE)
+  }
+  if (!is.numeric(wt)) {
+    stop("`wt` must be numeric.", call. = FALSE)
+  }
+
+  infinite_y <- is.infinite(y)
+  if (any(infinite_y)) {
+    infinite_columns <- colSums(infinite_y) > 0L
+    column_labels <- colnames(y)
+    if (is.null(column_labels)) {
+      column_labels <- paste0("column ", seq_len(ncol(y)))
+    }
+
+    stop(
+      sprintf(
+        paste(
+          "`y` must contain only finite values;",
+          "%d infinite value(s) found in %s."
+        ),
+        sum(infinite_y),
+        paste(column_labels[infinite_columns], collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  infinite_wt <- is.infinite(wt)
+  if (any(infinite_wt)) {
+    stop(
+      sprintf(
+        "`wt` must contain only finite values; %d infinite weight(s) found.",
+        sum(infinite_wt)
+      ),
+      call. = FALSE
+    )
+  }
+
+  infinite_nan <- is.nan(wt)
+  if (any(infinite_nan)) {
+    stop(
+      sprintf(
+        "`wt` must not contain NaN values; %d found.",
+        sum(infinite_nan)
+      ),
+      call. = FALSE
+    )
+  }
+
+  invisible(TRUE)
+}
+
 #' Fast concentration-index score for internal repeated scoring
 #'
 #' @description
@@ -167,6 +234,9 @@ test_that("rank_wt tied ranks are stable under row reordering", {
 #'
 #' @noRd
 .ci_fast_score <- function(y, wt, type) {
+  stopifnot(is.matrix(y), ncol(y) == 2L, length(wt) == nrow(y))
+  .ci_validate_ci_score_inputs(y, wt)
+
   ok <- stats::complete.cases(y) & !is.na(wt) & wt > 0
   if (!any(ok) || sum(ok) <= 1L) {
     return(0)
@@ -341,6 +411,7 @@ ci_factory <- function(type = c("CI", "CIg", "CIc", "L")) {
 
   function(y, wt) {
     stopifnot(is.matrix(y), ncol(y) == 2L, length(wt) == nrow(y))
+    .ci_validate_ci_score_inputs(y, wt)
     if (type == "L") {
       .ci_warn_negative_l_levels(y[, 1])
     }
@@ -534,6 +605,70 @@ test_that("L index warns once per session for negative socioeconomic levels", {
     ci_factory("CI")(y, wt),
     NA
   )
+})
+
+test_that("ci_factory rejects infinite rank, outcome and weights", {
+  ci <- ci_factory("CI")
+
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, 1, 1)), c(1, Inf, 1)),
+    "`wt` must contain only finite"
+  )
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, Inf, 1)), rep(1, 3)),
+    "`y` must contain only finite"
+  )
+  expect_error(
+    ci(cbind(c(1, Inf, 3), c(0, 1, 1)), rep(1, 3)),
+    "`y` must contain only finite"
+  )
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, 1, 1)), c(1, NaN, 1)),
+    "`wt` must not contain NaN"
+  )
+  expect_error(
+    ci(cbind(c(1, 2, 3), c(0, -Inf, 1)), rep(1, 3)),
+    "`y` must contain only finite"
+  )
+})
+
+test_that("ci_factory keeps documented missing and zero-weight behaviour", {
+  ci <- ci_factory("CI")
+
+  reference <- ci(cbind(c(10, 20, 30), c(1, 0, 1)), c(1, 1, 2))
+
+  expect_equal(
+    ci(cbind(c(10, 20, 30, NA), c(1, 0, 1, 1)), c(1, 1, 2, 1)),
+    reference
+  )
+  expect_equal(
+    ci(cbind(c(10, 20, 30, 40), c(1, 0, 1, 1)), c(1, 1, 2, 0)),
+    reference
+  )
+})
+
+test_that("ci_factory valid scores match an independent hand calculation", {
+  y <- cbind(rank = c(4, 1, 3, 2, 5), outcome = c(0, 1, 3, 2, 5))
+  wt <- c(1, 2, 1, 3, 2)
+
+  ordered <- order(y[, 1])
+  rank_vals <- y[ordered, 1]
+  weight_vals <- wt[ordered]
+  normalised_weight <- weight_vals / sum(weight_vals)
+  cumulative <- cumsum(normalised_weight)
+  fractional <- cumulative - normalised_weight / 2
+  restored <- numeric(length(rank_vals))
+  restored[ordered] <- fractional
+
+  outcome_vals <- y[, 2]
+  weight_prob <- wt / sum(wt)
+  mean_rank <- sum(weight_prob * restored)
+  mean_outcome <- sum(weight_prob * outcome_vals)
+  covariance <- sum(
+    weight_prob * (restored - mean_rank) * (outcome_vals - mean_outcome)
+  )
+
+  expect_equal(ci_factory("CIg")(y, wt), abs(2 * covariance))
 })
 ```
 

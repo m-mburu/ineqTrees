@@ -11,17 +11,26 @@ ci_cv_folds(n, v = 5L, strata = NULL, seed = NULL)
 
 \item{v}{Number of folds.}
 
-\item{strata}{Optional vector of stratum labels with length \code{n}.}
+\item{strata}{Optional vector of stratum labels with length \code{n}. Missing
+stratum labels are treated as their own stratum rather than being left
+unassigned.}
 
 \item{seed}{Optional random seed for reproducible fold allocation.}
 }
 \value{
-An integer vector of fold ids from \code{1} to \code{v}.
+An integer vector of fold ids from \code{1} to \code{v}. Every row receives a
+fold id, and each fold is used at least once whenever \code{n >= v}.
 }
 \description{
 Assigns observations to \code{v} cross-validation folds. When \code{strata} is
 supplied, folds are allocated within each stratum so that binary outcomes or
 important groups are spread more evenly across folds.
+}
+\details{
+Rows are shuffled by position inside each stratum, so single-row strata are
+never resampled as integers. Fold labels rotate continuously across strata
+instead of restarting inside each one, which keeps small strata from
+over-filling the first folds.
 }
 \examples{
 ci_cv_folds(10, v = 3, seed = 1)

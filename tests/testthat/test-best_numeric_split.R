@@ -97,6 +97,111 @@ test_that("best_numeric_split rejects non-finite weights", {
   }
 })
 
+test_that("best_numeric_split keeps a finite cutpoint for huge predictors", {
+  x <- c(1e308, 1.1e308, 1.2e308, 1.3e308)
+  y <- cbind(ses = 1:4, health = c(0, 0, 1, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  candidate <- best_numeric_split(
+    x = x,
+    y = y,
+    wt = rep(1, 4),
+    varid = 1,
+    ctrl = ctrl,
+    ci_fun = ci_factory("CI"),
+    return = "candidate"
+  )
+
+  expect_true(is.finite(candidate$cutpoint))
+  expect_equal(candidate$left, c(TRUE, TRUE, FALSE, FALSE))
+  expect_true(all((x <= candidate$cutpoint) == candidate$left))
+})
+
+test_that("best_numeric_split cutpoints reproduce partykit routing", {
+  x <- c(1e308, 1.1e308, 1.2e308, 1.3e308)
+  y <- cbind(ses = 1:4, health = c(0, 0, 1, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  candidate <- best_numeric_split(
+    x = x,
+    y = y,
+    wt = rep(1, 4),
+    varid = 1,
+    ctrl = ctrl,
+    ci_fun = ci_factory("CI"),
+    return = "candidate"
+  )
+
+  routing <- partykit::kidids_split(
+    candidate$partysplit,
+    data = data.frame(x = x)
+  )
+
+  expect_equal(routing == 1L, candidate$left)
+})
+
+test_that(".ci_safe_numeric_midpoint stays inside the lower half interval", {
+  huge_lower <- 1e308
+  huge_upper <- 1.1e308
+
+  expect_true(is.finite(.ci_safe_numeric_midpoint(huge_lower, huge_upper)))
+  expect_gte(.ci_safe_numeric_midpoint(huge_lower, huge_upper), huge_lower)
+  expect_lt(.ci_safe_numeric_midpoint(huge_lower, huge_upper), huge_upper)
+
+  negative_lower <- -1.3e308
+  negative_upper <- -1.2e308
+  neg_mid <- .ci_safe_numeric_midpoint(negative_lower, negative_upper)
+  expect_true(is.finite(neg_mid))
+  expect_lt(neg_mid, negative_upper)
+
+  adjacent_lower <- 1
+  adjacent_upper <- adjacent_lower + .Machine$double.eps
+  adjacent_mid <- .ci_safe_numeric_midpoint(adjacent_lower, adjacent_upper)
+  expect_lt(adjacent_mid, adjacent_upper)
+  expect_gte(adjacent_mid, adjacent_lower)
+})
+
+test_that("best_numeric_split separates adjacent representable values", {
+  lower <- 1
+  upper <- lower + .Machine$double.eps
+  x <- c(lower, upper, lower, upper)
+  y <- cbind(ses = 1:4, health = c(0, 0, 1, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  candidate <- best_numeric_split(
+    x = x,
+    y = y,
+    wt = rep(1, 4),
+    varid = 1,
+    ctrl = ctrl,
+    ci_fun = ci_factory("CI"),
+    return = "candidate"
+  )
+
+  expect_true(is.finite(candidate$cutpoint))
+  expect_lt(candidate$cutpoint, upper)
+  expect_gte(candidate$cutpoint, lower)
+  expect_true(all((x <= candidate$cutpoint) == candidate$left))
+})
+
+test_that("best_numeric_split rejects non-finite predictors", {
+  y <- cbind(ses = c(10, 20, 30), health = c(1, 0, 1))
+  ctrl <- list(minbucket = 1, minprob = 0)
+
+  expect_error(
+    best_numeric_split(c(1, Inf, 3), y, rep(1, 3), 1, ctrl, ci_factory("CI")),
+    "finite"
+  )
+  expect_error(
+    best_numeric_split(c(1, -Inf, 3), y, rep(1, 3), 1, ctrl, ci_factory("CI")),
+    "finite"
+  )
+  expect_error(
+    best_numeric_split(c(1, NA, 3), y, rep(1, 3), 1, ctrl, ci_factory("CI")),
+    "missing"
+  )
+})
+
 test_that(
   "best_factor_split returns NULL when fewer than two levels are present",
   {
@@ -427,5 +532,33 @@ test_that("best_global_ci_split rejects non-finite weights", {
       ),
       "finite"
     )
+  }
+})
+
+test_that("best_global_ci_split samples mtry variable ids, not positions", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50),
+    outcome = c(1, 5, 10, 20, 40),
+    strong = c(1, 2, 3, 4, 5)
+  )
+  y <- as.matrix(toy_data[c("rank", "outcome")])
+  wt <- rep(1, nrow(toy_data))
+  mock_ci_fun <- function(y, wt) sum(y[, 2] * wt)^2
+
+  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
+  ctrl$mtry <- 1L
+
+  for (seed in 1:20) {
+    set.seed(seed)
+    split <- best_global_ci_split(
+      x = toy_data,
+      y = y,
+      wt = wt,
+      ctrl = ctrl,
+      ci_fun = mock_ci_fun,
+      vars = 3L
+    )
+
+    expect_equal(split$varid, 3L)
   }
 })

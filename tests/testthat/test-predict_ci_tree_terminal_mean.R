@@ -54,6 +54,166 @@ test_that("ci_cv_folds validates input", {
   expect_error(ci_cv_folds(5, strata = 1:4), "`strata` must have length `n`")
 })
 
+test_that("ci_cv_folds assigns every row when strata contain missing values", {
+  strata <- c("a", "a", "b", "b", NA, NA)
+
+  fold_id <- ci_cv_folds(6, v = 2, strata = strata, seed = 1)
+
+  expect_equal(sort(unique(fold_id)), 1:2)
+  expect_false(anyNA(fold_id))
+  expect_false(any(fold_id == 0L))
+  expect_equal(sum(fold_id == 1L), 3L)
+  expect_equal(sum(fold_id == 2L), 3L)
+})
+
+test_that("ci_cv_folds handles single-row strata without overwriting rows", {
+  strata <- letters[1:6]
+
+  fold_id <- ci_cv_folds(6, v = 3, strata = strata, seed = 1)
+
+  expect_equal(sort(unique(fold_id)), 1:3)
+  expect_equal(
+    vapply(split(seq_len(6), fold_id), length, integer(1)),
+    c(`1` = 2L, `2` = 2L, `3` = 2L)
+  )
+})
+
+test_that("ci_cv_folds populates every fold when strata are smaller than v", {
+  strata <- rep(letters[1:3], each = 2)
+
+  fold_id <- ci_cv_folds(6, v = 3, strata = strata, seed = 1)
+
+  expect_equal(sort(unique(fold_id)), 1:3)
+  expect_false(any(fold_id == 0L))
+
+  fold_sizes <- as.integer(table(fold_id))
+  expect_equal(length(fold_sizes), 3L)
+  expect_true(all(fold_sizes == 2L))
+})
+
+test_that("ci_cv_folds keeps folds balanced for ordinary stratified data", {
+  strata <- rep(c("low", "high"), each = 10)
+
+  fold_id <- ci_cv_folds(20, v = 5, strata = strata, seed = 42)
+
+  expect_equal(sort(unique(fold_id)), 1:5)
+  expect_true(all(table(fold_id) == 4L))
+  expect_true(all(table(strata, fold_id) == 2L))
+})
+
+test_that("ci_cv_folds restores the random seed after stratified allocation", {
+  set.seed(2024)
+  seed_before <- .Random.seed
+
+  ci_cv_folds(12, v = 3, strata = rep(c("a", "b"), 6), seed = 7)
+
+  expect_equal(.Random.seed, seed_before)
+})
+
+test_that(".ci_make_resamples rejects invalid fold ids before coercion", {
+  toy_data <- data.frame(rank = 1:6, outcome = c(0, 1, 0, 1, 0, 1))
+
+  expect_error(
+    .ci_make_resamples(toy_data, fold_id = c(1, 2, 1, 2, 1, NA)),
+    "must not contain missing values"
+  )
+  expect_error(
+    .ci_make_resamples(toy_data, fold_id = rep(1, 6)),
+    "at least two folds"
+  )
+  expect_error(
+    .ci_make_resamples(toy_data, fold_id = c(1, 2, 1, 2, 1)),
+    "one value per row"
+  )
+  expect_error(
+    .ci_make_resamples(toy_data, fold_id = c(1, NA, 2, NA, 1, NA)),
+    "must not contain missing values"
+  )
+
+  unassigned <- c(1, 2, 1, 2, 1, NA)
+  expect_error(
+    .ci_validate_fold_id(unassigned, 6),
+    "1 row\\(s\\) are unassigned"
+  )
+})
+
+test_that(".ci_make_resamples covers every row for ordinary v-fold ids", {
+  toy_data <- data.frame(rank = 1:10, outcome = rep(0:1, 5))
+  fold_id <- c(1, 2, 3, 1, 2, 3, 1, 2, 3, 1)
+
+  resamples <- .ci_make_resamples(toy_data, fold_id = fold_id)
+
+  expect_equal(length(resamples), 3L)
+
+  assessment_rows <- sort(unlist(lapply(resamples, function(x) x$test_idx)))
+  expect_equal(assessment_rows, seq_len(10))
+
+  for (resample in resamples) {
+    expect_true(length(resample$train_idx) > 0L)
+    expect_true(length(resample$test_idx) > 0L)
+    expect_length(intersect(resample$train_idx, resample$test_idx), 0L)
+  }
+})
+
+test_that(".ci_make_resamples rejects splits from unrelated data", {
+  skip_if_not_installed("rsample")
+
+  toy_data <- data.frame(
+    rank = 1:8,
+    outcome = rep(0:1, 4),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16)
+  )
+  unrelated <- toy_data
+  unrelated$outcome <- rev(unrelated$outcome)
+
+  folds <- rsample::vfold_cv(unrelated, v = 2)
+
+  expect_error(
+    .ci_make_resamples(toy_data, resamples = folds),
+    "must refer to `data`"
+  )
+})
+
+test_that("tune_ci_tree assigns each row to one assessment fold", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50, 60, 70, 80),
+    outcome = c(1, 0, 1, 0, 1, 1, 0, 1),
+    income = c(2, 4, 6, 8, 10, 12, 14, 16)
+  )
+  grid <- ci_tree_control_grid(
+    minsplit = 1,
+    minbucket = 1,
+    minprob = 0,
+    maxdepth = 1
+  )
+
+  tuned <- tune_ci_tree(
+    cbind(rank, outcome) ~ income,
+    data = toy_data,
+    rank_name = "rank",
+    outcome_name = "outcome",
+    control_grid = grid,
+    v = 4,
+    seed = 11,
+    type = "CI",
+    refit = FALSE,
+    control = control_ci_tune(save_pred = TRUE)
+  )
+
+  fold_ids <- tuned$fold_results$fold_id
+  expect_equal(length(unique(fold_ids)), 4L)
+
+  predictions <- ci_collect_predictions(tuned)
+  assessment_rows <- predictions$row_id
+
+  expect_setequal(assessment_rows, seq_len(nrow(toy_data)))
+  expect_equal(length(assessment_rows), nrow(toy_data))
+
+  per_fold <- table(predictions$fold_id)
+  expect_equal(length(per_fold), 4L)
+  expect_true(all(per_fold == 2L))
+})
+
 test_that("predict_ci_tree_terminal_mean returns one prediction per row", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60),
@@ -251,4 +411,78 @@ test_that("ci prediction metrics score simple binary predictions", {
   out <- ci_prediction_metrics(truth, estimate)
   expect_s3_class(out, "data.table")
   expect_true(all(c("brier", "log_loss", "roc_auc") %in% names(out)))
+})
+
+test_that("ci_log_loss rejects infinite predictions before clipping", {
+  expect_error(
+    ci_log_loss(c(0, 1), c(-Inf, Inf)),
+    "must contain only finite values"
+  )
+  expect_error(
+    ci_log_loss(c(0, 1), c(0.5, Inf)),
+    "must contain only finite values"
+  )
+  expect_error(
+    ci_log_loss(c(0, Inf), c(0.4, 0.6)),
+    "`truth` must not contain infinite"
+  )
+})
+
+test_that("ci_log_loss validates eps and binary truth", {
+  expect_error(
+    ci_log_loss(c(0, 1), c(0.4, 0.6), eps = 0),
+    "strictly between 0 and 0.5"
+  )
+  expect_error(
+    ci_log_loss(c(0, 1), c(0.4, 0.6), eps = 0.5),
+    "strictly between 0 and 0.5"
+  )
+  expect_error(
+    ci_log_loss(c(0, 1), c(0.4, 0.6), eps = Inf),
+    "strictly between 0 and 0.5"
+  )
+  expect_error(
+    ci_log_loss(c(0, 0.3, 1), c(0.2, 0.3, 0.9)),
+    "requires a binary outcome"
+  )
+})
+
+test_that("ci_log_loss keeps valid boundary probabilities finite", {
+  loss <- ci_log_loss(c(0, 1, 1, 0), c(0, 1, 0, 1), eps = 1e-9)
+
+  expect_true(is.finite(loss))
+  expect_gt(loss, 0)
+  expect_equal(
+    loss,
+    mean(-(c(0, 1, 1, 0) * log(pmax(pmin(c(0, 1, 0, 1), 1 - 1e-9), 1e-9)) +
+      (1 - c(0, 1, 1, 0)) * log(1 - pmax(pmin(c(0, 1, 0, 1), 1 - 1e-9), 1e-9))))
+  )
+})
+
+test_that("ci_log_loss still matches an independent hand calculation", {
+  truth <- c(0, 1, 1, 0)
+  estimate <- c(0.1, 0.8, 0.7, 0.2)
+  weights <- c(1, 2, 1, 2)
+
+  expected <- stats::weighted.mean(
+    -(truth * log(estimate) + (1 - truth) * log(1 - estimate)),
+    weights
+  )
+
+  expect_equal(ci_log_loss(truth, estimate, weights), expected)
+})
+
+test_that("ci_brier_score and ci_roc_auc reject infinite predictions", {
+  expect_error(
+    ci_brier_score(c(0, 1), c(0.2, Inf)),
+    "must contain only finite values"
+  )
+  expect_error(
+    ci_roc_auc(c(0, 1), c(0.2, Inf)),
+    "must contain only finite values"
+  )
+  expect_error(
+    ci_roc_auc(c(0, 1), c(0.2, 0.8)),
+    NA
+  )
 })

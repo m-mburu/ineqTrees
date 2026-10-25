@@ -149,3 +149,30 @@ test_that("best_global_ci_split_cpp rejects non-finite weights before C++", {
     )
   }
 })
+
+test_that("best_global_ci_split_cpp samples mtry variable ids, not positions", {
+  toy_data <- data.frame(
+    rank = c(10, 20, 30, 40, 50),
+    outcome = c(1, 5, 10, 20, 40),
+    strong = c(1, 2, 3, 4, 5)
+  )
+  y <- as.matrix(toy_data[c("rank", "outcome")])
+  wt <- rep(1, nrow(toy_data))
+
+  ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
+  ctrl$mtry <- 1L
+
+  for (seed in 1:20) {
+    set.seed(seed)
+    split <- best_global_ci_split_cpp(
+      x = toy_data,
+      y = y,
+      wt = wt,
+      ctrl = ctrl,
+      type = "CI",
+      vars = 3L
+    )
+
+    expect_equal(split$varid, 3L)
+  }
+})

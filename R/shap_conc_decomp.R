@@ -25,9 +25,17 @@
 #'   `prediction` is not supplied.
 #' @param weights Optional numeric vector of non-negative case weights. If
 #'   omitted, equal weights are used. Observations with non-positive weights do
-#'   not contribute to the decomposition.
+#'   not contribute to the decomposition. Negative weights are rejected: they
+#'   are not silently dropped, because that would change the analysis
+#'   population without notice.
 #' @param from_dalex Logical scalar. If `TRUE`, reshape a DALEX-like long SHAP
 #'   table to wide format before decomposition.
+#' @param observation_id Optional vector of observation IDs. When
+#'   `from_dalex = TRUE`, it selects and orders the observations from the
+#'   DALEX table and must contain every ID exactly once; the supplied `rank`,
+#'   `prediction` and `weights` are then aligned by that ID order. With wide
+#'   `shap` input, the IDs only identify the existing rows and must match
+#'   `nrow(shap)`.
 #' @param dalex_id_col Optional column name identifying observations in the
 #'   DALEX-like input.
 #' @param dalex_variable_col Optional column name containing feature names in
@@ -107,6 +115,7 @@ shap_conc_decomp <- function(
     baseline = NULL,
     weights = NULL,
     from_dalex = FALSE,
+    observation_id = NULL,
     dalex_id_col = NULL,
     dalex_variable_col = NULL,
     dalex_value_col = NULL,
@@ -127,9 +136,58 @@ shap_conc_decomp <- function(
       variable_col = dalex_variable_col,
       value_col = dalex_value_col
     )
+
+    dalex_ids <- attr(shap, "observation_ids")
+    if (!is.null(observation_id)) {
+      if (length(observation_id) != length(dalex_ids)) {
+        stop(
+          "`observation_id` must identify every DALEX observation.",
+          call. = FALSE
+        )
+      }
+      if (anyDuplicated(observation_id)) {
+        stop("`observation_id` must not contain duplicates.", call. = FALSE)
+      }
+
+      requested_ids <- as.character(observation_id)
+      missing_ids <- setdiff(requested_ids, dalex_ids)
+      if (length(missing_ids)) {
+        stop(
+          sprintf(
+            paste(
+              "`observation_id` contains %d ID(s) absent from the",
+              "DALEX table: %s"
+            ),
+            length(missing_ids),
+            paste(utils::head(missing_ids, 5L), collapse = ", ")
+          ),
+          call. = FALSE
+        )
+      }
+      if (length(setdiff(dalex_ids, requested_ids))) {
+        stop(
+          "`observation_id` must list every observation in the DALEX table.",
+          call. = FALSE
+        )
+      }
+
+      shap <- shap[match(requested_ids, dalex_ids)]
+      attr(shap, "observation_ids") <- requested_ids
+    }
+  } else if (!is.null(observation_id)) {
+    if (length(observation_id) != nrow(shap)) {
+      stop(
+        "`observation_id` must have length equal to nrow(`shap`).",
+        call. = FALSE
+      )
+    }
+    if (anyDuplicated(observation_id)) {
+      stop("`observation_id` must not contain duplicates.", call. = FALSE)
+    }
   }
 
   shap_dt <- .prepare_named_shap_dt(shap, allow_missing = na_rm)
+  feature_names <- names(shap_dt)
   n <- nrow(shap_dt)
 
   if (length(rank) != n) {
@@ -146,6 +204,16 @@ shap_conc_decomp <- function(
     )
   } else if (any(!is.finite(weights) & !is.na(weights))) {
     stop("`weights` must contain only finite values or NA.", call. = FALSE)
+  } else if (any(weights < 0, na.rm = TRUE)) {
+    stop(
+      sprintf(
+        "`weights` must be non-negative; %d negative weight(s) found.",
+        sum(weights < 0, na.rm = TRUE)
+      ),
+      call. = FALSE
+    )
+  } else if (!any(weights > 0, na.rm = TRUE)) {
+    stop("At least one `weights` value must be positive.", call. = FALSE)
   } else if (anyNA(weights) && !na_rm) {
     stop(
       "`weights` contains missing values. Set `na_rm = TRUE` to drop ",
@@ -180,48 +248,50 @@ shap_conc_decomp <- function(
     )
   }
 
-  working_dt <- data.table::copy(shap_dt)
-  working_dt[["rank__"]] <- rank
-  working_dt[["weights__"]] <- as.numeric(weights)
+  feature_dt <- data.table::copy(shap_dt)
+  observation_dt <- data.table::data.table(
+    .rank__ = as.numeric(rank),
+    .weights__ = as.numeric(weights)
+  )
 
   if (!is.null(prediction)) {
-    working_dt[["prediction__"]] <- as.numeric(prediction)
+    observation_dt[, ".prediction__" := as.numeric(prediction)]
   }
+
+  keep <- rep(TRUE, n)
 
   if (na_rm) {
-    required_cols <- c(
-      names(shap_dt),
-      "rank__",
-      "weights__",
-      if (!is.null(prediction)) "prediction__"
-    )
-    keep <- stats::complete.cases(working_dt[, required_cols, with = FALSE])
-    working_dt <- working_dt[keep, ]
+    feature_complete <- stats::complete.cases(feature_dt)
+    observation_complete <- stats::complete.cases(observation_dt)
+    keep <- feature_complete & observation_complete
   }
 
-  if (nrow(working_dt) == 0L) {
+  if (!any(keep)) {
     stop("No complete cases remain after applying `na_rm`.", call. = FALSE)
   }
 
-  working_dt <- working_dt[working_dt[["weights__"]] > 0, ]
+  feature_dt <- feature_dt[keep]
+  observation_dt <- observation_dt[keep]
 
-  if (nrow(working_dt) == 0L) {
+  keep_positive <- observation_dt[[".weights__"]] > 0
+  if (!any(keep_positive)) {
     stop("No positive-weight complete cases remain.", call. = FALSE)
   }
 
+  feature_dt <- feature_dt[keep_positive]
+  observation_dt <- observation_dt[keep_positive]
+
   if (is.null(prediction)) {
-    working_dt[["prediction__"]] <- rowSums(
-      working_dt[, names(shap_dt), with = FALSE]
-    ) + baseline
+    observation_dt[, ".prediction__" := rowSums(feature_dt) + baseline]
     prediction_source <- "baseline + rowSums(shap)"
   } else {
     prediction_source <- "prediction"
   }
 
-  n_complete <- nrow(working_dt)
-  rank_vector <- working_dt[["rank__"]]
-  prediction_vector <- working_dt[["prediction__"]]
-  weight_vector <- working_dt[["weights__"]]
+  n_complete <- nrow(feature_dt)
+  rank_vector <- observation_dt[[".rank__"]]
+  prediction_vector <- observation_dt[[".prediction__"]]
+  weight_vector <- observation_dt[[".weights__"]]
   weight_sum <- sum(weight_vector)
   weight_prob <- weight_vector / weight_sum
   mu_hat <- stats::weighted.mean(prediction_vector, weight_vector)
@@ -292,20 +362,16 @@ shap_conc_decomp <- function(
   )
 
   score_direction <- if (signed_total_ci < 0) -1 else 1
-  contribution_wide <- data.table::as.data.table(
-    as.list(vapply(
-      names(shap_dt),
-      function(col) score_direction * contribution_score(working_dt[[col]]),
-      numeric(1L)
-    ))
+
+  feature_scores <- vapply(
+    feature_names,
+    function(col) score_direction * contribution_score(feature_dt[[col]]),
+    numeric(1L)
   )
 
-  contributions <- data.table::melt(
-    contribution_wide,
-    measure.vars = names(contribution_wide),
-    variable.name = "feature",
-    value.name = "D_k_SHAP",
-    variable.factor = FALSE
+  contributions <- data.table::data.table(
+    feature = feature_names,
+    D_k_SHAP = as.numeric(feature_scores)
   )
 
   shap_total <- sum(contributions[["D_k_SHAP"]])

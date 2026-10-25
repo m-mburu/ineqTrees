@@ -240,10 +240,19 @@ ci_dials_grid <- function(grid,
 #'
 #' @param n Number of observations.
 #' @param v Number of folds.
-#' @param strata Optional vector of stratum labels with length `n`.
+#' @param strata Optional vector of stratum labels with length `n`. Missing
+#'   stratum labels are treated as their own stratum rather than being left
+#'   unassigned.
 #' @param seed Optional random seed for reproducible fold allocation.
 #'
-#' @return An integer vector of fold ids from `1` to `v`.
+#' @return An integer vector of fold ids from `1` to `v`. Every row receives a
+#'   fold id, and each fold is used at least once whenever `n >= v`.
+#'
+#' @details
+#' Rows are shuffled by position inside each stratum, so single-row strata are
+#' never resampled as integers. Fold labels rotate continuously across strata
+#' instead of restarting inside each one, which keeps small strata from
+#' over-filling the first folds.
 #'
 #' @examples
 #' ci_cv_folds(10, v = 3, seed = 1)
@@ -290,14 +299,21 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
     return(fold_id)
   }
 
-  strata <- addNA(as.factor(strata))
-  for (lev in levels(strata)) {
-    idx <- which(strata == lev)
-    if (!length(idx)) {
+  stratum_label <- as.character(strata)
+  stratum_label[is.na(stratum_label)] <- "<missing>"
+
+  stratum_rows <- split(seq_len(n), stratum_label)
+  next_fold <- 1L
+
+  for (rows in stratum_rows) {
+    if (!length(rows)) {
       next
     }
-    shuffled <- sample(idx, length(idx))
-    fold_id[shuffled] <- rep(seq_len(v), length.out = length(idx))
+
+    shuffled_rows <- rows[sample.int(length(rows))]
+    allocation <- next_fold + seq_along(shuffled_rows) - 1L
+    fold_id[shuffled_rows] <- ((allocation - 1L) %% v) + 1L
+    next_fold <- ((next_fold - 1L + length(shuffled_rows)) %% v) + 1L
   }
 
   fold_id
@@ -395,6 +411,13 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
 #'   for API compatibility with parallel workflows.
 #' @param num_cores Compatibility gate for parallel execution. Worker counts are
 #'   controlled by the user's active future plan.
+#' @param require_complete_folds Logical; require a finite score on every
+#'   intended assessment fold before a candidate can be selected automatically.
+#'   This is the conservative default. Set it to `FALSE` to allow selection from
+#'   partial-fold scores; `min_scored_folds` then controls the minimum coverage
+#'   and `ci_collect_metrics()` reports the achieved coverage.
+#' @param min_scored_folds Optional minimum number of folds with a finite score
+#'   when `require_complete_folds = FALSE`. Defaults to `1L`.
 #'
 #' @return A `control_ci_tune` object.
 #'
@@ -406,14 +429,17 @@ control_ci_tune <- function(verbose = FALSE,
                             save_fit = FALSE,
                             extract = NULL,
                             pkgs = NULL,
-                            num_cores = 1L) {
+                            num_cores = 1L,
+                            require_complete_folds = TRUE,
+                            min_scored_folds = 1L) {
   parallel_over <- match.arg(parallel_over)
 
   scalar_logical <- c(
     verbose = verbose,
     allow_par = allow_par,
     save_pred = save_pred,
-    save_fit = save_fit
+    save_fit = save_fit,
+    require_complete_folds = require_complete_folds
   )
   bad_logical <- names(scalar_logical)[
     vapply(scalar_logical, function(x) length(x) != 1L || is.na(x), logical(1))
@@ -437,6 +463,11 @@ control_ci_tune <- function(verbose = FALSE,
     stop("`num_cores` must be a positive integer.", call. = FALSE)
   }
 
+  min_scored_folds <- as.integer(min_scored_folds)[1L]
+  if (is.na(min_scored_folds) || min_scored_folds < 1L) {
+    stop("`min_scored_folds` must be a positive integer.", call. = FALSE)
+  }
+
   out <- list(
     verbose = isTRUE(verbose),
     allow_par = isTRUE(allow_par),
@@ -445,7 +476,9 @@ control_ci_tune <- function(verbose = FALSE,
     save_fit = isTRUE(save_fit),
     extract = extract,
     pkgs = pkgs,
-    num_cores = num_cores
+    num_cores = num_cores,
+    require_complete_folds = isTRUE(require_complete_folds),
+    min_scored_folds = min_scored_folds
   )
   class(out) <- "control_ci_tune"
   out
@@ -593,6 +626,86 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
   data.table::as.data.table(.ci_expand_selection_grid(control_grid, type))
 }
 
+.ci_check_resample_split <- function(split_data,
+                                     data,
+                                     train_idx,
+                                     test_idx,
+                                     split_position) {
+  if (nrow(split_data) != nrow(data)) {
+    stop(
+      sprintf(
+        paste(
+          "Resample split %d must refer to the supplied `data`:",
+          "%d rows in the split, %d in `data`."
+        ),
+        split_position,
+        nrow(split_data),
+        nrow(data)
+      ),
+      call. = FALSE
+    )
+  }
+  if (!identical(names(split_data), names(data))) {
+    stop(
+      sprintf(
+        "Resample split %d must refer to `data`: column names differ.",
+        split_position
+      ),
+      call. = FALSE
+    )
+  }
+
+  train_idx <- as.integer(train_idx)
+  test_idx <- as.integer(test_idx)
+
+  if (anyNA(train_idx) || anyNA(test_idx)) {
+    stop(
+      sprintf(
+        "Resample split %d contains missing row indices.",
+        split_position
+      ),
+      call. = FALSE
+    )
+  }
+  if (!length(train_idx)) {
+    stop(
+      sprintf("Resample split %d has an empty training set.", split_position),
+      call. = FALSE
+    )
+  }
+  if (!length(test_idx)) {
+    stop(
+      sprintf("Resample split %d has an empty assessment set.", split_position),
+      call. = FALSE
+    )
+  }
+
+  n <- nrow(data)
+  train_out <- any(train_idx < 1L | train_idx > n)
+  test_out <- any(test_idx < 1L | test_idx > n)
+  if (train_out || test_out) {
+    stop(
+      sprintf(
+        "Resample split %d uses row indices outside `data`.",
+        split_position
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (!isTRUE(all.equal(split_data, data, check.attributes = FALSE))) {
+    stop(
+      sprintf(
+        "Resample split %d must refer to `data`: the split rows do not match.",
+        split_position
+      ),
+      call. = FALSE
+    )
+  }
+
+  invisible(TRUE)
+}
+
 .ci_make_resamples <- function(data,
                                v = 5L,
                                strata = NULL,
@@ -616,9 +729,13 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
       if (length(test_idx) == 1L && is.na(test_idx)) {
         test_idx <- setdiff(seq_len(nrow(split_list$data)), train_idx)
       }
-      if (nrow(split_list$data) != n) {
-        stop("Each rsample split must refer to the supplied `data`.", call. = FALSE)
-      }
+      .ci_check_resample_split(
+        split_data = split_list$data,
+        data = data,
+        train_idx = train_idx,
+        test_idx = test_idx,
+        split_position = i
+      )
       id_cols <- grep("^id", names(resamples), value = TRUE)
       fold_label <- if (length(id_cols)) {
         paste(unlist(resamples[i, id_cols, drop = FALSE]), collapse = "_")
@@ -642,10 +759,7 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
     strata_vec <- .ci_extract_strata(strata, data)
     fold_id <- ci_cv_folds(n, v = v, strata = strata_vec, seed = seed)
   } else {
-    if (length(fold_id) != n) {
-      stop("`fold_id` must have one value per row in `data`.", call. = FALSE)
-    }
-    fold_id <- as.integer(fold_id)
+    fold_id <- .ci_validate_fold_id(fold_id, n)
   }
 
   fold_levels <- sort(unique(fold_id))
@@ -662,6 +776,59 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
       test_idx = which(fold_id == fold)
     )
   })
+}
+
+.ci_validate_fold_id <- function(fold_id, n, arg = "fold_id") {
+  if (!is.atomic(fold_id) || is.logical(fold_id)) {
+    stop(
+      sprintf("`%s` must be an atomic vector of fold labels.", arg),
+      call. = FALSE
+    )
+  }
+
+  fold_id <- as.integer(fold_id)
+
+  if (length(fold_id) != n) {
+    stop(
+      sprintf("`%s` must have one value per row in `data`.", arg),
+      call. = FALSE
+    )
+  }
+  if (anyNA(fold_id)) {
+    stop(
+      sprintf(
+        "`%s` must not contain missing values; %d row(s) are unassigned.",
+        arg,
+        sum(is.na(fold_id))
+      ),
+      call. = FALSE
+    )
+  }
+
+  fold_levels <- sort(unique(fold_id))
+  if (length(fold_levels) < 2L) {
+    stop(sprintf("`%s` must contain at least two folds.", arg), call. = FALSE)
+  }
+
+  fold_index <- match(fold_id, fold_levels)
+  fold_sizes <- tabulate(fold_index, nbins = length(fold_levels))
+  if (any(fold_sizes == 0L)) {
+    stop(sprintf("`%s` must use every fold label.", arg), call. = FALSE)
+  }
+  if (any(fold_sizes == n)) {
+    stop(
+      sprintf(
+        paste(
+          "`%s` must leave at least one training row per fold;",
+          "a fold covers all rows."
+        ),
+        arg
+      ),
+      call. = FALSE
+    )
+  }
+
+  fold_id
 }
 
 .ci_resample_fold_id <- function(resamples, n) {
@@ -996,30 +1163,61 @@ ci_root_impurity <- function(data,
   )
 }
 
-.ci_summarize_tuning <- function(fold_results, tuning_grid, selection_metric) {
+.ci_summarize_tuning <- function(fold_results,
+                                 tuning_grid,
+                                 selection_metric,
+                                 control = NULL) {
+  eligibility <- .ci_eligibility_policy(control)
+
   summary_list <- lapply(seq_len(nrow(tuning_grid)), function(g) {
     data.table::rbindlist(lapply(unique(fold_results$metric), function(metric) {
       idx <- fold_results$grid_id == g & fold_results$metric == metric
       score <- fold_results$score[idx]
-      n_terminal <- fold_results$n_terminal[idx]
+      fold_n_terminal <- fold_results$n_terminal[idx]
+
+      finite_scores <- is.finite(score)
+      scored_folds <- sum(!is.na(score))
+      intended_folds <- length(score)
+      fit_failures <- sum(!is.na(fold_results$fit_error[idx]))
+      score_failures <- intended_folds - scored_folds - fit_failures
 
       row <- data.table::data.table(
         grid_id = g,
         metric = metric,
-        mean_score = if (all(is.na(score))) NA_real_ else mean(score, na.rm = TRUE),
-        sd_score = if (sum(!is.na(score)) <= 1L) {
+        mean_score = if (scored_folds == 0L) {
+          NA_real_
+        } else {
+          mean(score, na.rm = TRUE)
+        },
+        sd_score = if (scored_folds <= 1L) {
           NA_real_
         } else {
           stats::sd(score, na.rm = TRUE)
         },
-        mean_terminal_nodes = if (all(is.na(n_terminal))) {
+        mean_terminal_nodes = if (all(is.na(fold_n_terminal))) {
           NA_real_
         } else {
-          mean(n_terminal, na.rm = TRUE)
+          mean(fold_n_terminal, na.rm = TRUE)
         },
-        folds_completed = sum(!is.na(score)),
-        folds_failed = sum(!is.na(fold_results$fit_error[idx]))
+        folds_intended = intended_folds,
+        folds_completed = scored_folds,
+        folds_failed = fit_failures,
+        # Scoring can fail after a successful fit, for example through an
+        # invalid probability or degenerate node. Those fold-level failures
+        # are tracked separately from model fitting errors.
+        folds_unscored = max(score_failures, 0L),
+        fold_coverage = if (intended_folds == 0L) {
+          NA_real_
+        } else {
+          scored_folds / intended_folds
+        }
       )
+
+      row[["eligible"]] <- scored_folds > 0L &&
+        all(finite_scores | is.na(score)) &&
+        scored_folds >= eligibility$min_scored_folds &&
+        (!eligibility$require_complete_folds ||
+          scored_folds == intended_folds)
 
       for (nm in names(tuning_grid)) {
         row[[nm]] <- tuning_grid[[nm]][g]
@@ -1034,12 +1232,29 @@ ci_root_impurity <- function(data,
   direction <- .ci_metric_direction(selection_metric)
   selection_score <- summary$mean_score
   selection_score[summary$metric != selection_metric] <- NA_real_
+  selection_score[!summary$eligible] <- NA_real_
   summary_order <- if (identical(direction, "maximize")) {
     order(metric_order, -selection_score, -summary$mean_score, na.last = TRUE)
   } else {
     order(metric_order, selection_score, summary$mean_score, na.last = TRUE)
   }
   summary[summary_order, , drop = FALSE]
+}
+
+#' @noRd
+.ci_eligibility_policy <- function(control = NULL) {
+  if (is.null(control)) {
+    control <- control_ci_tune()
+  }
+
+  list(
+    require_complete_folds = isTRUE(control$require_complete_folds),
+    min_scored_folds = if (is.null(control$min_scored_folds)) {
+      1L
+    } else {
+      as.integer(control$min_scored_folds)[1L]
+    }
+  )
 }
 
 .ci_order_tuning_rows <- function(x, metric) {
@@ -1069,18 +1284,34 @@ ci_root_impurity <- function(data,
     return(metric_summary)
   }
 
-  if (!("type" %in% names(metric_summary))) {
-    ord <- .ci_order_tuning_rows(metric_summary, selection_metric)
-    return(metric_summary[ord, , drop = FALSE][1L, , drop = FALSE])
+  eligible_summary <- metric_summary[isTRUE_vec(metric_summary$eligible), ,
+    drop = FALSE
+  ]
+
+  if (!nrow(eligible_summary)) {
+    return(metric_summary[0L, , drop = FALSE])
   }
 
-  type_levels <- .ci_type_levels(metric_summary)
+  if (!("type" %in% names(eligible_summary))) {
+    ord <- .ci_order_tuning_rows(eligible_summary, selection_metric)
+    return(eligible_summary[ord, , drop = FALSE][1L, , drop = FALSE])
+  }
+
+  type_levels <- .ci_type_levels(eligible_summary)
   best_by_type <- lapply(type_levels, function(this_type) {
-    type_summary <- metric_summary[metric_summary$type == this_type, , drop = FALSE]
+    type_summary <- eligible_summary[
+      eligible_summary$type == this_type, ,
+      drop = FALSE
+    ]
     ord <- .ci_order_tuning_rows(type_summary, selection_metric)
     type_summary[ord, , drop = FALSE][1L, , drop = FALSE]
   })
   data.table::rbindlist(best_by_type, fill = TRUE)
+}
+
+#' @noRd
+isTRUE_vec <- function(x) {
+  !is.na(x) & x
 }
 
 #' @noRd
@@ -1494,6 +1725,8 @@ ci_brier_score <- function(truth, estimate, weights = NULL) {
   truth <- .ci_outcome_numeric(truth, "truth")
   estimate <- as.numeric(estimate)
 
+  .ci_validate_probability_inputs(truth, estimate, metric = "Brier score")
+
   if (length(truth) != length(estimate)) {
     stop("`truth` and `estimate` must have the same length.", call. = FALSE)
   }
@@ -1503,27 +1736,108 @@ ci_brier_score <- function(truth, estimate, weights = NULL) {
   stats::weighted.mean((truth[keep] - estimate[keep])^2, weights[keep])
 }
 
+#' Validate inputs to probability-based metrics
+#'
+#' Rejects infinite values before clipping, so that an infinite prediction
+#' cannot be clipped into an apparently excellent probability. Binary log loss
+#' additionally requires a 0/1 truth and a finite `eps` strictly inside
+#' `(0, 0.5)`.
+#'
+#' @param truth Numeric observed outcomes.
+#' @param estimate Numeric predicted probabilities.
+#' @param metric Metric name used in error messages.
+#' @param eps Optional clipping value to validate.
+#' @param require_binary Should `truth` contain only 0 and 1?
+#'
+#' @return Invisibly `TRUE`.
+#'
+#' @noRd
+.ci_validate_probability_inputs <- function(truth,
+                                            estimate,
+                                            metric,
+                                            eps = NULL,
+                                            require_binary = FALSE) {
+  if (any(is.infinite(truth))) {
+    stop(
+      sprintf(
+        "`truth` must not contain infinite values for %s.",
+        metric
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (any(is.infinite(estimate))) {
+    stop(
+      sprintf(
+        paste(
+          "`estimate` must contain only finite values for %s;",
+          "infinity cannot be clipped into a valid probability."
+        ),
+        metric
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (!is.null(eps)) {
+    if (length(eps) != 1L || !is.finite(eps) || eps <= 0 || eps >= 0.5) {
+      stop(
+        "`eps` must be a single finite value strictly between 0 and 0.5.",
+        call. = FALSE
+      )
+    }
+  }
+
+  if (isTRUE(require_binary)) {
+    observed <- unique(truth[!is.na(truth)])
+
+    if (!all(observed %in% c(0, 1))) {
+      stop(
+        sprintf(
+          "%s requires a binary outcome coded 0/1 or FALSE/TRUE.",
+          metric
+        ),
+        call. = FALSE
+      )
+    }
+  }
+
+  invisible(TRUE)
+}
+
 #' Compute weighted log loss
 #'
 #' @inheritParams ci_brier_score
-#' @param eps Small numeric value used to keep estimates away from 0 and 1.
+#' @param eps Small numeric value used to keep estimates away from 0 and 1. It
+#'   must be finite and strictly between 0 and 0.5.
 #'
 #' @return A numeric weighted log loss. Smaller is better.
 #'
 #' @export
 ci_log_loss <- function(truth, estimate, weights = NULL, eps = 1e-6) {
   truth <- .ci_outcome_numeric(truth, "truth")
-  estimate <- pmin(pmax(as.numeric(estimate), eps), 1 - eps)
+  estimate <- as.numeric(estimate)
+
+  .ci_validate_probability_inputs(
+    truth,
+    estimate,
+    metric = "log loss",
+    eps = eps,
+    require_binary = TRUE
+  )
 
   if (length(truth) != length(estimate)) {
     stop("`truth` and `estimate` must have the same length.", call. = FALSE)
   }
 
+  clipped <- pmin(pmax(estimate, eps), 1 - eps)
+
   weights <- .ci_default_weights(weights, length(truth))
-  keep <- stats::complete.cases(truth, estimate, weights) & weights > 0
+  keep <- stats::complete.cases(truth, clipped, weights) & weights > 0
   loss <- -(
-    truth[keep] * log(estimate[keep]) +
-      (1 - truth[keep]) * log(1 - estimate[keep])
+    truth[keep] * log(clipped[keep]) +
+      (1 - truth[keep]) * log(1 - clipped[keep])
   )
   stats::weighted.mean(loss, weights[keep])
 }
@@ -1542,6 +1856,13 @@ ci_log_loss <- function(truth, estimate, weights = NULL, eps = 1e-6) {
 ci_roc_auc <- function(truth, estimate, weights = NULL) {
   truth <- .ci_outcome_numeric(truth, "truth")
   estimate <- as.numeric(estimate)
+
+  .ci_validate_probability_inputs(
+    truth,
+    estimate,
+    metric = "ROC AUC",
+    require_binary = TRUE
+  )
 
   if (length(truth) != length(estimate)) {
     stop("`truth` and `estimate` must have the same length.", call. = FALSE)
@@ -1661,11 +1982,15 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #' @param refit Should the best setting be refitted on the full data?
 #' @param verbose Should fold progress be printed?
 #' @param control Optional [control_ci_tune()] object controlling saved
-#'   predictions, saved fits, extraction hooks, and parallel settings.
+#'   predictions, saved fits, extraction hooks, parallel settings, and the
+#'   fold-eligibility policy used for automatic selection.
 #' @param na.action A function for handling missing values.
 #' @param ... Additional arguments passed to [ci_tree()].
 #'
-#' @return A `ci_tree_tuning` object.
+#' @return A `ci_tree_tuning` object. Candidate selection uses only eligible
+#'   scores: by default a candidate needs a finite score on every intended
+#'   assessment fold. `best_params` is empty when no candidate is eligible,
+#'   and `best_fit` is then `NULL`.
 #'
 #' @examples
 #' toy_data <- data.frame(
@@ -2080,13 +2405,21 @@ tune_ci_tree <- function(formula,
   fits <- data.table::rbindlist(lapply(task_results, `[[`, "fits"), fill = TRUE)
   notes <- data.table::rbindlist(lapply(task_results, `[[`, "notes"), fill = TRUE)
 
-  summary <- .ci_summarize_tuning(fold_results, tuning_grid, selection_metric)
+  summary <- .ci_summarize_tuning(
+    fold_results = fold_results,
+    tuning_grid = tuning_grid,
+    selection_metric = selection_metric,
+    control = control
+  )
   best_params <- .ci_select_best_params(summary, selection_metric)
   best_control <- NULL
   best_fit <- NULL
   best_type <- NA_character_
 
-  refit_params <- best_params[is.finite(best_params$mean_score), , drop = FALSE]
+  refit_params <- best_params[
+    isTRUE_vec(best_params$eligible) & is.finite(best_params$mean_score), ,
+    drop = FALSE
+  ]
   if (nrow(refit_params) > 0L) {
     refit_params <- refit_params[1L, , drop = FALSE]
     best_control <- .ci_control_from_grid_row(refit_params)
@@ -2511,6 +2844,11 @@ ci_show_best <- function(x, metric = NULL, n = 5L, ...) {
   n <- as.integer(n)[1L]
   if (!nrow(out) || is.na(n) || n <= 0L) {
     return(out[0L, , drop = FALSE])
+  }
+
+  out <- out[isTRUE_vec(out$eligible), , drop = FALSE]
+  if (!nrow(out)) {
+    return(out)
   }
 
   if (!("type" %in% names(out))) {

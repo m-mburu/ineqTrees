@@ -184,6 +184,253 @@ test_that("shap_conc_decomp supports level-dependent L decomposition", {
   expect_equal(out$contributions$pct_contribution, c(200, -100))
 })
 
+test_that("shap_conc_decomp keeps analytical inputs out of the feature table", {
+  feature_values <- c(0.1, 0.2, -0.1)
+
+  out <- shap_conc_decomp(
+    shap = data.frame(rank__ = feature_values, check.names = FALSE),
+    rank = 1:3,
+    baseline = 0.5,
+    sort = FALSE
+  )
+
+  expected_predictions <- 0.5 + feature_values
+  expected_mean <- mean(expected_predictions)
+  expected_ci <- ci_factory("CI")(
+    cbind(rank = 1:3, outcome = expected_predictions),
+    rep(1, 3)
+  )
+
+  expect_equal(out$diagnostics$mean_prediction, expected_mean)
+  expect_equal(out$diagnostics$concentration_index, expected_ci)
+  expect_equal(
+    out$diagnostics$prediction_source,
+    "baseline + rowSums(shap)"
+  )
+
+  expect_equal(out$contributions$feature, "rank__")
+  expect_equal(sum(out$contributions$D_k_SHAP), out$diagnostics$shap_sum)
+  expect_equal(
+    out$diagnostics$additivity_gap,
+    out$diagnostics$concentration_index - out$diagnostics$shap_sum,
+    tolerance = 1e-12
+  )
+})
+
+test_that("shap_conc_decomp protects reserved-looking names", {
+  feature_values <- c(0.2, -0.1, 0.4)
+
+  shap <- data.frame(
+    weights__ = feature_values,
+    prediction__ = c(1, 2, 3),
+    check.names = FALSE
+  )
+
+  out <- shap_conc_decomp(
+    shap = shap,
+    rank = 1:3,
+    baseline = 1,
+    weights = c(1, 2, 1),
+    sort = FALSE
+  )
+
+  expect_setequal(out$contributions$feature, c("weights__", "prediction__"))
+  expect_equal(out$diagnostics$n, 3L)
+  expect_equal(out$diagnostics$weight_sum, 4)
+
+  reconstructed <- 1 + feature_values + c(1, 2, 3)
+  expected_ci <- ci_factory("CI")(
+    cbind(rank = 1:3, outcome = reconstructed),
+    c(1, 2, 1)
+  )
+
+  expect_equal(
+    out$diagnostics$concentration_index,
+    expected_ci,
+    tolerance = 1e-12
+  )
+  expect_equal(
+    out$diagnostics$additivity_gap,
+    out$diagnostics$concentration_index - out$diagnostics$shap_sum,
+    tolerance = 1e-12
+  )
+})
+
+test_that("shap_conc_decomp matches long and wide input for permuted IDs", {
+  feature_values <- c(0.1, 0.2, -0.1)
+  ids <- c(30, 10, 20)
+  ranks <- c(1, 2, 3)
+  weights <- c(1, 2, 3)
+
+  long_shap <- data.frame(
+    id = rep(ids, each = 1),
+    variable = "feature_a",
+    contribution = feature_values
+  )
+
+  wide_shap <- data.frame(feature_a = feature_values, check.names = FALSE)
+
+  from_wide <- shap_conc_decomp(
+    shap = wide_shap,
+    rank = ranks,
+    baseline = 0.5,
+    weights = weights
+  )
+
+  from_long <- shap_conc_decomp(
+    shap = long_shap,
+    rank = ranks,
+    baseline = 0.5,
+    weights = weights,
+    from_dalex = TRUE,
+    observation_id = ids
+  )
+
+  expect_equal(from_long$diagnostics, from_wide$diagnostics)
+  expect_equal(
+    from_long$contributions[, c("feature", "D_k_SHAP")],
+    from_wide$contributions[, c("feature", "D_k_SHAP")]
+  )
+})
+
+test_that("shap_conc_decomp orders DALEX observations by supplied IDs", {
+  ids <- c(30, 10, 20)
+  feature_values <- c(0.1, 0.2, -0.1)
+  ranks <- c(1, 2, 3)
+
+  long_shap <- data.frame(
+    id = ids,
+    variable = "feature_a",
+    contribution = feature_values
+  )
+
+  by_stored_order <- shap_conc_decomp(
+    shap = long_shap,
+    rank = ranks,
+    baseline = 0.5,
+    from_dalex = TRUE
+  )
+
+  explicit_order <- shap_conc_decomp(
+    shap = long_shap,
+    rank = ranks,
+    baseline = 0.5,
+    from_dalex = TRUE,
+    observation_id = ids
+  )
+
+  expect_equal(by_stored_order$diagnostics, explicit_order$diagnostics)
+
+  reordered <- shap_conc_decomp(
+    shap = long_shap,
+    rank = ranks[c(3, 1, 2)],
+    baseline = 0.5,
+    from_dalex = TRUE,
+    observation_id = ids[c(3, 1, 2)]
+  )
+
+  expect_equal(reordered$diagnostics, explicit_order$diagnostics)
+})
+
+test_that("shap_conc_decomp rejects duplicate and incomplete DALEX IDs", {
+  long_shap <- data.frame(
+    id = c(1, 1, 2),
+    variable = c("feature_a", "feature_a", "feature_a"),
+    contribution = c(0.1, 0.2, -0.1)
+  )
+
+  expect_error(
+    shap_conc_decomp(
+      shap = long_shap,
+      rank = 1:2,
+      baseline = 0.5,
+      from_dalex = TRUE
+    ),
+    "duplicate observation-feature pairs"
+  )
+
+  clean_shap <- data.frame(
+    id = c(1, 2, 3),
+    variable = "feature_a",
+    contribution = c(0.1, 0.2, -0.1)
+  )
+
+  expect_error(
+    shap_conc_decomp(
+      shap = clean_shap,
+      rank = 1:3,
+      baseline = 0.5,
+      from_dalex = TRUE,
+      observation_id = c(1, 2)
+    ),
+    "identify every DALEX observation"
+  )
+  expect_error(
+    shap_conc_decomp(
+      shap = clean_shap,
+      rank = 1:3,
+      baseline = 0.5,
+      from_dalex = TRUE,
+      observation_id = c(1, 2, 99)
+    ),
+    "absent from the DALEX table"
+  )
+})
+
+test_that("shap_conc_decomp rejects infinite attributions", {
+  shap <- data.frame(feature_a = c(0.1, Inf, -0.1))
+
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = 1:3, baseline = 0.5),
+    "must contain only finite values"
+  )
+})
+
+test_that("shap_conc_decomp rejects negative weights", {
+  shap <- data.frame(feature_a = c(0.1, 0.2, -0.1))
+
+  expect_error(
+    shap_conc_decomp(
+      shap = shap,
+      rank = 1:3,
+      baseline = 0.5,
+      weights = c(1, -1, 1)
+    ),
+    "must be non-negative"
+  )
+})
+
+test_that("shap_conc_decomp rejects infinite rank and predictions", {
+  shap <- data.frame(feature_a = c(0.1, 0.2, -0.1))
+
+  expect_error(
+    shap_conc_decomp(shap = shap, rank = c(1, Inf, 3), baseline = 0.5),
+    "must contain only finite"
+  )
+  expect_error(
+    shap_conc_decomp(
+      shap = shap,
+      rank = 1:3,
+      prediction = c(1, Inf, 1)
+    ),
+    "must contain only finite"
+  )
+})
+
+test_that("shap_conc_decomp reports retained rows for zero weights", {
+  shap <- data.frame(feature_a = c(0.1, 0.2, -0.1))
+
+  out <- shap_conc_decomp(
+    shap = shap,
+    rank = 1:3,
+    baseline = 0.5,
+    weights = c(1, 0, 1)
+  )
+
+  expect_equal(out$diagnostics$n, 2L)
+  expect_equal(out$diagnostics$weight_sum, 2)
+})
+
 test_that("shap_conc_decomp validates key inputs", {
   shap <- data.frame(x1 = c(1, -1), x2 = c(0, 0))
 
