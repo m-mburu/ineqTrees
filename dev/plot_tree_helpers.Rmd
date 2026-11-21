@@ -304,6 +304,8 @@ tree_edge_panel_compact <- function(
       meta,
       digits = digits
     )
+    # Format the branch labels together so the placement rule can use the
+    # number and positions of all children.
     split_labels <- vapply(
       split_info$levels,
       tree_compact_split_label,
@@ -466,6 +468,7 @@ tree_inner_panel_labeled <- function(
       label_lines <- ""
     }
     all_lines <- c(label_lines, if (nzchar(lab[2L])) lab[2L])
+    # Size the box to the longest line at the panel's current font settings.
     nstr <- all_lines[which.max(nchar(all_lines))]
     if (nchar(nstr) < 8L) {
       nstr <- "aaaaaaaa"
@@ -609,10 +612,12 @@ tree_build_terminal_stats <- function(
   }
 
   node_ids <- stats::predict(fit, newdata = data, type = "node")
+  # Summarise the rows routed to each displayed leaf by the fitted tree.
   split_rows <- split(seq_len(nrow(data_df)), node_ids)
 
   stats_rows <- lapply(names(split_rows), function(node_id) {
     node_data <- data_df[split_rows[[node_id]], , drop = FALSE]
+    # Require one value per statistic so each leaf has one table row.
     values <- lapply(stat_funs, function(fun) {
       value <- fun(node_data)
       if (length(value) != 1L) {
@@ -795,6 +800,8 @@ tree_terminal_panel_stats <- function(
       .tree_default_name(col_name)
     }
 
+    # Apply rounding and units to the display string so the summary table
+    # can still be reused for analysis.
     value_chr <- if (col_name %in% names(stat_formatters)) {
       stat_formatters[[col_name]](value)
     } else if (is.numeric(value)) {
@@ -812,6 +819,8 @@ tree_terminal_panel_stats <- function(
 
   function(node) {
     node_id <- partykit::id_node(node)
+    # Match the statistics to the plotted leaf by ID. Table order can differ
+    # from the order in which partykit draws the panels.
     node_stats <- stats_dt[stats_dt[[node_col]] == node_id, , drop = FALSE]
 
     label <- if (nrow(node_stats) == 0L) {
@@ -839,6 +848,8 @@ tree_terminal_panel_stats <- function(
     )
 
     grid::grid.rect(gp = grid::gpar(fill = fill))
+    # Space the statistics at one line per entry and centre the block in
+    # the panel, whose height grows with the number of displayed statistics.
     for (i in seq_along(label)) {
       grid::grid.text(
         label[[i]],

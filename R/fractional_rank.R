@@ -56,5 +56,6 @@ fractional_rank <- function(
     stop("`x` must contain at least one non-missing value.", call. = FALSE)
   }
 
+  # Place each averaged rank at the midpoint of its fractional interval.
   (data.table::frankv(x, ties.method = ties_method) - 0.5) / n
 }

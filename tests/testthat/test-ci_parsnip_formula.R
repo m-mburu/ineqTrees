@@ -65,6 +65,75 @@ test_that("failed prediction registration restores the previous entry", {
   )
 })
 
+test_that("parsnip formula bridge checks response names and transformations", {
+  toy_data <- data.frame(
+    rank = 1:4,
+    outcome = c(0, 1, 0, 1),
+    other = c(1, 1, 0, 0),
+    income = c(10, 20, 30, 40)
+  )
+
+  expect_error(
+    .ci_parsnip_formula(
+      other ~ income,
+      data = toy_data,
+      rank_name = "rank",
+      outcome_name = "outcome"
+    ),
+    "must match `outcome_name`"
+  )
+  expect_error(
+    .ci_parsnip_formula(
+      log(outcome) ~ income,
+      data = toy_data,
+      rank_name = "rank",
+      outcome_name = "outcome"
+    ),
+    "untransformed variable name"
+  )
+  expect_error(
+    .ci_parsnip_formula(
+      cbind(rank, other) ~ income,
+      data = toy_data,
+      rank_name = "rank",
+      outcome_name = "outcome"
+    ),
+    "must match `outcome_name`"
+  )
+  expect_error(
+    .ci_parsnip_formula(
+      cbind(rank, log(outcome)) ~ income,
+      data = toy_data,
+      rank_name = "rank",
+      outcome_name = "outcome"
+    ),
+    "untransformed rank and outcome names"
+  )
+
+  internal_data <- data.frame(
+    rank = toy_data$rank,
+    .outcome = toy_data$outcome,
+    income = toy_data$income
+  )
+  internal_formula <- .ci_parsnip_formula(
+    .outcome ~ income,
+    data = internal_data,
+    rank_name = "rank",
+    outcome_name = "outcome"
+  )
+
+  expect_identical(internal_formula$outcome_name, ".outcome")
+  internal_data$outcome <- toy_data$other
+  expect_error(
+    .ci_parsnip_formula(.outcome ~ income, internal_data, "rank", "outcome"),
+    "must match `outcome_name`"
+  )
+  expect_identical(
+    as.character(internal_formula$formula[[2L]][[3L]]),
+    ".outcome"
+  )
+})
+
 test_that("decision_tree can fit ci_tree through ineqTrees engine", {
   skip_if_not_installed("parsnip")
   skip_if_not_installed("hardhat")
@@ -492,6 +561,8 @@ test_that("tune_grid reports fitted analysis and assessment gains", {
     "training_gain", "relative_training_gain"
   )
 
+  # Compare the tuning metrics against explicit partition calculations
+  # for both model classes and all four concentration-index criteria.
   for (model in c("tree", "forest")) {
     for (criterion in c("CI", "CIg", "CIc", "L")) {
       specification <- if (model == "tree") {

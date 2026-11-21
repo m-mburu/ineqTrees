@@ -378,6 +378,33 @@ test_that("as_caseweights preserves weight proportions up to rounding", {
 })
 
 test_that("as_caseweights rejects invalid input weights", {
-  expect_error(as_caseweights(c(0, 0, 0)), "all weights are zero")
-  expect_error(as_caseweights(c(1, -1, 2)))
+  expect_error(as_caseweights(c(0, 0, 0)), "positive weight")
+  expect_error(as_caseweights(c(1, -1, 2)), "non-negative")
+  expect_identical(as_caseweights(c(1, NA_real_, 0)), c(10000L, NA_integer_, 0L))
+  expect_error(as_caseweights(c(1, Inf)), "finite")
+  expect_error(as_caseweights(matrix(1:2)), "numeric vector")
+  expect_error(as_caseweights(c(1, 2), scale = 0), "positive finite")
+  expect_error(
+    as_caseweights(c(1, 2), scale = .Machine$integer.max + 1),
+    "integer.max"
+  )
+})
+
+test_that("as_caseweights reports positive weights lost to rounding", {
+  expect_error(as_caseweights(rep(1, 25000)), "all 25000 positive")
+  expect_error(
+    as_caseweights(c(1, 1), scale = 0.1),
+    "all 2 positive weight\\(s\\)"
+  )
+  expect_warning(
+    out <- as_caseweights(c(1, 1, 100), scale = 2),
+    "discarded 2 of 3 positive weight\\(s\\)"
+  )
+  expect_equal(out, c(0L, 0L, 2L))
+})
+
+test_that("as_caseweights normalises without overflowing the weight sum", {
+  out <- as_caseweights(c(1e308, 1e308), scale = 10.5)
+
+  expect_equal(out, c(5L, 5L))
 })

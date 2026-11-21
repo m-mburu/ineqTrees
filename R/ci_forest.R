@@ -78,6 +78,19 @@
 
 #' Predict terminal summaries for one greedy CI tree
 #'
+#' Route new rows through the fitted tree and look up the corresponding
+#' terminal summaries calculated from that tree's training rows.
+#'
+#' @param fit A fitted CI tree.
+#' @param train_data Training rows for this tree, including repeated draws.
+#' @param new_data Rows to predict, with the tree's predictor columns.
+#' @param rank_name,outcome_name Names of the SES and outcome columns.
+#' @param weights Case weights aligned to `train_data`.
+#' @param FUN A function of the two-column response and case weights.
+#'   `NULL` uses the weighted mean outcome.
+#' @return One numeric value per row of `new_data`, in input order. A
+#'   missing leaf summary is replaced by the summary of all training rows.
+#'
 #' @noRd
 .ci_tree_terminal_predict <- function(fit,
                                       train_data,
@@ -86,6 +99,8 @@
                                       outcome_name,
                                       weights,
                                       FUN = NULL) {
+  # Route both datasets through the same tree. Estimate the leaf values from
+  # this member's training rows, then look them up for prediction.
   train_nodes <- stats::predict(fit, newdata = train_data, type = "node")
   new_nodes <- stats::predict(fit, newdata = new_data, type = "node")
 
@@ -114,6 +129,8 @@
     as.character(node_ids)
   )
 
+  # Use the member's overall training summary when a predicted node ID has
+  # no usable leaf summary.
   global_value <- as.numeric(FUN(y, weights))
   pred <- unname(node_values[as.character(new_nodes)])
   pred[is.na(pred)] <- global_value
@@ -142,6 +159,7 @@
   for (imp in imps) {
     importance[names(imp)] <- importance[names(imp)] + as.numeric(imp)
   }
+  # Trees without a split on a predictor contribute zero to its average.
   importance <- importance / n_trees
 
   sort(importance, decreasing = TRUE)
@@ -310,6 +328,8 @@ ci_forest <- function(formula,
     )
   }
 
+  # Establish factor levels before sampling the trees so their split codes
+  # refer to the same predictor categories.
   for (j in predictor_ids) {
     if (is.character(mf[[j]])) {
       mf[[j]] <- factor(mf[[j]])
@@ -324,6 +344,8 @@ ci_forest <- function(formula,
 
   grow_one_tree <- function(b) {
     sample_rows <- .ci_forest_sample(n, perturb)
+    # Use the same draw for the model frame, weights and stored training data.
+    # Bootstrap repeats must remain aligned across all three.
     sample_weights <- weights[sample_rows]
     sample_data <- forest_data[sample_rows, , drop = FALSE]
 
@@ -356,6 +378,8 @@ ci_forest <- function(formula,
     lapply(seq_len(ntree), grow_one_tree)
   }
 
+  # Store counts against the original training rows so prediction can
+  # identify which trees held each observation out of bag.
   inbag <- matrix(0L, nrow = n, ncol = ntree)
   for (b in seq_len(ntree)) {
     inbag[, b] <- tabulate(trees[[b]]$rows, nbins = n)
@@ -449,6 +473,7 @@ predict.ci_forest <- function(object,
     newdata <- as.data.frame(newdata)
   }
 
+  # In-bag counts are indexed by the original training row order.
   if (isTRUE(OOB)) {
     .ci_check_oob_newdata(newdata, object$data)
   }
@@ -458,6 +483,8 @@ predict.ci_forest <- function(object,
     ncol = object$ntree
   )
 
+  # Keep one column per member. A node ID is local to that tree, and
+  # out-of-bag averaging uses the matching in-bag column.
   for (b in seq_len(object$ntree)) {
     tree <- object$trees[[b]]
 
@@ -533,6 +560,8 @@ predict.ci_forest <- function(object,
     )
   }
 
+  # Reordering rows would apply the in-bag mask to the wrong observations.
+  # Check the row contents in their stored order before using the mask.
   same_rows <- isTRUE(all.equal(
     newdata,
     training_data,
@@ -560,11 +589,13 @@ predict.ci_forest <- function(object,
 #' @noRd
 .ci_oob_prediction <- function(pred_mat, inbag) {
   oob_mat <- pred_mat
+  # Exclude every tree that used this row, including bootstrap repeats.
   oob_mat[inbag > 0L] <- NA_real_
 
   oob_tree_count <- rowSums(inbag == 0L)
 
   pred <- rowMeans(oob_mat, na.rm = TRUE)
+  # A row used by every tree has no out-of-bag estimate.
   pred[oob_tree_count == 0L] <- NA_real_
 
   as.numeric(pred)
@@ -644,6 +675,7 @@ fitted.ci_forest <- function(object, ...) {
 
 #' @noRd
 .ci_collect_terminal_rules <- function(node, meta, path = character()) {
+  # Accumulate branch labels so each leaf has the full rule for reaching it.
   if (partykit::is.terminal(node)) {
     rule <- if (length(path) == 0L) {
       "all observations"

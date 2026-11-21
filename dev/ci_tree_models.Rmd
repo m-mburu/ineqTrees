@@ -124,7 +124,8 @@ ci_splitfun <- function(rank_name,
 
     colnames(y_full) <- c("rank", "outcome")
 
-    # extree/.split may pass several candidate vars in ranked order
+    # partykit supplies predictors in its preselected order. Try them in
+    # that order and return the first available split to the callback.
     for (j in whichvar) {
       x_full <- mf[[j]]
 
@@ -154,7 +155,7 @@ ci_splitfun <- function(rank_name,
           ci_fun = ci_fun
         )
       } else if (is.factor(x_subset) || is.ordered(x_subset)) {
-        # use full x_full to preserve full level mapping in partysplit()
+        # Retain the original factor codes for the prediction map.
         sp <- best_factor_split(
           x_full = if (is.factor(x_full)) x_full else factor(x_full),
           keep   = keep,
@@ -579,6 +580,8 @@ ci_tree <- function(formula,
     )
   }
 
+  # Convert character predictors before split search so category membership
+  # uses the factor levels stored in the model frame.
   for (j in predictor_ids) {
     if (is.character(mf[[j]])) {
       mf[[j]] <- factor(mf[[j]])
@@ -890,14 +893,19 @@ test_that("ci_tree accepts level-dependent L split scoring", {
 ```{r, function-as_caseweights}
 #' Convert non-negative weights to integer case weights
 #'
-#' Rescale a non-negative weight vector so that its total is approximately
-#' `scale`, then round to integers for use with fitting routines that require
-#' integer case weights.
+#' Rescale observed, non-negative weights so their total is approximately
+#' `scale`, then round to integers for fitting routines that require integer
+#' case weights. If rounding gives zero weight to some positive observations,
+#' a warning reports their count. If all lose their weight, conversion stops.
 #'
-#' @param w A numeric vector of non-negative weights.
-#' @param scale Target total for the rescaled integer case weights.
+#' @param w A numeric vector with at least one positive weight. Observed
+#'   weights must be finite and non-negative. Missing weights are excluded
+#'   from the total and remain missing in the result.
+#' @param scale A positive finite scalar target, no greater than the largest
+#'   representable integer case weight. Fractional targets are rounded through
+#'   the resulting case weights.
 #'
-#' @return An integer vector of case weights on the same scale as `w`.
+#' @return An integer vector in input order with total approximately `scale`.
 #'
 #' @examples
 #' as_caseweights(c(1, 2, 3), scale = 60L)
@@ -906,9 +914,65 @@ test_that("ci_tree accepts level-dependent L split scoring", {
 #' @export
 
 as_caseweights <- function(w, scale = 10000L) {
-  stopifnot(all(w >= 0, na.rm = TRUE))
-  if (!any(w > 0, na.rm = TRUE)) stop("all weights are zero")
-  out <- round(w / sum(w, na.rm = TRUE) * scale)
+  if (!is.numeric(w) || is.complex(w) || !is.null(dim(w))) {
+    stop("`w` must be a numeric vector.", call. = FALSE)
+  }
+  if (any(is.infinite(w))) {
+    stop("Observed values in `w` must be finite.", call. = FALSE)
+  }
+  if (any(w < 0, na.rm = TRUE)) {
+    stop("`w` must be non-negative.", call. = FALSE)
+  }
+  positive <- !is.na(w) & w > 0
+  if (!any(positive)) {
+    stop("`w` must contain at least one positive weight.", call. = FALSE)
+  }
+  if (!is.numeric(scale) || is.complex(scale) || !is.null(dim(scale)) ||
+      length(scale) != 1L || is.na(scale) || !is.finite(scale) ||
+      scale <= 0 || scale > .Machine$integer.max) {
+    stop(
+      paste(
+        "`scale` must be a positive finite numeric scalar no greater",
+        "than .Machine$integer.max."
+      ),
+      call. = FALSE
+    )
+  }
+
+  weights <- w[positive]
+  total <- sum(weights)
+  if (!is.finite(total)) {
+    # Rescaling by the largest weight preserves the proportions when
+    # individually finite weights would overflow their sum.
+    weights <- weights / max(weights)
+    total <- sum(weights)
+  }
+  rounded_positive <- round(weights / total * scale)
+  discarded <- sum(rounded_positive == 0)
+
+  if (discarded == length(rounded_positive)) {
+    stop(
+      sprintf(
+        "Rounding discarded all %d positive weight(s). Increase `scale`.",
+        discarded
+      ),
+      call. = FALSE
+    )
+  }
+  if (discarded > 0L) {
+    warning(
+      sprintf(
+        "Rounding discarded %d of %d positive weight(s). Increase `scale` to retain more.",
+        discarded,
+        length(rounded_positive)
+      ),
+      call. = FALSE
+    )
+  }
+
+  out <- numeric(length(w))
+  out[is.na(w)] <- NA_real_
+  out[positive] <- rounded_positive
   as.integer(out)
 }
 ```
@@ -959,8 +1023,35 @@ test_that("as_caseweights preserves weight proportions up to rounding", {
 })
 
 test_that("as_caseweights rejects invalid input weights", {
-  expect_error(as_caseweights(c(0, 0, 0)), "all weights are zero")
-  expect_error(as_caseweights(c(1, -1, 2)))
+  expect_error(as_caseweights(c(0, 0, 0)), "positive weight")
+  expect_error(as_caseweights(c(1, -1, 2)), "non-negative")
+  expect_identical(as_caseweights(c(1, NA_real_, 0)), c(10000L, NA_integer_, 0L))
+  expect_error(as_caseweights(c(1, Inf)), "finite")
+  expect_error(as_caseweights(matrix(1:2)), "numeric vector")
+  expect_error(as_caseweights(c(1, 2), scale = 0), "positive finite")
+  expect_error(
+    as_caseweights(c(1, 2), scale = .Machine$integer.max + 1),
+    "integer.max"
+  )
+})
+
+test_that("as_caseweights reports positive weights lost to rounding", {
+  expect_error(as_caseweights(rep(1, 25000)), "all 25000 positive")
+  expect_error(
+    as_caseweights(c(1, 1), scale = 0.1),
+    "all 2 positive weight\\(s\\)"
+  )
+  expect_warning(
+    out <- as_caseweights(c(1, 1, 100), scale = 2),
+    "discarded 2 of 3 positive weight\\(s\\)"
+  )
+  expect_equal(out, c(0L, 0L, 2L))
+})
+
+test_that("as_caseweights normalises without overflowing the weight sum", {
+  out <- as_caseweights(c(1e308, 1e308), scale = 10.5)
+
+  expect_equal(out, c(5L, 5L))
 })
 ```
 
@@ -1043,6 +1134,19 @@ test_that("as_caseweights rejects invalid input weights", {
 
 #' Predict terminal summaries for one greedy CI tree
 #'
+#' Route new rows through the fitted tree and look up the corresponding
+#' terminal summaries calculated from that tree's training rows.
+#'
+#' @param fit A fitted CI tree.
+#' @param train_data Training rows for this tree, including repeated draws.
+#' @param new_data Rows to predict, with the tree's predictor columns.
+#' @param rank_name,outcome_name Names of the SES and outcome columns.
+#' @param weights Case weights aligned to `train_data`.
+#' @param FUN A function of the two-column response and case weights.
+#'   `NULL` uses the weighted mean outcome.
+#' @return One numeric value per row of `new_data`, in input order. A
+#'   missing leaf summary is replaced by the summary of all training rows.
+#'
 #' @noRd
 .ci_tree_terminal_predict <- function(fit,
                                       train_data,
@@ -1051,6 +1155,8 @@ test_that("as_caseweights rejects invalid input weights", {
                                       outcome_name,
                                       weights,
                                       FUN = NULL) {
+  # Route both datasets through the same tree. Estimate the leaf values from
+  # this member's training rows, then look them up for prediction.
   train_nodes <- stats::predict(fit, newdata = train_data, type = "node")
   new_nodes <- stats::predict(fit, newdata = new_data, type = "node")
 
@@ -1079,6 +1185,8 @@ test_that("as_caseweights rejects invalid input weights", {
     as.character(node_ids)
   )
 
+  # Use the member's overall training summary when a predicted node ID has
+  # no usable leaf summary.
   global_value <- as.numeric(FUN(y, weights))
   pred <- unname(node_values[as.character(new_nodes)])
   pred[is.na(pred)] <- global_value
@@ -1107,6 +1215,7 @@ test_that("as_caseweights rejects invalid input weights", {
   for (imp in imps) {
     importance[names(imp)] <- importance[names(imp)] + as.numeric(imp)
   }
+  # Trees without a split on a predictor contribute zero to its average.
   importance <- importance / n_trees
 
   sort(importance, decreasing = TRUE)
@@ -1275,6 +1384,8 @@ ci_forest <- function(formula,
     )
   }
 
+  # Establish factor levels before sampling the trees so their split codes
+  # refer to the same predictor categories.
   for (j in predictor_ids) {
     if (is.character(mf[[j]])) {
       mf[[j]] <- factor(mf[[j]])
@@ -1289,6 +1400,8 @@ ci_forest <- function(formula,
 
   grow_one_tree <- function(b) {
     sample_rows <- .ci_forest_sample(n, perturb)
+    # Use the same draw for the model frame, weights and stored training data.
+    # Bootstrap repeats must remain aligned across all three.
     sample_weights <- weights[sample_rows]
     sample_data <- forest_data[sample_rows, , drop = FALSE]
 
@@ -1321,6 +1434,8 @@ ci_forest <- function(formula,
     lapply(seq_len(ntree), grow_one_tree)
   }
 
+  # Store counts against the original training rows so prediction can
+  # identify which trees held each observation out of bag.
   inbag <- matrix(0L, nrow = n, ncol = ntree)
   for (b in seq_len(ntree)) {
     inbag[, b] <- tabulate(trees[[b]]$rows, nbins = n)
@@ -1414,6 +1529,7 @@ predict.ci_forest <- function(object,
     newdata <- as.data.frame(newdata)
   }
 
+  # In-bag counts are indexed by the original training row order.
   if (isTRUE(OOB)) {
     .ci_check_oob_newdata(newdata, object$data)
   }
@@ -1423,6 +1539,8 @@ predict.ci_forest <- function(object,
     ncol = object$ntree
   )
 
+  # Keep one column per member. A node ID is local to that tree, and
+  # out-of-bag averaging uses the matching in-bag column.
   for (b in seq_len(object$ntree)) {
     tree <- object$trees[[b]]
 
@@ -1498,6 +1616,8 @@ predict.ci_forest <- function(object,
     )
   }
 
+  # Reordering rows would apply the in-bag mask to the wrong observations.
+  # Check the row contents in their stored order before using the mask.
   same_rows <- isTRUE(all.equal(
     newdata,
     training_data,
@@ -1525,11 +1645,13 @@ predict.ci_forest <- function(object,
 #' @noRd
 .ci_oob_prediction <- function(pred_mat, inbag) {
   oob_mat <- pred_mat
+  # Exclude every tree that used this row, including bootstrap repeats.
   oob_mat[inbag > 0L] <- NA_real_
 
   oob_tree_count <- rowSums(inbag == 0L)
 
   pred <- rowMeans(oob_mat, na.rm = TRUE)
+  # A row used by every tree has no out-of-bag estimate.
   pred[oob_tree_count == 0L] <- NA_real_
 
   as.numeric(pred)
@@ -1611,6 +1733,7 @@ fitted.ci_forest <- function(object, ...) {
 
 #' @noRd
 .ci_collect_terminal_rules <- function(node, meta, path = character()) {
+  # Accumulate branch labels so each leaf has the full rule for reaching it.
   if (partykit::is.terminal(node)) {
     rule <- if (length(path) == 0L) {
       "all observations"
@@ -2347,6 +2470,8 @@ test_that("ci_forest OOB prediction uses only eligible trees per row", {
   all_tree_pred <- predict(fit)
   inbag <- fit$inbag
 
+  # Build the reference averages from per-tree predictions and the stored
+  # sampling counts, without calling the forest's OOB aggregation.
   per_tree <- matrix(
     NA_real_,
     nrow = nrow(toy_data),
@@ -2363,6 +2488,7 @@ test_that("ci_forest OOB prediction uses only eligible trees per row", {
     )
   }
 
+  # Eligibility varies by training row because each tree has its own draw.
   for (row_index in seq_len(nrow(toy_data))) {
     eligible <- which(inbag[row_index, ] == 0L)
 

@@ -144,6 +144,7 @@ returned as a tibble with `.pred`; raw predictions return the terminal node
 partition used for concentration-index gain.
 
 ```{r tree-predictions}
+# Read response predictions separately from the assigned leaf IDs.
 tree_pred <- predict(tree_fit, new_data = kenya_model)
 tree_nodes <- predict(tree_fit, new_data = kenya_model, type = "raw")
 
@@ -274,6 +275,7 @@ The surrogate is useful for communicating the main subgroup structure in the
 forest risk surface.
 
 ```{r forest-surrogate}
+# Use the forest's predicted risk as the response for the surrogate tree.
 surrogate_data <- kenya_model
 surrogate_data$forest_risk <- forest_pred$.pred
 
@@ -340,6 +342,7 @@ This chunk creates resamples. Because the outcome is binary, stratifying by
 `deadu5_num` helps keep events distributed across folds.
 
 ```{r make-resamples}
+# Reuse the same folds when comparing candidate settings.
 set.seed(20260513)
 
 folds <- vfold_cv(
@@ -402,6 +405,8 @@ inequality-aware tree; here the tuning metric is prediction error, which is
 what `tune_grid()` can compute directly from `.pred` and the observed outcome.
 
 ```{r tune-tree}
+# The engine grows trees by CI gain. This tuning example ranks their
+# response predictions using fold-level prediction errors.
 set.seed(20260513)
 
 tree_tuned <- tune_grid(
@@ -420,6 +425,8 @@ table. The resulting workflow can be predicted from like any other tidymodels
 fit.
 
 ```{r finalize-tree}
+# Select the setting with the lowest held-out RMSE. The final fit uses
+# all analysis rows and supplies the tree for subsequent predictions.
 best_tree <- select_best(tree_tuned, metric = "rmse")
 
 final_tree_wf <- finalize_workflow(tree_wf, best_tree)
@@ -482,6 +489,8 @@ interface, so `collect_metrics()`, `collect_predictions()`, `select_best()`,
 and `show_best()` work as expected.
 
 ```{r tune-forest}
+# Reuse the tree's assessment folds to keep the prediction metrics
+# on the same resampling design.
 set.seed(20260514)
 
 forest_tuned <- tune_grid(

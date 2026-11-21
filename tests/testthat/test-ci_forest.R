@@ -351,6 +351,8 @@ test_that("ci_forest OOB prediction uses only eligible trees per row", {
   all_tree_pred <- predict(fit)
   inbag <- fit$inbag
 
+  # Build the reference averages from per-tree predictions and the stored
+  # sampling counts, without calling the forest's OOB aggregation.
   per_tree <- matrix(
     NA_real_,
     nrow = nrow(toy_data),
@@ -367,6 +369,7 @@ test_that("ci_forest OOB prediction uses only eligible trees per row", {
     )
   }
 
+  # Eligibility varies by training row because each tree has its own draw.
   for (row_index in seq_len(nrow(toy_data))) {
     eligible <- which(inbag[row_index, ] == 0L)
 

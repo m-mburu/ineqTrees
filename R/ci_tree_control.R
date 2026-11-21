@@ -80,6 +80,7 @@ ci_tree_control <- function(minsplit = 200L,
   defaults <- ci_tree_control()
 
   if (!is.null(control)) {
+    # Accept partial control lists and keep the defaults for omitted settings.
     for (nm in intersect(names(defaults), names(control))) {
       defaults[[nm]] <- control[[nm]]
     }
@@ -113,6 +114,8 @@ ci_tree_control <- function(minsplit = 200L,
   if (ctrl$minsplit < 0 || ctrl$minbucket < 0) {
     stop("`minsplit` and `minbucket` must be non-negative.", call. = FALSE)
   }
+  # The two child weight shares sum to one, so each can be at least 0.5
+  # only for an exactly balanced split.
   if (ctrl$minprob < 0 || ctrl$minprob > 0.5) {
     stop("`minprob` must be between 0 and 0.5.", call. = FALSE)
   }
@@ -222,6 +225,8 @@ ci_tree_control <- function(minsplit = 200L,
     )
   }
 
+  # Both split engines expect numeric columns in the same order.
+  # For the L criterion the first column contains SES levels.
   storage.mode(y_full) <- "double"
   colnames(y_full) <- c("rank", "outcome")
   y_full
@@ -243,6 +248,8 @@ ci_tree_control <- function(minsplit = 200L,
 #'
 #' @export
 .ci_node_info <- function(y, wt, depth, ci_fun) {
+  # Store the row count and positive case-weight total separately.
+  # Weighted controls and displayed observation counts use different units.
   positive <- !is.na(wt) & wt > 0
   weight_sum <- sum(wt[positive], na.rm = TRUE)
 
@@ -287,6 +294,8 @@ ci_tree_control <- function(minsplit = 200L,
       importance[varname] <<- current + as.numeric(gain)
     }
 
+    # A predictor can split more than one node. Visit both branches so its
+    # importance includes every internal split where it was used.
     lapply(partykit::kids_node(node), collect)
     invisible(NULL)
   }
@@ -326,6 +335,8 @@ ci_tree_control <- function(minsplit = 200L,
     }
   })
 
+  # Carry original row positions through recursion so leaf assignments can
+  # be put back in model-frame order.
   build_node <- function(obs, depth) {
     id <- next_id()
     y_node <- y[obs, , drop = FALSE]
@@ -339,9 +350,12 @@ ci_tree_control <- function(minsplit = 200L,
       ci_fun = ci_fun
     )
 
+    # Apply the depth and parent-weight limits before searching for a split.
+    # The split engine checks the separate limits on each child.
     terminal <- depth >= ctrl$maxdepth ||
       sum(wt_node, na.rm = TRUE) < ctrl$minsplit
 
+    # Both engines return the same split structure for the recursive builder.
     split <- NULL
     if (!terminal) {
       if (identical(ctrl$split_engine, "cpp")) {
@@ -384,9 +398,12 @@ ci_tree_control <- function(minsplit = 200L,
       ))
     }
 
+    # Use the winning mask to send each row to exactly one child.
     left_child <- build_node(obs[left], depth + 1L)
     right_child <- build_node(obs[!left], depth + 1L)
 
+    # Store the selected gain with the split so summaries can report it and
+    # variable importance can aggregate it over internal nodes.
     info$gain <- split$gain
     info$relative_gain <- split$relative_gain
     info$varid <- split$varid
@@ -408,6 +425,7 @@ ci_tree_control <- function(minsplit = 200L,
 
   tree <- build_node(seq_len(nrow(data)), 0L)
   fitted <- integer(nrow(data))
+  # The recursive result is in leaf order. Assign by original row position.
   fitted[as.integer(names(tree$fitted))] <- as.integer(tree$fitted)
 
   list(

@@ -70,7 +70,8 @@ used for stratified fold creation.}
 \code{strata}, and \code{seed} are ignored for fold creation.}
 
 \item{resamples}{Optional \code{rsample} rset object. When supplied, it is used
-instead of creating folds from \code{v}, \code{strata}, or \code{fold_id}.}
+instead of creating folds from \code{v}, \code{strata}, or \code{fold_id}.
+Within each split, training and assessment rows must be disjoint.}
 
 \item{seed}{Optional random seed for fold creation.}
 
@@ -120,6 +121,9 @@ A \code{ci_forest_tuning} object. Candidate selection uses only eligible
 scores: by default a candidate needs a finite score on every intended
 assessment fold. \code{best_params} is empty when no candidate is eligible,
 and \code{best_fit} and \code{best_surrogate} are then \code{NULL}.
+\code{assessment_membership} and \code{fold_id} record the assessment rows in the
+same format as \code{\link[=tune_ci_tree]{tune_ci_tree()}}. The vector \code{fold_id} is \code{NULL} unless
+every row is assessed exactly once.
 }
 \description{
 \code{tune_cf_ci()} is kept for existing code. New code should use

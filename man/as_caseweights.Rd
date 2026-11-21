@@ -7,17 +7,22 @@
 as_caseweights(w, scale = 10000L)
 }
 \arguments{
-\item{w}{A numeric vector of non-negative weights.}
+\item{w}{A numeric vector with at least one positive weight. Observed
+weights must be finite and non-negative. Missing weights are excluded
+from the total and remain missing in the result.}
 
-\item{scale}{Target total for the rescaled integer case weights.}
+\item{scale}{A positive finite scalar target, no greater than the largest
+representable integer case weight. Fractional targets are rounded through
+the resulting case weights.}
 }
 \value{
-An integer vector of case weights on the same scale as \code{w}.
+An integer vector in input order with total approximately \code{scale}.
 }
 \description{
-Rescale a non-negative weight vector so that its total is approximately
-\code{scale}, then round to integers for use with fitting routines that require
-integer case weights.
+Rescale observed, non-negative weights so their total is approximately
+\code{scale}, then round to integers for fitting routines that require integer
+case weights. If rounding gives zero weight to some positive observations,
+a warning reports their count. If all lose their weight, conversion stops.
 }
 \examples{
 as_caseweights(c(1, 2, 3), scale = 60L)

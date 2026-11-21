@@ -305,6 +305,8 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
   stratum_rows <- split(seq_len(n), stratum_label)
   next_fold <- 1L
 
+  # Shuffle within each stratum, then distribute its rows across folds.
+  # This spreads small strata as evenly as their counts allow.
   for (rows in stratum_rows) {
     if (!length(rows)) {
       next
@@ -313,6 +315,8 @@ ci_cv_folds <- function(n, v = 5L, strata = NULL, seed = NULL) {
     shuffled_rows <- rows[sample.int(length(rows))]
     allocation <- next_fold + seq_along(shuffled_rows) - 1L
     fold_id[shuffled_rows] <- ((allocation - 1L) %% v) + 1L
+    # Carry the allocation across strata so small strata do not all start
+    # in the same fold.
     next_fold <- ((next_fold - 1L + length(shuffled_rows)) %% v) + 1L
   }
 
@@ -693,6 +697,16 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
     )
   }
 
+  # An assessment observation must be held out of this particular fit.
+  # Bootstrap analysis rows can legitimately occur more than once.
+  overlap <- intersect(train_idx, test_idx)
+  if (length(overlap)) {
+    stop(sprintf(
+      "Resample split %d has %d overlapping training and assessment row(s).",
+      split_position, length(overlap)
+    ), call. = FALSE)
+  }
+
   if (!isTRUE(all.equal(split_data, data, check.attributes = FALSE))) {
     stop(
       sprintf(
@@ -726,6 +740,8 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
       split_list <- unclass(split)
       train_idx <- split_list$in_id
       test_idx <- split_list$out_id
+      # Some rsample splits store only the analysis indices. Recover their
+      # assessment rows as the complement before checking alignment.
       if (length(test_idx) == 1L && is.na(test_idx)) {
         test_idx <- setdiff(seq_len(nrow(split_list$data)), train_idx)
       }
@@ -831,12 +847,21 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
   fold_id
 }
 
-.ci_resample_fold_id <- function(resamples, n) {
-  fold_id <- rep(NA_character_, n)
-  for (resample in resamples) {
-    fold_id[resample$test_idx] <- as.character(resample$fold_id)
+.ci_assessment_membership <- function(resamples, n) {
+  membership <- data.table::rbindlist(lapply(resamples, function(split) {
+    data.table::data.table(
+      row_id = split$test_idx,
+      fold_id = as.character(split$fold_id),
+      fold_position = split$fold_position
+    )
+  }))
+
+  # A single label per input row is meaningful only for a full partition.
+  fold_id <- NULL
+  if (nrow(membership) == n && !anyDuplicated(membership$row_id)) {
+    fold_id <- membership$fold_id[order(membership$row_id)]
   }
-  fold_id
+  list(membership = membership, fold_id = fold_id)
 }
 
 .ci_task_grid <- function(tuning_grid, resamples, seed = NULL) {
@@ -844,6 +869,8 @@ ci_control_from_row <- function(row, include_mtry = TRUE) {
   out_id <- 1L
   seed_base <- if (is.null(seed)) NULL else as.integer(seed)[1L]
 
+  # Pair each grid row with every resample. Offset the seed
+  # by the pair's position so dispatch order does not choose its draw.
   for (g in seq_len(nrow(tuning_grid))) {
     for (r in seq_along(resamples)) {
       task_seed <- if (is.null(seed_base)) {
@@ -1163,6 +1190,76 @@ ci_root_impurity <- function(data,
   )
 }
 
+#' Score the requested metrics for one tree or forest candidate and fold
+#'
+#' Partition gains come from the fitted model's diagnostics. Prediction
+#' metrics use assessment outcomes, predictions and case weights. Keep one
+#' row per requested metric, including missing scores after a failure.
+#' @noRd
+.ci_score_fold_metrics <- function(task, metrics, fit_result, outcome, pred,
+                                   weights, diagnostics, verbose, grid_size,
+                                   ntree = NULL) {
+  grid_id <- task$grid_id
+  grid_row <- task$grid_row
+  fold <- task$resample$fold_id
+  type <- as.character(grid_row$type[1L])
+  scores <- rep(NA_real_, length(metrics))
+  notes <- list()
+
+  for (i in seq_along(metrics)) {
+    metric <- metrics[i]
+    if (isTRUE(fit_result$ok)) {
+      result <- .ci_capture({
+        if (metric == "validation_gain") {
+          diagnostics$fold_validation_gain
+        } else if (metric %in% c("relative_validation_gain",
+                                 "percent_validation_root_recovered")) {
+          diagnostics$fold_validation_relative_gain
+        } else if (!is.null(pred)) {
+          .ci_score_prediction_metric(metric, outcome, pred, weights)
+        } else {
+          NA_real_
+        }
+      })
+      notes[[length(notes) + 1L]] <- .ci_notes_dt(
+        grid_id, fold, type, metric, stage = "score", messages = result$warnings
+      )
+      if (result$ok) {
+        scores[i] <- result$value
+      } else {
+        notes[[length(notes) + 1L]] <- .ci_notes_dt(
+          grid_id, fold, type, metric, stage = "score",
+          messages = result$error, class = "error"
+        )
+      }
+    }
+
+    if (isTRUE(verbose)) {
+      message(sprintf(
+        "[grid %d/%d, fold %s, type %s] %s = %s",
+        grid_id, grid_size, fold, type, metric,
+        if (is.na(scores[i])) "NA" else format(round(scores[i], 5), nsmall = 5)
+      ))
+    }
+  }
+
+  rows <- data.table::data.table(
+    grid_id = grid_id, fold_id = fold, metric = metrics, score = scores
+  )
+  for (name in names(diagnostics)) {
+    rows[[name]] <- diagnostics[[name]]
+  }
+  rows[["fit_error"]] <- fit_result$error
+  for (name in names(grid_row)) {
+    rows[[name]] <- grid_row[[name]][1L]
+  }
+  if (!is.null(ntree) && !("ntree" %in% names(rows))) {
+    rows[["ntree"]] <- ntree
+  }
+
+  list(rows = rows, notes = notes)
+}
+
 .ci_summarize_tuning <- function(fold_results,
                                  tuning_grid,
                                  selection_metric,
@@ -1213,6 +1310,8 @@ ci_root_impurity <- function(data,
         }
       )
 
+      # Report partial scores for diagnosis. Eligibility applies the configured
+      # fold coverage rule before any candidate can be selected.
       row[["eligible"]] <- scored_folds > 0L &&
         all(finite_scores | is.na(score)) &&
         scored_folds >= eligibility$min_scored_folds &&
@@ -1284,6 +1383,7 @@ ci_root_impurity <- function(data,
     return(metric_summary)
   }
 
+  # Apply fold coverage requirements before ranking candidates by score.
   eligible_summary <- metric_summary[isTRUE_vec(metric_summary$eligible), ,
     drop = FALSE
   ]
@@ -1298,6 +1398,8 @@ ci_root_impurity <- function(data,
   }
 
   type_levels <- .ci_type_levels(eligible_summary)
+  # Rank settings within each index type because raw scores have
+  # different scales across criteria.
   best_by_type <- lapply(type_levels, function(this_type) {
     type_summary <- eligible_summary[
       eligible_summary$type == this_type, ,
@@ -1611,6 +1713,8 @@ ci_tree_validation_gain <- function(fit,
   weights <- .ci_default_weights(weights, nrow(new_data))
   rank <- suppressWarnings(as.numeric(new_data[[rank_name]]))
   outcome <- .ci_outcome_numeric(new_data[[outcome_name]], outcome_name)
+  # Apply the learned splits to these rows. The observed outcomes in
+  # new_data supply the child scores, and the node IDs define membership.
   nodes <- stats::predict(fit, newdata = new_data, type = "node")
 
   keep <- stats::complete.cases(rank, outcome, weights, nodes) & weights > 0
@@ -1629,6 +1733,8 @@ ci_tree_validation_gain <- function(fit,
   }
   total_weight <- sum(weights)
 
+  # Weight each leaf score by its share of retained assessment weight.
+  # The sum measures the impurity left within the fitted partition.
   node_indices <- split(seq_along(weights), nodes)
   child_impurity <- sum(vapply(
     node_indices,
@@ -1881,6 +1987,8 @@ ci_roc_auc <- function(truth, estimate, weights = NULL) {
     )
   }
 
+  # The AUC denominator is the total pair weight across outcome classes.
+  # If either class has zero weight, no comparison is possible.
   total_pos <- sum(weights[truth == 1])
   total_neg <- sum(weights[truth == 0])
   if (total_pos <= 0 || total_neg <= 0) {
@@ -1892,6 +2000,7 @@ ci_roc_auc <- function(truth, estimate, weights = NULL) {
   estimate <- estimate[ord]
   weights <- weights[ord]
 
+  # Each positive-negative pair with tied scores contributes half credit.
   score_groups <- rle(estimate)
   group_end <- cumsum(score_groups$lengths)
   group_start <- c(1L, group_end[-length(group_end)] + 1L)
@@ -1971,6 +2080,7 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #'   `strata`, and `seed` are ignored for fold creation.
 #' @param resamples Optional `rsample` rset object. When supplied, it is used
 #'   instead of creating folds from `v`, `strata`, or `fold_id`.
+#'   Within each split, training and assessment rows must be disjoint.
 #' @param seed Optional random seed for fold creation.
 #' @param metric Selection metric when a single metric is requested.
 #'   `validation_gain`, `relative_validation_gain`,
@@ -1991,6 +2101,11 @@ ci_prediction_metrics <- function(truth, estimate, weights = NULL) {
 #'   scores: by default a candidate needs a finite score on every intended
 #'   assessment fold. `best_params` is empty when no candidate is eligible,
 #'   and `best_fit` is then `NULL`.
+#'   `assessment_membership` records the input row number (`row_id`), split
+#'   label (`fold_id`) and split number (`fold_position`) for every assessment
+#'   row in every split. The separate `fold_id` vector gives the split label
+#'   in input row order when every row is assessed exactly once. Otherwise
+#'   it is `NULL`.
 #'
 #' @examples
 #' toy_data <- data.frame(
@@ -2087,7 +2202,9 @@ tune_ci_tree <- function(formula,
     resamples = resamples,
     seed = seed
   )
-  fold_id_out <- .ci_resample_fold_id(resample_index, n)
+  assessment <- .ci_assessment_membership(resample_index, n)
+  # Cache the unsplit assessment impurity by fold and index type for
+  # reuse across tuning candidates.
   root_table <- .ci_validation_root_table(
     data = data,
     weights = weights,
@@ -2096,6 +2213,7 @@ tune_ci_tree <- function(formula,
     outcome_name = outcome_name,
     types = unique(tuning_grid$type)
   )
+  # Each task identifies a candidate and a fold, with its own seed.
   tasks <- .ci_task_grid(tuning_grid, resample_index, seed = seed)
 
   run_task <- function(task) {
@@ -2135,7 +2253,6 @@ tune_ci_tree <- function(formula,
       )
     }
 
-    score_rows <- vector("list", length(metrics))
     prediction_rows <- data.table::data.table()
     extract_rows <- data.table::data.table()
     fit_rows <- data.table::data.table()
@@ -2311,51 +2428,14 @@ tune_ci_tree <- function(formula,
       }
     }
 
-    for (i in seq_along(metrics)) {
-      this_metric <- metrics[i]
-      score <- NA_real_
-      if (isTRUE(fit_result$ok)) {
-        score_result <- .ci_capture({
-          if (identical(this_metric, "validation_gain")) {
-            fold_validation_gain
-          } else if (this_metric %in% c(
-            "relative_validation_gain", "percent_validation_root_recovered"
-          )) {
-            fold_validation_relative_gain
-          } else if (!this_metric %in% c(
-            "validation_gain", "relative_validation_gain",
-            "percent_validation_root_recovered"
-          ) &&
-                     !is.null(pred)) {
-            .ci_score_prediction_metric(
-              this_metric,
-              outcome[test_idx],
-              pred,
-              weights[test_idx]
-            )
-          } else {
-            NA_real_
-          }
-        })
-        notes[[length(notes) + 1L]] <- .ci_notes_dt(
-          g, fold, this_type, metric = this_metric, stage = "score",
-          messages = score_result$warnings
-        )
-        if (isTRUE(score_result$ok)) {
-          score <- score_result$value
-        } else {
-          notes[[length(notes) + 1L]] <- .ci_notes_dt(
-            g, fold, this_type, metric = this_metric, stage = "score",
-            messages = score_result$error, class = "error"
-          )
-        }
-      }
-
-      score_rows[[i]] <- data.table::data.table(
-        grid_id = g,
-        fold_id = fold,
-        metric = this_metric,
-        score = score,
+    scored <- .ci_score_fold_metrics(
+      task = task,
+      metrics = metrics,
+      fit_result = fit_result,
+      outcome = outcome[test_idx],
+      pred = pred,
+      weights = weights[test_idx],
+      diagnostics = list(
         n_terminal = n_terminal,
         train_gain = train_gain,
         fold_validation_gain = fold_validation_gain,
@@ -2363,32 +2443,18 @@ tune_ci_tree <- function(formula,
         fold_validation_relative_gain = fold_validation_relative_gain,
         relative_generalization_gap = relative_generalization_gap,
         train_root_impurity = train_root_impurity,
-        validation_root_impurity = validation_root_impurity,
-        fit_error = fit_result$error
-      )
-      for (nm in names(tuning_grid)) {
-        score_rows[[i]][[nm]] <- grid_row[[nm]][1L]
-      }
-
-      if (isTRUE(control$verbose)) {
-        message(sprintf(
-          "[grid %d/%d, fold %s, type %s] %s = %s",
-          g,
-          nrow(tuning_grid),
-          fold,
-          this_type,
-          this_metric,
-          if (is.na(score)) "NA" else format(round(score, 5), nsmall = 5)
-        ))
-      }
-    }
+        validation_root_impurity = validation_root_impurity
+      ),
+      verbose = control$verbose,
+      grid_size = nrow(tuning_grid)
+    )
 
     list(
-      fold_results = data.table::rbindlist(score_rows, fill = TRUE),
+      fold_results = scored$rows,
       predictions = prediction_rows,
       extracts = extract_rows,
       fits = fit_rows,
-      notes = data.table::rbindlist(notes, fill = TRUE)
+      notes = data.table::rbindlist(c(notes, scored$notes), fill = TRUE)
     )
   }
 
@@ -2411,6 +2477,7 @@ tune_ci_tree <- function(formula,
     selection_metric = selection_metric,
     control = control
   )
+  # Select using the resampled scores before any optional full-data refit.
   best_params <- .ci_select_best_params(summary, selection_metric)
   best_control <- NULL
   best_fit <- NULL
@@ -2454,7 +2521,8 @@ tune_ci_tree <- function(formula,
     metric_direction = .ci_metric_directions(metrics),
     selection_metric = selection_metric,
     model = "tree",
-    fold_id = fold_id_out,
+    fold_id = assessment$fold_id,
+    assessment_membership = assessment$membership,
     resamples = resample_index,
     control_grid = data.table::as.data.table(tuning_grid),
     predictions = predictions,

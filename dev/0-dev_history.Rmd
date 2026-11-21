@@ -124,7 +124,7 @@ devtools::check()
 # Add a new flat template
 fusen::add_flat_template("add")
 
-# Inflate all flat files at once
+# Regenerate the R sources, tests and vignettes from registered flat files.
 fusen::inflate_all()
 
 # Package structure (add this in a dev/Readme.md file)

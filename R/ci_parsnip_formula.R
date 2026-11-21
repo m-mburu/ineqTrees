@@ -6,14 +6,59 @@ utils::globalVariables(c("object", "new_data"))
 #'
 #' @noRd
 .ci_parsnip_formula <- function(formula, data, rank_name, outcome_name) {
-  response_vars <- all.vars(formula[[2L]])
   response_call <- formula[[2L]]
   is_ci_response <- is.call(response_call) &&
-    identical(as.character(response_call[[1L]]), "cbind") &&
-    length(response_vars) >= 2L
+    identical(as.character(response_call[[1L]]), "cbind")
+  # Parsnip can rename the sole response to ..y or .outcome in the engine data.
+  # When the declared column is present, require that exact response.
+  allowed_outcomes <- outcome_name
+  if (!outcome_name %in% names(data)) {
+    allowed_outcomes <- c(outcome_name, "..y", ".outcome")
+  }
 
   if (is_ci_response) {
-    return(list(formula = formula, outcome_name = outcome_name))
+    response_arguments <- as.list(response_call)[-1L]
+    if (length(response_arguments) != 2L ||
+        !all(vapply(response_arguments, is.name, logical(1)))) {
+      stop(
+        paste("The `cbind()` response must contain untransformed rank and outcome names.",
+              "Create a named column for each transformation before fitting."),
+        call. = FALSE
+      )
+    }
+
+    actual_rank_name <- as.character(response_arguments[[1L]])
+    actual_outcome_name <- as.character(response_arguments[[2L]])
+    if (!identical(actual_rank_name, rank_name)) {
+      stop("First `cbind()` response must match `rank_name`.",
+        call. = FALSE
+      )
+    }
+    if (!actual_outcome_name %in% allowed_outcomes) {
+      stop("Second `cbind()` response must match `outcome_name`.",
+        call. = FALSE
+      )
+    }
+
+    if (!all(c(actual_rank_name, actual_outcome_name) %in% names(data))) {
+      stop("`data` must contain both variables in the `cbind()` response.",
+        call. = FALSE
+      )
+    }
+
+    return(list(formula = formula, outcome_name = actual_outcome_name))
+  }
+
+  if (!is.name(response_call)) {
+    stop(paste("Single-outcome formulas must use an untransformed variable name.",
+               "Create a named column for the transformed outcome and use it in the formula and `outcome_name`."),
+      call. = FALSE
+    )
+  }
+
+  actual_outcome_name <- as.character(response_call)
+  if (!actual_outcome_name %in% allowed_outcomes) {
+    stop("Formula response must match `outcome_name`.", call. = FALSE)
   }
 
   if (!rank_name %in% names(data)) {
@@ -22,12 +67,6 @@ utils::globalVariables(c("object", "new_data"))
     )
   }
 
-  actual_outcome_name <- outcome_name
-  if (!actual_outcome_name %in% names(data) &&
-      length(response_vars) &&
-      response_vars[[1L]] %in% names(data)) {
-    actual_outcome_name <- response_vars[[1L]]
-  }
   if (!actual_outcome_name %in% names(data)) {
     stop(
       "`data` must contain `outcome_name` when using a single-outcome formula.",
@@ -51,17 +90,10 @@ utils::globalVariables(c("object", "new_data"))
     )
   }
 
-  rhs <- paste(predictor_names, collapse = " + ")
-  formula <- stats::as.formula(
-    paste0("cbind(", rank_name, ", ", outcome_name, ") ~ ", rhs),
-    env = environment(formula)
+  response <- call("cbind", as.name(rank_name), as.name(actual_outcome_name))
+  formula <- stats::reformulate(
+    predictor_names, response = response, env = environment(formula)
   )
-  if (!identical(actual_outcome_name, outcome_name)) {
-    formula <- stats::as.formula(
-      paste0("cbind(", rank_name, ", ", actual_outcome_name, ") ~ ", rhs),
-      env = environment(formula)
-    )
-  }
 
   list(formula = formula, outcome_name = actual_outcome_name)
 }
@@ -258,6 +290,8 @@ ci_predict_parsnip <- function(object, newdata) {
 
   nodes <- stats::predict(object, newdata = newdata, type = "node")
   if (is.matrix(nodes)) {
+    # Resolve each node ID within the member tree that assigned it. Average
+    # the responses and keep the member IDs for fold-level partition scoring.
     member_predictions <- vapply(seq_along(object$trees), function(member) {
       as.numeric(partykit::predict_party(
         object$trees[[member]]$fit,
@@ -282,6 +316,7 @@ ci_predict_parsnip <- function(object, newdata) {
 
   training <- attr(object, "ci_training_diagnostics", exact = TRUE)
   if (is.null(training)) {
+    # Recover training diagnostics from the fit when they were never cached.
     training <- .ci_parsnip_training_scores(object)
   }
 
@@ -659,6 +694,8 @@ ci_gain_vec <- function(truth,
   }
 
   total_weight <- sum(case_weights)
+  # Group observed outcomes by the fitted node IDs. Leaves with equal
+  # predicted values still count as separate groups.
   node_indices <- split(seq_along(truth), node)
 
   child_impurity <- sum(vapply(
@@ -918,6 +955,7 @@ ci_tuning_metric_set <- function(data,
     }
   }
 
+  # Use source row IDs to recover rank and weights in prediction order.
   if (!is.null(row_id)) {
     rank <- source_data[[context$rank_name]][row_id]
     weights <- if (is.null(context$case_weight_name)) {
@@ -978,6 +1016,8 @@ ci_tuning_metric_set <- function(data,
         call. = FALSE
       )
     }
+    # Convert row-wise lists of tree IDs to one partition per member.
+    # Leaf IDs have meaning only within the tree that assigned them.
     partitions <- lapply(seq_len(member_counts[1L]), function(member) {
       vapply(nodes, function(row) row[[member]], numeric(1))
     })
@@ -998,6 +1038,7 @@ ci_tuning_metric_set <- function(data,
     )
   }, numeric(1))
 
+  # Give each scored member the same weight in the forest's gain.
   if (all(is.na(gains))) NA_real_ else mean(gains, na.rm = TRUE)
 }
 
@@ -1057,6 +1098,8 @@ ci_tuning_metric_set <- function(data,
       )
     }
 
+    # Training diagnostics come from the fitted model. Validation gain uses
+    # assessment outcomes and their assigned terminal nodes.
     if (grepl("training_gain$", metric)) {
       required <- c(".ci_training_gain", ".ci_training_root")
       if (!all(required %in% names(metric_data))) {
@@ -1077,6 +1120,7 @@ ci_tuning_metric_set <- function(data,
       estimate_vec <- rlang::eval_tidy(estimate, metric_data)
 
       root_impurity <- NULL
+      # Use the same assessment rows and weights for the root and child scores.
       if (relative) {
         root_impurity <- .ci_tuning_root_impurity(
           truth = truth_vec,
@@ -1128,6 +1172,8 @@ ci_tuning_metric_set <- function(data,
   )
 
   if (length(tuning_cols) > 0L) {
+    # Keep each candidate and resample together so reused node IDs never
+    # pool observations from different fitted models.
     split_key <- do.call(
       interaction,
       c(metric_data[, tuning_cols, drop = FALSE], drop = TRUE, sep = "\r")

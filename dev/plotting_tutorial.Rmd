@@ -51,6 +51,7 @@ This tutorial starts with the generic plot and then builds up the controls used
 most often in reports.
 
 ```{r plotting-options, include=FALSE}
+# Use an opaque white background so panels remain legible on dark pages.
 knitr::opts_chunk$set(
   fig.width = 12,
   fig.height = 7,
@@ -167,6 +168,7 @@ functions through `terminal_stats`. Each function receives the data assigned
 to one terminal node and must return one value.
 
 ```{r custom-terminal-stats, fig.alt="Concentration-index tree plot with terminal-node sample size, mortality, mean wealth, and weighted sample size."}
+# Supply functions that each return one value for the rows in a leaf.
 node_stats <- list(
   n = nrow,
   mortality = function(df) mean(df$deadu5_num),
@@ -188,6 +190,7 @@ consistent number formatting. Use `stat_labels` to rename the rows in the
 terminal panels and `stat_formatters` to format the values.
 
 ```{r formatted-terminal-stats, fig.alt="Concentration-index tree plot with formatted terminal-node statistics."}
+# Format the display values separately from the statistics they represent.
 plot(
   tree,
   data = plot_data,
@@ -241,6 +244,7 @@ height and width with `tp_args`. Font size is controlled with `gp`, a standard
 `grid::gpar()` object passed through to the underlying plot method.
 
 ```{r panel-sizing, fig.width=14, fig.height=9, fig.alt="Concentration-index tree plot with larger terminal panels and smaller text."}
+# Allow enough height for the longest terminal summary, including labels.
 plot(
   tree,
   data = plot_data,
@@ -346,6 +350,7 @@ For custom plot statistics, the same node assignment logic is available through
 `tree_build_terminal_stats()`.
 
 ```{r custom-terminal-table}
+# Use the same leaf-level statistics in the plot and the table.
 tree_build_terminal_stats(
   fit = tree,
   data = plot_data,
@@ -363,6 +368,8 @@ draw. For interpretation, fit a surrogate tree to the forest predictions with
 `ci_forest_surrogate()` and plot the surrogate fit.
 
 ```{r forest-surrogate-setup}
+# Fit the ensemble on the same rows used in the plotting examples.
+# The surrogate will summarise the forest's predictions for those rows.
 set.seed(20260521)
 
 forest <- ci_forest(

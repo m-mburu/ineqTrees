@@ -234,6 +234,8 @@ test_that("ci_select_best_params skips candidate with incomplete folds", {
     type = "CI"
   )
 
+  # Candidate 1 scores higher on its sole completed fold. The complete
+  # second candidate should win under the default coverage rule.
   fold_results <- data.table::data.table(
     grid_id = c(1L, 1L, 1L, 1L, 1L, 2L, 2L, 2L, 2L, 2L),
     fold_id = c(1L, 2L, 3L, 4L, 5L, 1L, 2L, 3L, 4L, 5L),
