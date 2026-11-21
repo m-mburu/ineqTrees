@@ -56,6 +56,8 @@
   if (identical(ctrl$factor_split, "order")) {
     return("order")
   }
+  # Automatic mode falls back to the cheaper ordered search. An explicit
+  # request for exhaustive search fails if it exceeds the budget.
   if (identical(ctrl$factor_split, "auto")) {
     return(if (can_partition) "partition" else "order")
   }
@@ -153,13 +155,15 @@ best_factor_split <- function(
   best_gain <- -Inf
   left_levels <- NULL
 
+  # The mask fixes the last level on the right to avoid scoring both
+  # orientations of the same partition.
   if (identical(split_mode, "partition")) {
     n_partitions <- as.integer(.ci_factor_partition_count(length(present_levels)))
 
     for (mask in seq_len(n_partitions)) {
       left_mask <- .ci_factor_mask_left(mask, length(present_levels))
       wl <- sum(level_weight[left_mask])
-      wr <- total_weight - wl
+      wr <- sum(level_weight[!left_mask])
 
       if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
       if ((wl / total_weight) < ctrl$minprob ||
@@ -183,6 +187,8 @@ best_factor_split <- function(
       }
     }
   } else {
+    # Ordering by weighted outcome means limits the search to contiguous
+    # prefixes of the ordered levels.
     level_score <- vapply(
       present_levels,
       function(lv) {
@@ -195,10 +201,13 @@ best_factor_split <- function(
     ord_levels <- present_levels[order(level_score)]
     ordered_weight <- level_weight[match(ord_levels, present_levels)]
     cum_level_weight <- cumsum(ordered_weight)
+    suffix_level_weight <- rev(cumsum(rev(ordered_weight)))
 
+    # Move the boundary one level at a time. The last level stays on the
+    # right so every candidate has two non-empty groups of levels.
     for (k in seq_len(length(ord_levels) - 1L)) {
       wl <- cum_level_weight[k]
-      wr <- total_weight - wl
+      wr <- suffix_level_weight[k + 1L]
 
       if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
       if ((wl / total_weight) < ctrl$minprob ||
@@ -228,6 +237,8 @@ best_factor_split <- function(
   right_levels <- present_levels[!present_levels %in% left_levels]
   left <- x_chr %in% left_levels
 
+  # Keep one entry per original factor level for partykit prediction.
+  # Levels unobserved in this node have no assigned child.
   index <- rep(NA_integer_, length(full_levels))
   index[match(left_levels,  full_levels)] <- 1L
   index[match(right_levels, full_levels)] <- 2L
@@ -367,6 +378,7 @@ best_global_ci_split <- function(x,
     return(NULL)
   }
 
+  # Sample candidate predictors at this node before evaluating their splits.
   if (!is.null(ctrl$mtry)) {
     n_select <- min(ctrl$mtry, length(vars))
     vars <- vars[sample.int(length(vars), n_select)]
@@ -375,6 +387,8 @@ best_global_ci_split <- function(x,
   parent_impurity <- ci_fun(y, wt)
   best <- NULL
 
+  # Compare each predictor's best cutpoint or factor partition to choose
+  # one split for the current node.
   for (j in vars) {
     candidate <- best_split_for_one_variable(
       x = x[[j]],
@@ -385,12 +399,15 @@ best_global_ci_split <- function(x,
       ci_fun = ci_fun
     )
 
+    # Skip predictors with no admissible split. A tie keeps the first
+    # candidate encountered in the search order.
     if (!is.null(candidate) &&
         (is.null(best) || candidate$gain > best$gain)) {
       best <- candidate
     }
   }
 
+  # Apply the gain thresholds once the best candidate has been found.
   if (is.null(best) ||
       !is.finite(best$gain) ||
       best$gain <= ctrl$min_gain) {
@@ -474,21 +491,28 @@ best_numeric_split <- function(
   y <- y[ord, , drop = FALSE]
   wt <- wt[ord]
 
+  # A threshold can separate adjacent distinct values only.
   cut_pos <- which(diff(x) != 0)
   if (!length(cut_pos)) {
     return(NULL)
   }
 
+  # Keep an inadmissible cutpoint at -Inf so it cannot win even when all
+  # scored gains are negative.
   gains <- rep(-Inf, length(cut_pos))
   ci_parent <- ci_fun(y, wt)
   cum_wt <- cumsum(wt)
+  # Sum the right child from its own rows. Subtracting nearly equal totals
+  # can erase its entire weight before the minimum-size check.
+  suffix_wt <- rev(cumsum(rev(wt)))
   total_wt <- cum_wt[length(cum_wt)]
   row_id <- seq_along(x)
 
+  # Use prefix weights to reject small children before scoring their CI.
   for (k in seq_along(cut_pos)) {
     pos <- cut_pos[k]
     wl <- cum_wt[pos]
-    wr <- total_wt - wl
+    wr <- suffix_wt[pos + 1L]
 
     if (wl < ctrl$minbucket || wr < ctrl$minbucket) next
     if ((wl / total_wt) < ctrl$minprob ||
@@ -513,6 +537,7 @@ best_numeric_split <- function(
   best_k <- cut_pos[which.max(gains)]
   cut <- .ci_safe_numeric_midpoint(x[best_k], x[best_k + 1L])
   left <- row_id <= best_k
+  # The tree builder expects the mask in the original row order.
   left_original <- logical(length(left))
   left_original[ord] <- left
 
@@ -555,6 +580,8 @@ best_split_for_one_variable <- function(x, y, wt, varid, ctrl, ci_fun) {
   wt <- .ci_validate_weights(wt, nrow(y), "wt")
   ctrl <- .ci_tree_normalize_control(ctrl)
 
+  # Check the parent weight after excluding rows unusable for this predictor.
+  # Different predictors can therefore be scored on different rows.
   keep <- stats::complete.cases(y) & !is.na(x) & !is.na(wt) & wt > 0
   if (sum(wt[keep], na.rm = TRUE) < ctrl$minsplit) {
     return(NULL)

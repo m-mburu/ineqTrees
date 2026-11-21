@@ -172,6 +172,8 @@
     )
   }
 
+  # Each observation-feature pair must identify one contribution. Repeated
+  # pairs would make the value in the reshaped cell ambiguous.
   duplicated_pairs <- duplicated(
     shap_dt[, c(id_col, variable_col), with = FALSE]
   )

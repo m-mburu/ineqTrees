@@ -108,6 +108,8 @@ Run cross-validation with `tune_ci_tree()`. The first metric is the selection
 metric used for `tree_tuning$best_fit` when `refit = TRUE`.
 
 ```{r tune-tree}
+# Use stratified folds so outcome cases are spread across assessments.
+# These scores guide the choice of tree settings.
 tree_tuning <- tune_ci_tree(
   formula = ci_formula,
   data = tuning_data,
@@ -129,6 +131,7 @@ Use `ci_collect_metrics(format = "wide")` when you want one row per setting
 with metric columns.
 
 ```{r tree-wide-metrics}
+# Compare candidate metrics side by side while retaining the grid IDs.
 tree_metrics_wide <- ci_collect_metrics(
   tree_tuning,
   metric = tuning_metrics,
@@ -232,6 +235,7 @@ Forest tuning uses the same metric and collector API. The forest grid also
 includes `ntree` and `mtry`.
 
 ```{r forest-grid}
+# Include the number of trees among the candidate control settings.
 forest_grid <- ci_tree_control_grid(
   minsplit = 120L,
   minbucket = 60L,
@@ -252,6 +256,8 @@ the selected forest is still accompanied by a surrogate tree for
 interpretation.
 
 ```{r tune-forest}
+# Compare the members' average partition gain alongside prediction error
+# from the forest's averaged response.
 forest_tuning <- tune_ci_forest(
   formula = ci_formula,
   data = tuning_data,
@@ -298,6 +304,8 @@ knitr::kable(
 ```
 
 ```{r forest-select-best}
+# Use the mean held-out partition gain to select one setting per index.
+# The forest averages this gain over its member trees within each fold.
 forest_best <- ci_select_best(
   forest_tuning,
   metric = "validation_gain"
@@ -348,6 +356,7 @@ With `refit = TRUE`, the final fitted forest and its surrogate tree are stored
 on the tuning object.
 
 ```{r selected-forest-objects}
+# Inspect the refitted forest alongside its surrogate tree.
 ci_forest_summary(forest_tuning$best_fit)
 
 ci_tree_terminal_summary(forest_tuning$best_surrogate)[

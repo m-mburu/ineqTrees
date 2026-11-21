@@ -137,6 +137,7 @@ gives the level of whole-sample inequality that the tree or forest will try to
 explain.
 
 ```{r root-concentration-index}
+# Use the unsplit analysis sample as the reference for the trees.
 root_response <- cbind(
   rank = kenya_model$wealth,
   outcome = kenya_model$deadu5_num
@@ -422,6 +423,7 @@ and forest gain averages member-tree partition gains. Training diagnostics
 come from each fitted analysis fold, independently of assessment outcomes.
 
 ```{r ci-gain-tuning-metric}
+# Supply the rank and weights needed to score partitions during tuning.
 ci_tuning_metrics <- ci_tuning_metric_set(
   kenya_model,
   rank_name = "wealth",
@@ -442,6 +444,8 @@ validation metric. Relative gains use their respective fold's root impurity
 and are `NA` when that root is numerically zero.
 
 ```{r tune-tree}
+# Score held-out partitions for model selection. Keep the training gain
+# as a separate diagnostic for each fit.
 set.seed(20260516)
 
 tree_tuned <- tune_grid(
@@ -458,6 +462,8 @@ collect_metrics(tree_tuned)
 ```{r inspect-tree-tuning}
 show_best(tree_tuned, metric = "relative_validation_gain", n = 4)
 
+# Choose by the fraction of assessment-root impurity removed by
+# the tree's fitted partition.
 best_tree <- select_best(tree_tuned, metric = "relative_validation_gain")
 best_tree
 ```
@@ -592,6 +598,7 @@ That partition can be scored with the same concentration-index gain metric used
 for the single tree.
 
 ```{r forest-surrogate-ci-gain}
+# Score the partition defined by the surrogate tree.
 surrogate_nodes <- as.integer(predict(
   surrogate_fit,
   new_data = surrogate_data,
@@ -686,6 +693,8 @@ forest_grid
 ```
 
 ```{r tune-forest}
+# Evaluate each forest on the same folds as the tree. Gain uses member
+# partitions, while the workflow can also retain response predictions.
 set.seed(20260516)
 
 forest_tuned <- tune_grid(
@@ -702,6 +711,8 @@ collect_metrics(forest_tuned)
 ```{r inspect-forest-tuning}
 show_best(forest_tuned, metric = "relative_validation_gain", n = 4)
 
+# Choose by the member trees' partition gains scaled to the
+# assessment-root impurity.
 best_forest <- select_best(forest_tuned, metric = "relative_validation_gain")
 best_forest
 ```

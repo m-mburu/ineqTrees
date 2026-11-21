@@ -155,6 +155,8 @@ ci_tree <- function(formula,
     )
   }
 
+  # Convert character predictors before split search so category membership
+  # uses the factor levels stored in the model frame.
   for (j in predictor_ids) {
     if (is.character(mf[[j]])) {
       mf[[j]] <- factor(mf[[j]])
@@ -242,14 +244,19 @@ ci_tree <- function(formula,
 
 #' Convert non-negative weights to integer case weights
 #'
-#' Rescale a non-negative weight vector so that its total is approximately
-#' `scale`, then round to integers for use with fitting routines that require
-#' integer case weights.
+#' Rescale observed, non-negative weights so their total is approximately
+#' `scale`, then round to integers for fitting routines that require integer
+#' case weights. If rounding gives zero weight to some positive observations,
+#' a warning reports their count. If all lose their weight, conversion stops.
 #'
-#' @param w A numeric vector of non-negative weights.
-#' @param scale Target total for the rescaled integer case weights.
+#' @param w A numeric vector with at least one positive weight. Observed
+#'   weights must be finite and non-negative. Missing weights are excluded
+#'   from the total and remain missing in the result.
+#' @param scale A positive finite scalar target, no greater than the largest
+#'   representable integer case weight. Fractional targets are rounded through
+#'   the resulting case weights.
 #'
-#' @return An integer vector of case weights on the same scale as `w`.
+#' @return An integer vector in input order with total approximately `scale`.
 #'
 #' @examples
 #' as_caseweights(c(1, 2, 3), scale = 60L)
@@ -285,9 +292,65 @@ ci_tree <- function(formula,
 #' @export
 
 as_caseweights <- function(w, scale = 10000L) {
-  stopifnot(all(w >= 0, na.rm = TRUE))
-  if (!any(w > 0, na.rm = TRUE)) stop("all weights are zero")
-  out <- round(w / sum(w, na.rm = TRUE) * scale)
+  if (!is.numeric(w) || is.complex(w) || !is.null(dim(w))) {
+    stop("`w` must be a numeric vector.", call. = FALSE)
+  }
+  if (any(is.infinite(w))) {
+    stop("Observed values in `w` must be finite.", call. = FALSE)
+  }
+  if (any(w < 0, na.rm = TRUE)) {
+    stop("`w` must be non-negative.", call. = FALSE)
+  }
+  positive <- !is.na(w) & w > 0
+  if (!any(positive)) {
+    stop("`w` must contain at least one positive weight.", call. = FALSE)
+  }
+  if (!is.numeric(scale) || is.complex(scale) || !is.null(dim(scale)) ||
+      length(scale) != 1L || is.na(scale) || !is.finite(scale) ||
+      scale <= 0 || scale > .Machine$integer.max) {
+    stop(
+      paste(
+        "`scale` must be a positive finite numeric scalar no greater",
+        "than .Machine$integer.max."
+      ),
+      call. = FALSE
+    )
+  }
+
+  weights <- w[positive]
+  total <- sum(weights)
+  if (!is.finite(total)) {
+    # Rescaling by the largest weight preserves the proportions when
+    # individually finite weights would overflow their sum.
+    weights <- weights / max(weights)
+    total <- sum(weights)
+  }
+  rounded_positive <- round(weights / total * scale)
+  discarded <- sum(rounded_positive == 0)
+
+  if (discarded == length(rounded_positive)) {
+    stop(
+      sprintf(
+        "Rounding discarded all %d positive weight(s). Increase `scale`.",
+        discarded
+      ),
+      call. = FALSE
+    )
+  }
+  if (discarded > 0L) {
+    warning(
+      sprintf(
+        "Rounding discarded %d of %d positive weight(s). Increase `scale` to retain more.",
+        discarded,
+        length(rounded_positive)
+      ),
+      call. = FALSE
+    )
+  }
+
+  out <- numeric(length(w))
+  out[is.na(w)] <- NA_real_
+  out[positive] <- rounded_positive
   as.integer(out)
 }
 
@@ -406,7 +469,8 @@ ci_splitfun <- function(rank_name,
 
     colnames(y_full) <- c("rank", "outcome")
 
-    # extree/.split may pass several candidate vars in ranked order
+    # partykit supplies predictors in its preselected order. Try them in
+    # that order and return the first available split to the callback.
     for (j in whichvar) {
       x_full <- mf[[j]]
 
@@ -436,7 +500,7 @@ ci_splitfun <- function(rank_name,
           ci_fun = ci_fun
         )
       } else if (is.factor(x_subset) || is.ordered(x_subset)) {
-        # use full x_full to preserve full level mapping in partysplit()
+        # Retain the original factor codes for the prediction map.
         sp <- best_factor_split(
           x_full = if (is.factor(x_full)) x_full else factor(x_full),
           keep   = keep,

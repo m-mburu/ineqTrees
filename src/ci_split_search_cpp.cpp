@@ -39,6 +39,10 @@ struct TwoCiScores {
   double right;
 };
 
+// Reuse the parent node's socioeconomic sort order for every candidate.
+// The callback assigns rows to the left (0), right (1), or neither (-1).
+// The rank input holds SES levels. The rank-based indices derive fractional
+// ranks within each child, and L uses the original levels.
 template <typename ChildId>
 TwoCiScores ci_score_children_ordered(
     const std::vector<double>& rank,
@@ -48,6 +52,8 @@ TwoCiScores ci_score_children_ordered(
     ChildId child_id,
     int type_code) {
 
+  // Track the scoring weight separately in each child after excluding rows
+  // with invalid inputs or zero weight.
   int n_valid[2] = {0, 0};
   double total_wt[2] = {0.0, 0.0};
 
@@ -68,9 +74,12 @@ TwoCiScores ci_score_children_ordered(
     n_valid[1] > 1 && R_finite(total_wt[1]) && total_wt[1] > 0.0
   };
 
+  // An unscorable child contributes zero impurity, matching the R scorer.
+  // A failed split search is signalled separately by a gain of -Inf.
   TwoCiScores out = {0.0, 0.0};
 
   if (type_code == 4) {
+    // The L index centres socioeconomic levels on each child's weighted mean.
     double mu_s[2] = {0.0, 0.0};
     for (int idx : ses_ord) {
       const int child = child_id(idx);
@@ -84,6 +93,8 @@ TwoCiScores ci_score_children_ordered(
       mu_s[child] += wt[idx] * rank[idx] / total_wt[child];
     }
 
+    // An effectively zero mean SES leaves L undefined. Keep that child's
+    // score at the default zero to avoid dividing by an unstable mean.
     for (int child = 0; child < 2; ++child) {
       usable[child] = usable[child] &&
         R_finite(mu_s[child]) &&
@@ -116,6 +127,8 @@ TwoCiScores ci_score_children_ordered(
   double min_outcome[2] = {R_PosInf, R_PosInf};
   double max_outcome[2] = {R_NegInf, R_NegInf};
 
+  // In the first pass, calculate the outcome mean and weighted midranks.
+  // Tied rows share a rank within each child, based on their combined weight.
   for (size_t start = 0; start < ses_ord.size();) {
     const int first_idx = ses_ord[start];
     size_t end = start + 1;
@@ -166,6 +179,7 @@ TwoCiScores ci_score_children_ordered(
 
   cumulative_wt[0] = 0.0;
   cumulative_wt[1] = 0.0;
+  // Revisit the tied blocks to compute covariance about the child means.
   double cov12[2] = {0.0, 0.0};
 
   for (size_t start = 0; start < ses_ord.size();) {
@@ -214,6 +228,8 @@ TwoCiScores ci_score_children_ordered(
     start = end;
   }
 
+  // CI scales twice the covariance by the child's outcome mean. CIg uses
+  // it directly, and CIc scales it by four over the child's outcome range.
   for (int child = 0; child < 2; ++child) {
     if (!usable[child]) continue;
 
@@ -253,6 +269,7 @@ double ci_score_all_ordered(
     const std::vector<int>& ses_ord,
     int type_code) {
 
+  // Assign all rows to one side to score the unsplit parent.
   TwoCiScores scores = ci_score_children_ordered(
     rank,
     outcome,
@@ -276,7 +293,10 @@ std::string choose_factor_split_mode(
     int max_factor_levels_partition,
     double max_factor_partitions) {
 
+  // The search budget uses the levels present in the current node.
+  // Automatic mode can use ordered search when enumeration is too large.
   const double n_partitions = factor_partition_count(n_levels);
+  // Bound both the size of the bitmask and the number of subsets searched.
   const bool bitmask_fits = n_levels <= 63;
   const bool can_partition =
     n_levels <= static_cast<size_t>(max_factor_levels_partition) &&
@@ -320,6 +340,8 @@ List ci_best_numeric_split_cpp_engine(
     }
   }
 
+  // Sort by predictor value to enumerate distinct thresholds. Keep the
+  // permutation so the winning mask can be returned in input order.
   std::vector<int> ord(n);
   std::iota(ord.begin(), ord.end(), 0);
   std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) {
@@ -335,12 +357,13 @@ List ci_best_numeric_split_cpp_engine(
     weight[i] = wt[src];
   }
 
-  std::vector<double> cum_wt(n);
-  double total_wt = 0.0;
-  for (int i = 0; i < n; ++i) {
-    total_wt += weight[i];
-    cum_wt[i] = total_wt;
+  // Sum from the right so a small positive child retains its weight even
+  // when the left child accounts for nearly all of the node's weight.
+  std::vector<double> suffix_wt(weight.size() + 1, 0.0);
+  for (int i = n; i > 0; --i) {
+    suffix_wt[i - 1] = weight[i - 1] + suffix_wt[i];
   }
+  const double total_wt = std::accumulate(weight.begin(), weight.end(), 0.0);
 
   LogicalVector empty_left(n, false);
   if (!R_finite(total_wt) || total_wt <= 0.0) {
@@ -365,19 +388,27 @@ List ci_best_numeric_split_cpp_engine(
     ses_ord,
     type_code
   );
+  // Until a cutpoint passes both weight limits, return no split. The R
+  // wrapper checks the gain before it uses the cutpoint or mask.
   double best_gain = R_NegInf;
   double best_cutpoint = NA_REAL;
   int best_pos = -1;
 
+  double wl = 0.0;
   for (int pos = 0; pos < n - 1; ++pos) {
+    wl += weight[pos];
+    // A numeric threshold cannot split rows with equal predictor values.
     if (xs[pos] == xs[pos + 1]) continue;
 
-    const double wl = cum_wt[pos];
-    const double wr = total_wt - wl;
+    const double wr = suffix_wt[pos + 1];
 
+    // A zero-weight child has no share of the parent, even with zero limits.
+    if (wl <= 0.0 || wr <= 0.0) continue;
     if (wl < minbucket || wr < minbucket) continue;
     if ((wl / total_wt) < minprob || (wr / total_wt) < minprob) continue;
 
+    // The callback assigns rows by predictor position. The scorer still
+    // visits them in SES order to rebuild ranks within each child.
     TwoCiScores child_scores = ci_score_children_ordered(
       rank,
       outcome,
@@ -388,10 +419,14 @@ List ci_best_numeric_split_cpp_engine(
       },
       type_code
     );
+
+    // Gain is the parent impurity less the two child impurities weighted by
+    // their shares of the node's total case weight.
     const double gain = ci_parent -
       ((wl / total_wt) * child_scores.left +
        (wr / total_wt) * child_scores.right);
 
+    // Keep the first threshold when multiple candidates have the same gain.
     if (gain > best_gain) {
       best_gain = gain;
       best_cutpoint = safe_numeric_midpoint(xs[pos], xs[pos + 1]);
@@ -430,6 +465,8 @@ List ci_best_factor_split_cpp_engine_impl(
     stop("Inputs have incompatible sizes.");
   }
 
+  // Index these tables by one-based R factor codes. A level enters the
+  // search with any finite outcome and positive finite weight.
   std::vector<double> level_w(n_levels + 1, 0.0);
   std::vector<double> level_yw(n_levels + 1, 0.0);
   std::vector<int> present;
@@ -487,7 +524,6 @@ List ci_best_factor_split_cpp_engine_impl(
     type_code
   );
 
-  std::vector<double> cum_level_w(present.size(), 0.0);
   double total_w = 0.0;
   for (size_t i = 0; i < present.size(); ++i) {
     total_w += level_w[present[i]];
@@ -510,18 +546,22 @@ List ci_best_factor_split_cpp_engine_impl(
       static_cast<unsigned long long>(factor_partition_count(present.size()));
     std::vector<unsigned char> side(n_levels + 1, 0);
 
+    // Fix the last level on the right to count each partition once.
     for (unsigned long long mask = 1; mask <= n_partitions; ++mask) {
       std::fill(side.begin(), side.end(), 0);
       double wl = 0.0;
+      double wr = level_w[present.back()];
 
       for (size_t i = 0; i + 1 < present.size(); ++i) {
         if ((mask & (1ULL << i)) != 0) {
           side[present[i]] = 1;
           wl += level_w[present[i]];
+        } else {
+          wr += level_w[present[i]];
         }
       }
 
-      const double wr = total_w - wl;
+      if (wl <= 0.0 || wr <= 0.0) continue;
       if (wl < minbucket || wr < minbucket) continue;
       if ((wl / total_w) < minprob || (wr / total_w) < minprob) continue;
 
@@ -551,20 +591,27 @@ List ci_best_factor_split_cpp_engine_impl(
       }
     }
   } else {
+    // The ordered search visits prefixes of the levels sorted by weighted
+    // outcome mean. This limits the number of candidates to score.
     std::stable_sort(present.begin(), present.end(), [&](int a, int b) {
       return (level_yw[a] / level_w[a]) < (level_yw[b] / level_w[b]);
     });
 
     std::vector<unsigned char> side(n_levels + 1, 0);
-    for (size_t i = 0; i < present.size(); ++i) {
-      cum_level_w[i] = (i == 0 ? 0.0 : cum_level_w[i - 1]) + level_w[present[i]];
+    std::vector<double> suffix_wt(present.size() + 1, 0.0);
+    for (size_t i = present.size(); i > 0; --i) {
+      suffix_wt[i - 1] = level_w[present[i - 1]] + suffix_wt[i];
     }
 
+    double wl = 0.0;
     for (size_t k = 0; k + 1 < present.size(); ++k) {
+      // Move one level to the left at a time. The final level stays right
+      // so each prefix defines two non-empty groups of levels.
       side[present[k]] = 1;
 
-      const double wl = cum_level_w[k];
-      const double wr = total_w - wl;
+      wl += level_w[present[k]];
+      const double wr = suffix_wt[k + 1];
+      if (wl <= 0.0 || wr <= 0.0) continue;
       if (wl < minbucket || wr < minbucket) continue;
       if ((wl / total_w) < minprob || (wr / total_w) < minprob) continue;
 
@@ -632,6 +679,7 @@ List ci_best_factor_split_cpp_engine(
     minbucket,
     minprob,
     type,
+    // Retain ordered search for the entry point without a strategy argument.
     "order",
     49,
     1e6

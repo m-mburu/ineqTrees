@@ -171,6 +171,7 @@ shap_conc_decomp <- function(
         )
       }
 
+      # Match the wide table to the supplied order of rank and prediction rows.
       shap <- shap[match(requested_ids, dalex_ids)]
       attr(shap, "observation_ids") <- requested_ids
     }
@@ -190,6 +191,9 @@ shap_conc_decomp <- function(
   feature_names <- names(shap_dt)
   n <- nrow(shap_dt)
 
+  if (!is.numeric(rank) || is.complex(rank) || !is.null(dim(rank))) {
+    stop("`rank` must be a numeric vector.", call. = FALSE)
+  }
   if (length(rank) != n) {
     stop("`rank` must have length equal to nrow(`shap`).", call. = FALSE)
   }
@@ -258,6 +262,7 @@ shap_conc_decomp <- function(
     observation_dt[, ".prediction__" := as.numeric(prediction)]
   }
 
+  # Use the same rows for every contribution and the overall index.
   keep <- rep(TRUE, n)
 
   if (na_rm) {
@@ -274,6 +279,8 @@ shap_conc_decomp <- function(
   observation_dt <- observation_dt[keep]
 
   keep_positive <- observation_dt[[".weights__"]] > 0
+  # The remaining weights must define a positive denominator for the
+  # index and all contributions.
   if (!any(keep_positive)) {
     stop("No positive-weight complete cases remain.", call. = FALSE)
   }
@@ -282,6 +289,8 @@ shap_conc_decomp <- function(
   observation_dt <- observation_dt[keep_positive]
 
   if (is.null(prediction)) {
+    # Reconstruct the model output on the SHAP scale when predictions are
+    # absent. The supplied baseline is common to all retained rows.
     observation_dt[, ".prediction__" := rowSums(feature_dt) + baseline]
     prediction_source <- "baseline + rowSums(shap)"
   } else {
@@ -301,6 +310,8 @@ shap_conc_decomp <- function(
     mean_rank <- sum(weight_prob * rank_fraction)
     index_weight <- rank_fraction - mean_rank
 
+    # Use the same centred ranks and case-weight denominator for the total
+    # prediction and every feature's covariance.
     weighted_cov_with_rank <- function(values) {
       mean_value <- sum(weight_prob * values)
       sum(weight_prob * index_weight * (values - mean_value))
@@ -328,6 +339,7 @@ shap_conc_decomp <- function(
       )
     }
 
+    # Reuse the prediction-level scale for every feature to preserve additivity.
     scale_factor <- switch(type,
       CI = 2 / mu_hat,
       CIg = 2,
@@ -349,6 +361,8 @@ shap_conc_decomp <- function(
       )
     }
 
+    # For L, each observation's position is relative to mean SES.
+    # Every feature uses the same centred SES weights as the total.
     index_weight <- (rank_vector - mu_s) / mu_s
     contribution_score <- function(values) {
       sum(weight_prob * index_weight * values)
@@ -361,6 +375,8 @@ shap_conc_decomp <- function(
     weight_vector
   )
 
+  # Apply one sign to every term so the sum can match the absolute index.
+  # Individual contributions retain their direction relative to that total.
   score_direction <- if (signed_total_ci < 0) -1 else 1
 
   feature_scores <- vapply(
@@ -376,6 +392,8 @@ shap_conc_decomp <- function(
 
   shap_total <- sum(contributions[["D_k_SHAP"]])
 
+  # Large opposing contributions can cancel. When their sum is near zero,
+  # report the signed amounts and leave percentages undefined.
   contributions[["pct_contribution"]] <- if (abs(shap_total) <= tolerance) {
     rep(NA_real_, nrow(contributions))
   } else {

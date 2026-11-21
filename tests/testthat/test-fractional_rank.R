@@ -88,7 +88,7 @@ test_that("shap_conc_decomp drops incomplete rows with na_rm", {
 
   out <- shap_conc_decomp(
     shap = shap,
-    rank = c(1, 2, 3, 4),
+    rank = c(1, NA, 3, 4),
     prediction = prediction,
     na_rm = TRUE,
     sort = FALSE
@@ -135,6 +135,7 @@ test_that("shap_conc_decomp uses ci_factory scores for weighted variants", {
   weights <- c(1, 2, 1, 3)
   prediction <- 2 + rowSums(shap)
 
+  # Check each rank-based scaling against the package's overall score.
   for (type in c("CI", "CIg", "CIc")) {
     out <- shap_conc_decomp(
       shap = shap,
@@ -257,6 +258,8 @@ test_that("shap_conc_decomp protects reserved-looking names", {
 })
 
 test_that("shap_conc_decomp matches long and wide input for permuted IDs", {
+  # Use non-uniform weights and non-sorted IDs so a silent reordering can
+  # change the result even though both inputs have the same row count.
   feature_values <- c(0.1, 0.2, -0.1)
   ids <- c(30, 10, 20)
   ranks <- c(1, 2, 3)
@@ -434,6 +437,22 @@ test_that("shap_conc_decomp reports retained rows for zero weights", {
 test_that("shap_conc_decomp validates key inputs", {
   shap <- data.frame(x1 = c(1, -1), x2 = c(0, 0))
 
+  expect_error(
+    shap_conc_decomp(
+      shap = shap,
+      rank = c("1", "2"),
+      baseline = 0
+    ),
+    "numeric vector"
+  )
+  expect_error(
+    shap_conc_decomp(
+      shap = shap,
+      rank = matrix(1:2),
+      baseline = 0
+    ),
+    "numeric vector"
+  )
   expect_error(
     shap_conc_decomp(shap = shap, rank = 1:3, baseline = 0),
     "length equal"

@@ -120,6 +120,7 @@ read_dhs_zip <- function(zip_file) {
   next_start <- 1L
   for (i in seq_len(nrow(spec))) {
     if (spec$start[i] > next_start) {
+      # A negative width tells read.fwf() to skip the gap before this field.
       widths <- c(widths, -(spec$start[i] - next_start))
     }
     widths <- c(widths, spec$width[i])
@@ -127,6 +128,8 @@ read_dhs_zip <- function(zip_file) {
     next_start <- spec$end[i] + 1L
   }
 
+  # Read fields as character data so coded values and identifier padding
+  # survive the fixed-width import.
   df <- utils::read.fwf(
     file = dat_file[1L],
     widths = widths,
@@ -249,6 +252,8 @@ standardize_dhs_ids <- function(dt, dtype) {
     ),
     names(dt_copy)
   )
+  # Give module keys a common integer type so the same cluster, household
+  # and line numbers can match across the imported files.
   for (col in id_cols) {
     data.table::set(dt_copy, j = col, value = as.integer(dt_copy[[col]]))
   }
@@ -294,6 +299,8 @@ standardize_dhs_ids <- function(dt, dtype) {
   if (!all(by_x %in% names(x)) || !all(by_y %in% names(y))) {
     return(x)
   }
+  # Keep the child-record fields when a second module repeats them.
+  # The left join retains child rows without a matching record.
   y_use <- .drop_duplicate_payload(y, names(x), by_y)
   merge(
     x,
@@ -418,6 +425,7 @@ prepare_country_phase <- function(target_country,
     target_version <- unique(phase_files$version)
   }
 
+  # Restrict all module imports to a single survey release.
   selected_survey <- paste0(target_phase, target_version)
   phase_files <- phase_files[phase_files$survey_id == selected_survey, ]
 
@@ -442,6 +450,8 @@ prepare_country_phase <- function(target_country,
   message("==========================================================")
 
   data_list <- list()
+  # Index successful imports by module type. Later joins can then use
+  # whichever modules were readable for this release.
   for (i in seq_len(nrow(phase_files))) {
     f_path <- phase_files$file_path[i]
     f_type <- phase_files$type[i]
@@ -461,6 +471,7 @@ prepare_country_phase <- function(target_country,
   has_PR <- "PR" %in% names(data_list)
   has_AR <- "AR" %in% names(data_list)
 
+  # Anchor the joins to child records, using the birth history as a fallback.
   if (has_KR) {
     merged_dt <- data.table::copy(data_list[["KR"]])
     base_module <- "KR"
@@ -495,6 +506,7 @@ prepare_country_phase <- function(target_country,
     )
   }
 
+  # Link maternal records by the mother's line number within her household.
   if (has_CR) {
     message(
       "  -> Adding couples/parent context variables (CR) to the child base..."
@@ -532,6 +544,7 @@ prepare_country_phase <- function(target_country,
     )
   }
 
+  # Link child-level roster and testing records by the child's line number.
   if (has_PR && "child_line_id" %in% names(merged_dt)) {
     message(
       "  -> Adding household member roster variables (PR) for the child..."

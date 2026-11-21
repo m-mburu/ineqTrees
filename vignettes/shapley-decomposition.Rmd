@@ -67,6 +67,8 @@ This chunk keeps the rank, outcome, predictors, and sample weight together.
 The same table is used for the inequality-aware models and for the ordinary
 prediction forest.
 ```{r prepare-analysis-data}
+# Retain wealth and case weights for the index. The feature list below
+# controls which predictors receive SHAP contributions.
 shap_predictors <- c("rural", "ed", "reg", "unskilled")
 
 analysis_vars <- c(
@@ -91,6 +93,8 @@ kenya_model$case_wt <- hardhat::importance_weights(kenya_model$sample_weight)
 model_x <- kenya_model[, shap_predictors, drop = FALSE]
 
 eval_n <- min(250L, nrow(kenya_model))
+# Reuse these row positions for explanations, ranks and weights. The
+# index needs all three vectors aligned to the same children.
 eval_rows <- sort(sample.int(nrow(kenya_model), eval_n))
 model_x_eval <- model_x[eval_rows, , drop = FALSE]
 wealth_eval <- kenya_model$wealth[eval_rows]
@@ -105,6 +109,7 @@ head(kenya_model[, c("wealth", "deadu5_num", shap_predictors)])
 This chunk defines prediction wrappers for `shapr`. Each wrapper accepts a
 model object and a predictor table, then returns one numeric risk for each row.
 ```{r helper-functions}
+# Use a common explanation and output format to compare fitted models.
 ci_tree_risk_predict <- function(object, newdata) {
   as.numeric(stats::predict(
     object,
@@ -243,6 +248,8 @@ ci_forest_summary(forest_fit)
 This chunk approximates SHAP values for the tree predictions and then
 decomposes the concentration index of those fitted risks.
 ```{r tree-shap}
+# Explain mortality predictions for the selected rows before linking the
+# feature contributions to their socioeconomic rank.
 set.seed(20260517)
 
 tree_pred_eval <- ci_tree_risk_predict(tree_fit, model_x_eval)
@@ -299,6 +306,7 @@ plot_shap_contributions(
 The same decomposition works for a forest. The only difference is the
 prediction wrapper: for `ci_forest()`, predictions are averaged across trees.
 ```{r forest-shap}
+# Explain ensemble predictions so the contributions describe the forest.
 set.seed(20260518)
 
 forest_pred_eval <- ci_forest_risk_predict(forest_fit, model_x_eval)
@@ -480,6 +488,8 @@ ranger_tuned <- tune_grid(
   metrics = metric_set(roc_auc, accuracy)
 )
 
+# Use held-out ROC AUC to choose the comparator's settings, then refit
+# before explaining its predictions on the shared evaluation rows.
 best_ranger <- finalize_workflow(
   ranger_wf,
   select_best(ranger_tuned, metric = "roc_auc")
@@ -497,6 +507,8 @@ in its predicted mortality risks. This is useful when the research question is:
 which predictors account for socioeconomic inequality in model-predicted
 mortality risk?
 ```{r ranger-shap}
+# Use the same explanation rows for the comparator so rank and weights
+# refer to the same children across the decompositions.
 set.seed(20260521)
 
 ranger_x <- ranger_data[, shap_predictors, drop = FALSE]

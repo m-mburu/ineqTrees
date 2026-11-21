@@ -76,6 +76,8 @@ A \code{partysplit} object, split candidate list, or \code{NULL}.
 \description{
 Rcpp-backed versions of the greedy concentration-index split search helpers.
 These functions keep the same return shape as the R split helpers, but take
-\code{type} instead of a prebuilt \code{ci_fun} because the concentration-index scoring
-is evaluated in C++.
+\code{type} instead of a prebuilt \code{ci_fun}. The numeric and factor helpers use
+the R search when a selected response row has a missing SES or outcome.
+This preserves the reference cutpoints, child weights and row assignments.
+Infinite SES or outcome values in the selected rows raise an error.
 }

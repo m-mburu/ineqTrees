@@ -54,6 +54,7 @@ socioeconomic ranking variable and the health outcome. Here, `wealth` is the
 rank and `deadu5_num` is a binary indicator for under-five death.
 
 ```{r prepare-analysis-data}
+# Keep a common complete-case sample across criterion comparisons.
 analysis_vars <- c(
   "wealth",
   "deadu5_num",
@@ -84,6 +85,7 @@ For a fast vignette build we use a reproducible subset. In a real analysis you
 would normally fit the model to the full prepared survey table.
 
 ```{r sample-analysis-data}
+# Cap the example sample to keep the fit and resampling quick to run.
 set.seed(20260512)
 kenya_model <- kenya_child[
   sample.int(.N, min(1000L, .N))
@@ -102,6 +104,7 @@ convention used by tree and forest tuning. Each criterion has its own root-node
 benchmark.
 
 ```{r root-concentration-index}
+# Score the unsplit sample before comparing the tree partitions.
 whole_sample_ci <- data.table(type = criterion_types)[
   ,
   .(
@@ -340,6 +343,8 @@ The validation-gain score asks whether the fitted partition reduces
 concentration-index impurity when observations are assigned to terminal nodes.
 
 ```{r tree-validation-gain}
+# The function scores whichever rows it receives. Using the fitting
+# rows here measures the fitted partition's in-sample gain.
 ci_tree_validation_gain(
   fit = tree_fit,
   new_data = kenya_model,
@@ -411,6 +416,8 @@ controls, and optional diagnostics. The collector helpers give a stable way to
 inspect those pieces without relying on list internals.
 
 ```{r inspect-tree-tuning}
+# Select on held-out gains. The table also shows fitting gains so
+# readers can see how the chosen partition fares on both samples.
 tree_selected <- ci_select_best(tree_tuning, metric = "validation_gain")
 
 ci_fit_summary_table(
@@ -616,6 +623,7 @@ the forest validation-gain metric itself is computed from the forest's stored
 member trees.
 
 ```{r forest-surrogate}
+# Fit a single tree to the forest predictions to display their structure.
 forest_surrogate <- ci_forest_surrogate(
   forest_fit,
   data = kenya_model,
@@ -677,6 +685,8 @@ forest_tuning <- tune_ci_forest(
   refit = TRUE
 )
 
+# Use relative assessment gain to report a forest setting within each
+# type. This choice can differ from selection by raw gain.
 forest_best_by_type <- ci_select_best(
   forest_tuning,
   metric = "relative_validation_gain"
@@ -764,6 +774,7 @@ The fitted values are predicted risks. Their concentration index can be
 compared with the concentration index of the observed outcome.
 
 ```{r forest-prediction-ci}
+# Use the forest predictions as the outcome for this index calculation.
 forest_risk <- predict(forest_fit, OOB = FALSE)
 
 ci(

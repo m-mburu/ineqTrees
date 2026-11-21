@@ -174,6 +174,42 @@ test_that(".ci_make_resamples rejects splits from unrelated data", {
   )
 })
 
+test_that("tree and forest tuning validate and retain each assessment split", {
+  skip_if_not_installed("rsample")
+  data <- data.frame(rank = 1:12, outcome = rep(0:1, 6), x = 1:12)
+  args <- list(
+    formula = cbind(rank, outcome) ~ x, data = data,
+    rank_name = "rank", outcome_name = "outcome", type = "CIg",
+    control_grid = ci_tree_control_grid(
+      minsplit = 2L, minbucket = 1L, minprob = 0, maxdepth = 1L
+    ),
+    seed = 11L, refit = FALSE
+  )
+  overlap <- rsample::make_splits(list(analysis = 1:8, assessment = 7:12), data)
+  invalid <- rsample::manual_rset(list(overlap, overlap), c("A", "B"))
+  set.seed(11)
+  repeated <- rsample::vfold_cv(data, v = 3, repeats = 2)
+  expected_rows <- lapply(repeated$splits, function(split) {
+    rsample::assessment(split)$x
+  })
+  labels <- paste(repeated$id, repeated$id2, sep = "_")
+
+  for (tuner in list(tune_ci_tree, tune_ci_forest)) {
+    if (identical(tuner, tune_ci_forest)) args$ntree <- 2L
+    args$resamples <- invalid
+    expect_error(do.call(tuner, args), "split 1 has 2 overlapping")
+
+    args$resamples <- repeated
+    tuned <- do.call(tuner, args)
+    membership <- tuned$assessment_membership
+    expect_null(tuned$fold_id)
+    expect_identical(membership$row_id, unlist(expected_rows, use.names = FALSE))
+    expect_identical(membership$fold_id, rep(labels, lengths(expected_rows)))
+    expect_identical(membership$fold_position,
+                     rep(seq_along(expected_rows), lengths(expected_rows)))
+  }
+})
+
 test_that("tune_ci_tree assigns each row to one assessment fold", {
   toy_data <- data.frame(
     rank = c(10, 20, 30, 40, 50, 60, 70, 80),
@@ -202,6 +238,8 @@ test_that("tune_ci_tree assigns each row to one assessment fold", {
 
   fold_ids <- tuned$fold_results$fold_id
   expect_equal(length(unique(fold_ids)), 4L)
+  membership <- tuned$assessment_membership
+  expect_identical(tuned$fold_id, membership$fold_id[order(membership$row_id)])
 
   predictions <- ci_collect_predictions(tuned)
   assessment_rows <- predictions$row_id

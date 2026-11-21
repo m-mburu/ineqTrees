@@ -96,6 +96,8 @@
   stopifnot(is.matrix(y), ncol(y) == 2L, length(wt) == nrow(y))
   .ci_validate_ci_score_inputs(y, wt)
 
+  # A row needs both SES and outcome to contribute to the node score.
+  # Only positive case weights enter the normalising total.
   ok <- stats::complete.cases(y) & !is.na(wt) & wt > 0
   if (!any(ok) || sum(ok) <= 1L) {
     return(0)
@@ -110,12 +112,15 @@
     return(0)
   }
 
+  # L uses socioeconomic levels on their original scale.
   if (type == "L") {
     mu_s <- stats::weighted.mean(rank, wt)
     if (!is.finite(mu_s) || abs(mu_s) <= .Machine$double.eps) {
       return(0)
     }
 
+    # Scale centred SES by the node's mean. The absolute weighted product
+    # of this relative SES term with the outcome is L impurity.
     p <- wt / total_wt
     l_index <- sum(p * ((rank - mu_s) / mu_s) * outcome)
     if (!is.finite(l_index)) {
@@ -125,6 +130,7 @@
     return(abs(l_index))
   }
 
+  # Recompute fractional ranks within the node using its own weight total.
   wt_norm <- wt / total_wt
   rank_w <- .rank_wt_retained(rank, wt)
 
@@ -145,6 +151,8 @@
     return(abs(2 * cov12))
   }
 
+  # Use the observed node range for the corrected index. A constant
+  # outcome leaves no range to rescale by, so the node contributes zero.
   rng <- max(outcome, na.rm = TRUE) - min(outcome, na.rm = TRUE)
   if (!is.finite(rng) || rng <= .Machine$double.eps) {
     return(0)
@@ -295,10 +303,13 @@ ci_factory <- function(type = c("CI", "CIg", "CIc", "L")) {
     return(numeric(0))
   }
 
+  # Sort once to put equal values together and accumulate weight from
+  # the lowest to the highest value.
   o <- order(x)
   x_ord <- x[o]
   wt_ord <- wt[o] / sum(wt)
 
+  # Each tie gets the midpoint of the weight interval occupied by its block.
   tie_blocks <- rle(x_ord)
   block_end <- cumsum(tie_blocks$lengths)
   block_start <- block_end - tie_blocks$lengths + 1L
@@ -311,6 +322,7 @@ ci_factory <- function(type = c("CI", "CIg", "CIc", "L")) {
   )
 
   out <- numeric(n)
+  # Restore retained row order so ranks still align with the outcome.
   out[o] <- rank_ord
   out
 }
@@ -383,6 +395,8 @@ rank_wt <- function(x, wt) {
 
   if (wl <= 0 || wr <= 0 || wtot <= 0) return(-Inf)
 
+  # Each child is scored on its own rows. Its weight share determines how
+  # much its remaining impurity contributes to the split gain.
   ci_left <- ci_fun(y[left,  , drop = FALSE], wt[left])
   ci_right <- ci_fun(y[!left, , drop = FALSE], wt[!left])
 
@@ -452,6 +466,8 @@ weighted_ci_gain <- function(y, wt, left, ci_fun) {
 .ci_relative_gain <- function(gain,
                               parent_impurity,
                               tolerance = .Machine$double.eps) {
+  # Relative gain is undefined when there is effectively no parent impurity
+  # to reduce. Return a missing ratio for the caller's threshold check.
   if (!is.finite(gain) ||
       !is.finite(parent_impurity) ||
       abs(parent_impurity) <= tolerance) {

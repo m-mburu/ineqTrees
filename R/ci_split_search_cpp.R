@@ -5,8 +5,10 @@
 #' @description
 #' Rcpp-backed versions of the greedy concentration-index split search helpers.
 #' These functions keep the same return shape as the R split helpers, but take
-#' `type` instead of a prebuilt `ci_fun` because the concentration-index scoring
-#' is evaluated in C++.
+#' `type` instead of a prebuilt `ci_fun`. The numeric and factor helpers use
+#' the R search when a selected response row has a missing SES or outcome.
+#' This preserves the reference cutpoints, child weights and row assignments.
+#' Infinite SES or outcome values in the selected rows raise an error.
 #'
 #' @param x A numeric predictor vector.
 #' @param x_full A factor predictor containing all original levels.
@@ -46,11 +48,27 @@ best_numeric_split_cpp <- function(
 
   stopifnot(is.matrix(y), ncol(y) == 2L, length(x) == nrow(y),
             length(wt) == nrow(y))
+  .ci_validate_ci_score_inputs(y, wt)
+
+  # Missing response rows still define predictor cutpoints and child weight.
+  # The R scorer excludes them when calculating each node's impurity.
+  if (anyNA(y)) {
+    return(best_numeric_split(
+      x = x,
+      y = y,
+      wt = wt,
+      varid = varid,
+      ctrl = ctrl,
+      ci_fun = ci_factory(type),
+      return = return
+    ))
+  }
 
   if (identical(type, "L")) {
     .ci_warn_negative_l_levels(y[, 1])
   }
 
+  # The engine scores cutpoints. R turns the winner into a partykit split.
   out <- ci_best_numeric_split_cpp_engine(
     x = as.numeric(x),
     y = y,
@@ -60,6 +78,8 @@ best_numeric_split_cpp <- function(
     type = type
   )
 
+  # The engine uses a non-finite gain when no cutpoint passes its checks.
+  # Return NULL so the caller can skip this predictor.
   if (!is.finite(out$gain)) {
     return(NULL)
   }
@@ -108,10 +128,28 @@ best_factor_split_cpp <- function(
             length(x_full) == nrow(y_full), length(wt_full) == nrow(y_full),
             length(keep) == nrow(y_full))
 
+  # Retain the full level map so a code still identifies the same level
+  # when the split is later used for prediction.
   full_levels <- levels(x_full)
   x <- x_full[keep]
   y <- y_full[keep, , drop = FALSE]
   wt <- wt_full[keep]
+  .ci_validate_ci_score_inputs(y, wt)
+
+  # Use the R search's level ordering and weighting for incomplete responses.
+  # Pass the full factor so the split still maps to its original levels.
+  if (anyNA(y)) {
+    return(best_factor_split(
+      x_full = x_full,
+      keep = keep,
+      y_full = y_full,
+      wt_full = wt_full,
+      varid = varid,
+      ctrl = ctrl,
+      ci_fun = ci_factory(type),
+      return = return
+    ))
+  }
 
   if (identical(type, "L")) {
     .ci_warn_negative_l_levels(y[, 1])
@@ -139,6 +177,8 @@ best_factor_split_cpp <- function(
   present_codes <- sort(unique(code[!is.na(code)]))
   right_codes <- setdiff(present_codes, left_codes)
 
+  # Translate the winning codes into a prediction map over the full factor.
+  # Codes absent from the scoring rows have no assigned child.
   index <- rep(NA_integer_, length(full_levels))
   index[left_codes] <- 1L
   index[right_codes] <- 2L
@@ -179,6 +219,8 @@ best_split_for_one_variable_cpp <- function(
   wt <- .ci_validate_weights(wt, nrow(y), "wt")
   ctrl <- .ci_tree_normalize_control(ctrl)
 
+  # Use the same eligible rows as the R search. Check their total weight
+  # before sending a numeric threshold or factor search to the engine.
   keep <- stats::complete.cases(y) & !is.na(x) & !is.na(wt) & wt > 0
   if (sum(wt[keep], na.rm = TRUE) < ctrl$minsplit) {
     return(NULL)
@@ -213,6 +255,7 @@ best_split_for_one_variable_cpp <- function(
     return(NULL)
   }
 
+  # Expand the engine's mask back to the node's row positions.
   left <- rep(FALSE, length(x))
   left[keep] <- candidate$left
   candidate$left <- left
@@ -247,6 +290,8 @@ best_global_ci_split_cpp <- function(x,
   parent_impurity <- ci_factory(type)(y, wt)
   best <- NULL
 
+  # C++ finds the best cutpoint or factor partition for each predictor.
+  # Compare these gains to choose one split for the current node.
   for (j in vars) {
     candidate <- best_split_for_one_variable_cpp(
       x = x[[j]],
@@ -257,6 +302,8 @@ best_global_ci_split_cpp <- function(x,
       type = type
     )
 
+    # Skip predictors with no admissible split. A tie keeps the first
+    # candidate encountered in the search order.
     if (!is.null(candidate) &&
         (is.null(best) || candidate$gain > best$gain)) {
       best <- candidate
@@ -269,6 +316,7 @@ best_global_ci_split_cpp <- function(x,
     return(NULL)
   }
 
+  # Use the node's parent impurity to scale the winning gain.
   best$parent_impurity <- parent_impurity
   best$relative_gain <- .ci_relative_gain(best$gain, parent_impurity)
 

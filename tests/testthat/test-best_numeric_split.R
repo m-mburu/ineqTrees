@@ -548,6 +548,8 @@ test_that("best_global_ci_split samples mtry variable ids, not positions", {
   ctrl <- ci_tree_control(minsplit = 1, minbucket = 1, minprob = 0)
   ctrl$mtry <- 1L
 
+  # Repeat the search to check that sampling never escapes the supplied
+  # predictor set, even when it contains just one column.
   for (seed in 1:20) {
     set.seed(seed)
     split <- best_global_ci_split(
